@@ -95,3 +95,32 @@ A pessoa cadastra o endereço marcando a casa no mapa; depois cada mercado já m
   o checkout abre sem retorno e o cliente vê o comprovante na própria InfinitePay.
 - **API Key (`inchk_...`):** só no servidor, nunca no app nem no repositório. Ela habilita
   `options` como `single_payment` e `valid_until`.
+
+## Gerar o app (Android e iOS)
+
+O build roda na nuvem da Expo (EAS), sem Android Studio nem Xcode. Perfis em `eas.json`:
+
+| Perfil | Android | iOS |
+|---|---|---|
+| `preview` | APK para instalar direto no celular | instalação interna (iPhones cadastrados) |
+| `production` | AAB para a Google Play | build para App Store / TestFlight |
+
+```bash
+npm install
+npx eas-cli@latest login                 # conta grátis em expo.dev
+npx eas-cli@latest init                  # vincula o projeto à sua conta (1ª vez)
+
+# Android: APK para testar/distribuir direto
+npx eas-cli@latest build -p android --profile preview
+
+# iOS: exige Apple Developer Program (US$ 99/ano)
+npx eas-cli@latest build -p ios --profile production
+npx eas-cli@latest submit -p ios          # envia ao TestFlight / App Store
+
+# Google Play (conta de desenvolvedor: US$ 25, pagamento único)
+npx eas-cli@latest build -p android --profile production
+npx eas-cli@latest submit -p android
+```
+
+Ícone, splash, nome ("Mercado Frete") e identificadores (`br.com.mercadofrete.app`) estão em
+`app.json`. A numeração de versão é controlada pela EAS (`appVersionSource: remote`).
