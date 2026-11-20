@@ -6,7 +6,15 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
 export default ({ config }: ConfigContext): ExpoConfig => {
   const admin = process.env.APP_VARIANT === 'admin';
   const base = { ...config, extra: { ...config.extra, variante: admin ? 'admin' : 'cliente' } } as ExpoConfig;
-  if (!admin) return base;
+  if (!admin)
+    // O app do cliente não usa a agenda: remove a permissão que a biblioteca declara.
+    return {
+      ...base,
+      android: {
+        ...base.android,
+        blockedPermissions: [...(base.android?.blockedPermissions ?? []), 'android.permission.READ_CALENDAR', 'android.permission.WRITE_CALENDAR'],
+      },
+    };
   return {
     ...base,
     name: 'Frete Admin',
