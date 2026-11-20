@@ -6,10 +6,10 @@ compatibility_date = "2026-10-01"
 INFINITEPAY_HANDLE = "smayleiluiz"
 APP_SCHEME = "mercadofrete"
 
-# Crie com: npx wrangler kv namespace create PEDIDOS  (e cole o id abaixo)
+# Armazenamento dos pedidos (criado com: npx wrangler kv namespace create PEDIDOS)
 [[kv_namespaces]]
 binding = "PEDIDOS"
-id = "COLE_AQUI_O_ID_DO_KV"
+id = "2a0883e39bab43039155cf34c447c327"
 
 # Segredos (nunca no arquivo):
 #   npx wrangler secret put INFINITEPAY_API_KEY

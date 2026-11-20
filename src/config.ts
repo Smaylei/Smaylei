@@ -15,4 +15,4 @@ export const URL_RETORNO_PAGAMENTO: string | null = null;
  * servidor, o link vale para um único pagamento e o app recebe a confirmação automática.
  * Enquanto for null, o app gera o link direto na InfinitePay (sem confirmação automática).
  */
-export const API_PAGAMENTOS: string | null = null;
+export const API_PAGAMENTOS: string | null = 'https://mercado-frete-pagamentos.mercado-frete-pagamentos.workers.dev';

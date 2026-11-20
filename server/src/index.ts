@@ -105,7 +105,8 @@ async function criarPedido(req: Request, env: Env, origem: string) {
   const validoAte = new Date(Date.now() + 24 * 3600e3).toISOString();
   const resp = await fetch(`${API}/links`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'X-Api-Key': env.INFINITEPAY_API_KEY },
+    // Sem API Key a InfinitePay ainda cria o link pela handle, só não aceita `options`.
+    headers: { 'content-type': 'application/json', ...(env.INFINITEPAY_API_KEY ? { 'X-Api-Key': env.INFINITEPAY_API_KEY } : {}) },
     body: JSON.stringify({
       handle: env.INFINITEPAY_HANDLE,
       items: [
@@ -119,7 +120,7 @@ async function criarPedido(req: Request, env: Env, origem: string) {
       redirect_url: `${origem}/retorno`,
       webhook_url: `${origem}/webhook`,
       customer: c.nome ? { name: c.nome, phone_number: c.telefone } : undefined,
-      options: { single_payment: true, valid_until: validoAte },
+      options: env.INFINITEPAY_API_KEY ? { single_payment: true, valid_until: validoAte } : undefined,
     }),
   });
   const d = (await resp.json().catch(() => ({}))) as { url?: string; error?: string; message?: string };
