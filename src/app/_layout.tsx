@@ -22,6 +22,7 @@ export default function Layout() {
           <Stack.Screen name="cadastro" options={{ title: 'Meu endereço' }} />
           <Stack.Screen name="pedido" options={{ title: 'Frete' }} />
           <Stack.Screen name="admin" options={{ title: 'Tarifas (administração)' }} />
+          <Stack.Screen name="pagamento" options={{ title: 'Pagamento' }} />
         </Stack>
       </AppProvider>
     </SafeAreaProvider>

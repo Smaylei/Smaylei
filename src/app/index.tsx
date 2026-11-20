@@ -1,10 +1,45 @@
-import { Redirect, router } from 'expo-router';
+import { Redirect, router, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { cores, raio } from '../components/tema';
+import { API_PAGAMENTOS } from '../config';
 import { useApp } from '../estado/AppContext';
+import { consultarPedidoServidor } from '../services/pagamento';
+import { listarPedidos, salvarPedido, type Pedido } from '../services/pedidos';
+import { formatarReais } from '../services/preco';
+
+const HORAS_RECENTE = 24;
+
+/** Último frete do cliente, atualizando no servidor se ainda estiver aguardando pagamento. */
+function useUltimoPedido() {
+  const [pedido, setPedido] = useState<Pedido | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      let ativo = true;
+      (async () => {
+        const [p] = await listarPedidos();
+        if (!p || Date.now() - new Date(p.criadoEm).getTime() > HORAS_RECENTE * 3600e3) return;
+        let atual = p;
+        if (p.status !== 'pago' && API_PAGAMENTOS) {
+          const st = await consultarPedidoServidor(API_PAGAMENTOS, p.orderNsu).catch(() => null);
+          if (st?.pago) {
+            atual = { ...p, status: 'pago', receiptUrl: st.receiptUrl, metodo: st.metodo };
+            await salvarPedido(atual).catch(() => {});
+          }
+        }
+        if (ativo) setPedido(atual);
+      })();
+      return () => {
+        ativo = false;
+      };
+    }, []),
+  );
+  return pedido;
+}
 
 export default function Inicio() {
   const { carregado, casa } = useApp();
+  const ultimo = useUltimoPedido();
 
   if (!carregado) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   if (!casa) return <Redirect href="/cadastro" />;
@@ -16,6 +51,20 @@ export default function Inicio() {
         <Text style={s.ola}>Olá{casa.nome && casa.nome !== 'Minha casa' ? `, ${casa.nome}` : ''}!</Text>
       </Pressable>
       <Text style={s.sub}>Suas compras do mercado entregues em casa.</Text>
+
+      {ultimo && (
+        <Pressable
+          style={[s.status, ultimo.status === 'pago' ? s.statusOk : s.statusAguardando]}
+          onPress={() => router.push({ pathname: '/pagamento', params: { order_nsu: ultimo.orderNsu } })}
+        >
+          <Text style={[s.statusTitulo, { color: ultimo.status === 'pago' ? cores.primaria : cores.alerta }]}>
+            {ultimo.status === 'pago' ? '✓ Frete confirmado' : 'Aguardando pagamento'}
+          </Text>
+          <Text style={s.statusTexto}>
+            {ultimo.mercadoNome} · {ultimo.agendado ? ultimo.janela : 'entrega agora'} · {formatarReais(ultimo.valor)}
+          </Text>
+        </Pressable>
+      )}
 
       <Pressable style={[s.acao, s.acaoPrincipal]} onPress={() => router.push({ pathname: '/pedido', params: { modo: 'agora' } })}>
         <Text style={s.acaoIcone}>⚡</Text>
@@ -65,6 +114,11 @@ const s = StyleSheet.create({
   acaoIcone: { fontSize: 32 },
   acaoTitulo: { fontSize: 21, fontWeight: '800', color: cores.texto },
   acaoSub: { fontSize: 14, color: cores.suave, marginTop: 2 },
+  status: { borderRadius: raio, padding: 14, borderWidth: 1 },
+  statusOk: { backgroundColor: cores.primariaClara, borderColor: cores.primaria },
+  statusAguardando: { backgroundColor: cores.alertaFundo, borderColor: cores.alerta },
+  statusTitulo: { fontSize: 16, fontWeight: '800' },
+  statusTexto: { fontSize: 14, color: cores.texto, marginTop: 2 },
   endereco: {
     flexDirection: 'row',
     alignItems: 'center',
