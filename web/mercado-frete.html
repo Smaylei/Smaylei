@@ -172,16 +172,11 @@
 (() => {
   const CIDADE = 'Guaramirim - SC';
   const MERCADOS = [
-    ['Hipermercado Breithaupt', 'Rua 28 de Agosto, 1665, Avaí'],
-    ['Rancho Bom Supermercados', 'Rua Geronimo Correa, 444, Centro'],
-    ['Supermercado Martini', 'Rua 28 de Agosto, 3035'],
-    ['Super Três', 'Rua 28 de Agosto, 4014, Centro'],
-    ['Supermercado Pimentel', 'Rua 28 de Agosto, 862, Avaí'],
+    ['Cooper Atacarejo', 'Rua Aldano José Vieira, 455, Avaí'],
+    ['Komprão Koch Atacadista', 'Rua Vereador João Pereira Lima, 697, Centro'],
     ['Burei Supermercado', 'Rua 28 de Agosto, 502, Centro'],
-    ['Supermercado Silva', 'Rua Norberto Silveira Júnior, 233, Centro'],
-    ['Supermercado Cantelli', 'Rodovia SC-413, 753, Centro'],
-    ['Supermercado Klein', 'Rua Lauro Zimmermann, 6380, Guamiranga'],
-    ['Super Preço', 'Rua Hermínio Stringari, 1500, Corticeira'],
+    ['Super Três', 'Rua 28 de Agosto, 4014, Centro'],
+    ['Supermercado Martini', 'Rua 28 de Agosto, 3035'],
   ];
   const PADRAO = [
     { id: 'uberx', plataforma: 'Uber', categoria: 'UberX', tarifaBase: 2.0, porKm: 1.35, porMinuto: 0.26, tarifaMinima: 7.0 },
@@ -199,7 +194,7 @@
 
   let tarifas = store.get('mf:tarifas', PADRAO);
   let margem = store.get('mf:margem', 0);
-  let mercado = store.get('mf:mercado', 0);
+  let mercado = store.get('mf:mercado5', 0);
   if (!MERCADOS[mercado]) mercado = 0;
 
   const cent = (v) => Math.round(v * 100) / 100;
@@ -222,7 +217,7 @@
     const bn = document.createElement('b'); bn.textContent = nome;
     const sm = document.createElement('small'); sm.textContent = end;
     b.append(bn, sm);
-    b.addEventListener('click', () => { mercado = i; store.set('mf:mercado', i); render(); });
+    b.addEventListener('click', () => { mercado = i; store.set('mf:mercado5', i); render(); });
     box.append(b);
   });
 

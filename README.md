@@ -7,7 +7,7 @@ O percurso cobrado é sempre **ida e volta**: mercado → endereço do cliente �
 
 ## Como funciona
 
-1. O usuário escolhe o mercado de partida (10 supermercados de Guaramirim já cadastrados).
+1. O usuário escolhe o mercado de partida (Cooper, Komprão, Burei, Super Três e Martini).
 2. Digita o endereço de entrega ou usa a localização do celular.
 3. O app calcula a rota real de carro (ida e volta) e mostra:
    - km da ida, km da volta, km total e tempo total;
@@ -42,7 +42,7 @@ sugerido  = média(UberX, 99Pop) × (1 + margem%)
 - **Endereços → coordenadas:** geocodificador nativo do celular, com Nominatim (OpenStreetMap)
   como alternativa. As coordenadas de cada mercado ficam em cache no aparelho.
 - **Sem internet:** distância estimada em linha reta × 1,35 a 35 km/h (o app avisa).
-- **Mercados:** `src/data/mercados.ts`. Os endereços vêm de guias comerciais públicos; confira no
+- **Mercados:** `src/data/mercados.ts` (app) e `web/mercado-frete.html` (versão PC). Os endereços vêm do site da Cooper, de cadastros de CNPJ e de guias comerciais; confira no
   Google Maps antes de publicar e edite a lista à vontade.
 
 ## Rodando
