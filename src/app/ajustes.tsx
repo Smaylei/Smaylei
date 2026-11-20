@@ -8,21 +8,25 @@ import * as Admin from '../services/admin';
 export default function Ajustes() {
   const agenda = useAgenda();
   const [cfg, setCfg] = useState<Admin.ConfigServidor | null>(null);
-  const [texto, setTexto] = useState({ horaInicio: '', horaFim: '', bloqueioMin: '', passoMin: '', antecedenciaMin: '' });
+  const [texto, setTexto] = useState({ horaInicio: '', horaFim: '', bloqueioMin: '', passoMin: '', antecedenciaMin: '', comissaoMotoristaPct: '', taxaDeslocamento: '', esperaPagamentoMin: '', ofertaMin: '' });
   const [salvando, setSalvando] = useState(false);
   const { carregarOpcoes } = agenda;
 
   useFocusEffect(
     useCallback(() => {
-      Admin.status()
-        .then((s) => {
-          setCfg(s.config);
+      Admin.resumo()
+        .then(({ config: c }) => {
+          setCfg(c);
           setTexto({
-            horaInicio: s.config.horaInicio,
-            horaFim: s.config.horaFim,
-            bloqueioMin: String(s.config.bloqueioMin),
-            passoMin: String(s.config.passoMin),
-            antecedenciaMin: String(s.config.antecedenciaMin),
+            horaInicio: c.horaInicio,
+            horaFim: c.horaFim,
+            bloqueioMin: String(c.bloqueioMin),
+            passoMin: String(c.passoMin),
+            antecedenciaMin: String(c.antecedenciaMin),
+            comissaoMotoristaPct: String(c.comissaoMotoristaPct),
+            taxaDeslocamento: String(c.taxaDeslocamento).replace('.', ','),
+            esperaPagamentoMin: String(c.esperaPagamentoMin),
+            ofertaMin: String(c.ofertaMin),
           });
         })
         .catch((e) => Alert.alert('Erro', (e as Error).message));
@@ -42,9 +46,13 @@ export default function Ajustes() {
         bloqueioMin: n(texto.bloqueioMin),
         passoMin: n(texto.passoMin),
         antecedenciaMin: n(texto.antecedenciaMin),
+        comissaoMotoristaPct: n(texto.comissaoMotoristaPct),
+        taxaDeslocamento: n(texto.taxaDeslocamento),
+        esperaPagamentoMin: n(texto.esperaPagamentoMin),
+        ofertaMin: n(texto.ofertaMin),
       });
       setCfg(novo);
-      Alert.alert('Salvo', 'Os horários oferecidos aos clientes já foram atualizados.');
+      Alert.alert('Salvo', 'Os novos valores já valem para clientes e motoristas.');
     } catch (e) {
       Alert.alert('Não salvou', (e as Error).message);
     } finally {
@@ -89,10 +97,23 @@ export default function Ajustes() {
           {campo('Bloqueio por frete (min)', 'bloqueioMin')}
           {campo('Horários a cada (min)', 'passoMin')}
           {campo('Antecedência p/ agendar (min)', 'antecedenciaMin')}
+          {campo('Procurar motorista por (min)', 'ofertaMin')}
         </View>
-        <Text style={s.ajuda}>Cada frete ocupa o tempo de bloqueio (ida ao cliente e volta ao mercado). Nesse intervalo ninguém consegue pedir ou agendar.</Text>
+        <Text style={s.ajuda}>Cada frete ocupa o tempo de bloqueio do motorista (ida ao cliente e volta ao mercado). Os horários oferecidos dependem de quantos motoristas aprovados existem.</Text>
+      </View>
+
+      <Text style={s.secao}>Motoristas e cobrança</Text>
+      <View style={s.cartao}>
+        <View style={s.grade}>
+          {campo('Parte do motorista (%)', 'comissaoMotoristaPct')}
+          {campo('Taxa de deslocamento (R$)', 'taxaDeslocamento', 'numbers-and-punctuation')}
+          {campo('Espera do pagamento (min)', 'esperaPagamentoMin')}
+        </View>
+        <Text style={s.ajuda}>
+          O cliente paga quando o motorista chega ao mercado. Se cancelar ou não pagar dentro da espera, a taxa de deslocamento é cobrada no próximo frete.
+        </Text>
         <Pressable style={s.botao} onPress={salvarAtendimento} disabled={salvando}>
-          {salvando ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Salvar atendimento</Text>}
+          {salvando ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Salvar ajustes</Text>}
         </Pressable>
       </View>
 
@@ -128,7 +149,7 @@ export default function Ajustes() {
       <Text style={s.secao}>WhatsApp</Text>
       <View style={s.cartao}>
         <Text style={s.ajuda}>
-          Os avisos de frete urgente, agendado e cancelado chegam no número cadastrado no servidor (WHATSAPP_PHONE + CALLMEBOT_APIKEY na Cloudflare).
+          Avisos de pedido, aceite, pagamento, cancelamento e novos motoristas chegam no WhatsApp +55 47 99914-9325 (falta só cadastrar a CALLMEBOT_APIKEY na Cloudflare).
         </Text>
         <Pressable onPress={testarWhatsapp}>
           <Text style={s.link}>Enviar mensagem de teste</Text>
@@ -137,7 +158,7 @@ export default function Ajustes() {
 
       <Pressable
         onPress={async () => {
-          await Admin.apagarSenha();
+          await Admin.sair();
           router.replace('/painel');
         }}
       >

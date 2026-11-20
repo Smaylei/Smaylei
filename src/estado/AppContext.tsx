@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { MERCADOS } from '../data/mercados';
 import { TARIFAS_PADRAO } from '../data/tarifas';
-import { API_PAGAMENTOS } from '../config';
+import { API, lerToken } from '../services/api';
 import { carregarEndereco, salvarEndereco, type Endereco } from '../services/cadastro';
 import { rotasAteCasa, type RotaMercado } from '../services/grafo';
 import {
@@ -18,6 +18,8 @@ type Config = { tarifas: Tarifa[]; margem: number; urgencia: Urgencia };
 type Ctx = {
   carregado: boolean;
   casa: Endereco | null;
+  /** Tem cadastro no servidor (token salvo)? */
+  temConta: boolean;
   salvarCasa: (e: Endereco) => Promise<void>;
   config: Config;
   /** Rotas já calculadas por mercado (null = sem rota; ausente = calculando). */
@@ -31,6 +33,7 @@ const AppCtx = createContext<Ctx | null>(null);
 export function AppProvider({ children }: { children: ReactNode }) {
   const [carregado, setCarregado] = useState(false);
   const [casa, setCasa] = useState<Endereco | null>(null);
+  const [temConta, setTemConta] = useState(false);
   const [config, setConfig] = useState<Config>({ tarifas: TARIFAS_PADRAO, margem: 0, urgencia: URGENCIA_PADRAO });
   const [rotas, setRotas] = useState<Ctx['rotas']>(null);
 
@@ -41,14 +44,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    carregarEndereco().then((e) => {
+    Promise.all([carregarEndereco(), lerToken('cliente')]).then(([e, t]) => {
       setCasa(e);
+      setTemConta(!!t);
       setCarregado(true);
       if (e) calcular(e);
     });
     // Tarifas, margem e urgência vêm do servidor (definidas no App Admin).
-    if (API_PAGAMENTOS)
-      fetch(`${API_PAGAMENTOS}/config`)
+    if (API)
+      fetch(`${API}/v2/config`)
         .then((r) => (r.ok ? r.json() : null))
         .then((c: Partial<Config> | null) => {
           if (c?.tarifas?.length) setConfig({ tarifas: c.tarifas, margem: c.margem ?? 0, urgencia: c.urgencia ?? URGENCIA_PADRAO });
@@ -59,6 +63,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const salvarCasa = useCallback(
     async (e: Endereco) => {
       setCasa(e);
+      setTemConta(true);
       calcular(e);
       await salvarEndereco(e).catch(() => {});
     },
@@ -76,7 +81,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <AppCtx.Provider value={{ carregado, casa, salvarCasa, config, rotas, valorFrete }}>
+    <AppCtx.Provider value={{ carregado, casa, temConta, salvarCasa, config, rotas, valorFrete }}>
       {children}
     </AppCtx.Provider>
   );

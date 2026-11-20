@@ -11,8 +11,8 @@ export default function Tarifas() {
 
   useFocusEffect(
     useCallback(() => {
-      Admin.status()
-        .then((s) => setCfg(s.config))
+      Admin.resumo()
+        .then((r) => setCfg(r.config))
         .catch((e) => Alert.alert('Erro', (e as Error).message));
     }, []),
   );

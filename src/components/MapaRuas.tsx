@@ -11,6 +11,7 @@ export type EstadoMapa = {
   sel?: string | null;
   rota?: { ida: [number, number][]; volta: [number, number][] } | null;
   rua?: string | null; // rua a destacar e enquadrar
+  motorista?: { lat: number; lon: number } | null; // posição ao vivo do motorista
 };
 
 type Props = {
@@ -60,6 +61,9 @@ const SCRIPT = String.raw`
     if (est.casa){ var s=tela.apply(null,proj(est.casa.lat,est.casa.lon)), x=s[0], y=s[1];
       ctx.fillStyle='#D2463C'; ctx.beginPath(); ctx.moveTo(x,y); ctx.bezierCurveTo(x-12,y-14,x-9,y-28,x,y-28); ctx.bezierCurveTo(x+9,y-28,x+12,y-14,x,y); ctx.fill();
       ctx.beginPath(); ctx.arc(x,y-19,4,0,7); ctx.fillStyle='#FFFFFF'; ctx.fill(); rot('Casa',x+12,y-14,false); }
+    if (est.motorista){ var mm=tela.apply(null,proj(est.motorista.lat,est.motorista.lon));
+      ctx.beginPath(); ctx.arc(mm[0],mm[1],13,0,7); ctx.fillStyle='#2F6FD6'; ctx.fill(); ctx.lineWidth=3; ctx.strokeStyle='#FFFFFF'; ctx.stroke();
+      ctx.font='14px sans-serif'; ctx.fillText('🚗',mm[0]-8,mm[1]+5); ctx.font='600 12px -apple-system, Roboto, sans-serif'; rot('Motorista',mm[0]+16,mm[1]+4,false); }
   }
   function rot(t,x,y,f){ var w=ctx.measureText(t).width; ctx.fillStyle='rgba(255,255,255,.9)'; ctx.fillRect(x-3,y-12,w+6,16); ctx.fillStyle=f?'#1B8048':'#15201A'; ctx.fillText(t,x,y); }
   function reenquadrar(){
@@ -67,6 +71,7 @@ const SCRIPT = String.raw`
     if (est.modo==='rota' && est.rota){ est.rota.ida.concat(est.rota.volta).forEach(function(q){ pts.push(proj(q[0],q[1])); }); }
     else if (est.modo==='escolher' && ruaPath && est._ruaPts){ pts=est._ruaPts; }
     if (est.casa) pts.push(proj(est.casa.lat,est.casa.lon));
+    if (est.motorista) pts.push(proj(est.motorista.lat,est.motorista.lon));
     if (!pts.length || (est.modo==='escolher' && !ruaPath && !est.casa)) (est.mercados||[]).forEach(function(m){ pts.push(proj(m.lat,m.lon)); });
     enquadrar(pts, 50);
   }
@@ -77,7 +82,8 @@ const SCRIPT = String.raw`
         for (var k=3;k<w.length;k++){ ruaPath.lineTo(X[w[k]],Y[w[k]]); pts.push([X[w[k]],Y[w[k]]]); } }); est._ruaPts=pts; } }
     else est._ruaPts = antes._ruaPts;
     var mudouCasa = !antes || JSON.stringify(antes.casa)!==JSON.stringify(novo.casa);
-    if (!antes || antes.rua!==novo.rua || antes.sel!==novo.sel || antes.modo!==novo.modo || (mudouCasa && novo.modo==='rota')) reenquadrar();
+    var surgiuMotorista = !!novo.motorista && !(antes && antes.motorista);
+    if (!antes || antes.rua!==novo.rua || antes.sel!==novo.sel || antes.modo!==novo.modo || surgiuMotorista || (mudouCasa && novo.modo==='rota')) reenquadrar();
     desenhar();
   };
   var ptrs={}, nptr=0, moveu=0, pinca=null;

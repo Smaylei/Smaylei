@@ -1,17 +1,26 @@
-// Coloca cada frete pago na agenda do celular (Google Agenda no Android, Calendário no iPhone),
+// Coloca fretes na agenda do celular (Google Agenda no Android, Calendário no iPhone),
 // com lembrete 15 minutos antes. Frete cancelado sai da agenda.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Calendar from 'expo-calendar/legacy';
 import { createContext, createElement, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { Platform } from 'react-native';
-import type { PedidoAdmin } from '../services/admin';
-import { formatarReais } from '../services/preco';
 
 const K_CAL = 'agenda:calendario';
 const K_ATIVO = 'agenda:ativo';
 const K_EVENTOS = 'agenda:eventos';
 
 export type CalendarioOpcao = { id: string; titulo: string; conta: string };
+
+/** Um frete a refletir na agenda. */
+export type EventoAgenda = {
+  id: string;
+  cancelado: boolean;
+  inicio: string;
+  fim: string;
+  titulo: string;
+  local: string;
+  notas: string;
+};
 
 async function lerEventos(): Promise<Record<string, string>> {
   try {
@@ -66,7 +75,7 @@ export function useAgendaCelular() {
   }, []);
 
   const sincronizar = useCallback(
-    async (lista: PedidoAdmin[]) => {
+    async (lista: EventoAgenda[]) => {
       if (!ativo) return;
       try {
         const { status } = await Calendar.requestCalendarPermissionsAsync();
@@ -79,18 +88,18 @@ export function useAgendaCelular() {
         }
         const eventos = await lerEventos();
         const agora = Date.now();
-        for (const p of lista) {
-          const ev = eventos[p.orderNsu];
-          if (p.status === 'cancelado' && ev) {
+        for (const e of lista) {
+          const ev = eventos[e.id];
+          if (e.cancelado && ev) {
             await Calendar.deleteEventAsync(ev).catch(() => {});
-            delete eventos[p.orderNsu];
-          } else if (p.status === 'pago' && !ev && Date.parse(p.fim) > agora) {
-            eventos[p.orderNsu] = await Calendar.createEventAsync(cal, {
-              title: `${p.agendado ? '' : '🚨 '}Frete ${p.mercadoNome} → ${p.cliente.nome || 'cliente'}`,
-              startDate: new Date(p.inicio),
-              endDate: new Date(p.fim),
-              location: p.cliente.endereco,
-              notes: `${formatarReais(p.valor)} · Tel: ${p.cliente.telefone ?? '-'}\nhttps://www.google.com/maps/search/?api=1&query=${p.cliente.lat},${p.cliente.lon}`,
+            delete eventos[e.id];
+          } else if (!e.cancelado && !ev && Date.parse(e.fim) > agora) {
+            eventos[e.id] = await Calendar.createEventAsync(cal, {
+              title: e.titulo,
+              startDate: new Date(e.inicio),
+              endDate: new Date(e.fim),
+              location: e.local,
+              notes: e.notas,
               alarms: [{ relativeOffset: -15 }],
               timeZone: 'America/Sao_Paulo',
             });
@@ -108,7 +117,7 @@ export function useAgendaCelular() {
   return { ativo, setAtivo, calId, setCalId, opcoes, carregarOpcoes, sincronizar, ultima };
 }
 
-// Compartilhado entre o painel e os ajustes do App Admin.
+// Compartilhado entre as telas do app.
 type AgendaCtx = ReturnType<typeof useAgendaCelular>;
 const Ctx = createContext<AgendaCtx | null>(null);
 

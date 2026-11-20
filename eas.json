@@ -33,6 +33,21 @@
       "env": {
         "APP_VARIANT": "admin"
       }
+    },
+    "motorista-preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "APP_VARIANT": "motorista"
+      }
+    },
+    "motorista-production": {
+      "autoIncrement": true,
+      "env": {
+        "APP_VARIANT": "motorista"
+      }
     }
   },
   "submit": {
