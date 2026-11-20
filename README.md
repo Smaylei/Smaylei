@@ -124,3 +124,27 @@ npx eas-cli@latest submit -p android
 
 Ícone, splash, nome ("Mercado Frete") e identificadores (`br.com.mercadofrete.app`) estão em
 `app.json`. A numeração de versão é controlada pela EAS (`appVersionSource: remote`).
+
+## App Admin ("Frete Admin")
+
+Mesmo projeto, outra variante (`APP_VARIANT=admin`): nome, ícone e identificador próprios
+(`br.com.mercadofrete.admin`).
+
+- **Painel:** fretes próximos, aguardando pagamento e histórico; cliente, WhatsApp, endereço
+  (botão Navegar), mercado e valor; Concluir/Cancelar. Interruptor **Aceitando pedidos** e botão
+  **Estou livre** (encerra o atendimento em andamento e libera os horários).
+- **Agenda:** cada frete pago vira evento na agenda do celular (Google Agenda no Android,
+  Calendário no iPhone) com lembrete 15 min antes; cancelado sai da agenda.
+- **Ajustes:** horário de atendimento, bloqueio por frete (40 min), intervalo entre horários,
+  tarifas/margem/urgência (valem para todos os clientes), link .ics e teste do WhatsApp.
+- Acesso com a senha `ADMIN_TOKEN` cadastrada na Cloudflare.
+
+```bash
+# testar no celular (Expo Go)
+$env:APP_VARIANT="admin"; npx expo start        # PowerShell
+APP_VARIANT=admin npx expo start                # macOS/Linux
+
+# gerar
+npx eas-cli@latest build -p android --profile admin-preview
+npx eas-cli@latest build -p ios --profile admin-production
+```

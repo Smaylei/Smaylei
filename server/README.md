@@ -23,3 +23,21 @@ npx wrangler deploy                         # mostra a URL https://...workers.de
 ```
 
 Depois coloque essa URL em `API_PAGAMENTOS` (`src/config.ts`) e gere o app de novo.
+
+## Agenda e avisos
+
+- Cada frete ocupa `bloqueioMin` (padrão 40 min) a partir do horário escolhido (ou do pagamento,
+  no urgente). Horários são oferecidos de 20 em 20 min entre `horaInicio` e `horaFim`. Reserva sem
+  pagamento segura o horário por 15 min. Cancelado → o horário volta a ficar vago.
+- Cliente cancela pelo app: agendado até o horário; urgente até 5 min após pagar.
+- `GET /agenda.ics?k=...` (link no App Admin → Ajustes) com lembrete 15 min antes.
+
+### WhatsApp (CallMeBot, grátis para uso pessoal)
+
+1. No seu WhatsApp, salve o contato do CallMeBot (número em https://www.callmebot.com/blog/free-api-whatsapp-messages/)
+   e envie: `I allow callmebot to send me messages`.
+2. O bot responde com a sua **apikey**.
+3. Na Cloudflare (Workers → mercado-frete-pagamentos → Configurações → Variáveis e segredos), adicione como **Segredo**:
+   - `WHATSAPP_PHONE`: seu número com DDI, ex. `+5547999999999`
+   - `CALLMEBOT_APIKEY`: a apikey recebida
+4. No App Admin → Ajustes → "Enviar mensagem de teste".
