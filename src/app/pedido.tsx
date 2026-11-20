@@ -5,10 +5,17 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { cores, raio } from '../components/tema';
-import { URL_RETORNO_PAGAMENTO } from '../config';
+import { API_PAGAMENTOS, URL_RETORNO_PAGAMENTO } from '../config';
 import { MERCADOS } from '../data/mercados';
 import { useApp } from '../estado/AppContext';
-import { criarLinkPagamento, lerRetorno, novoOrderNsu, verificarPagamento } from '../services/pagamento';
+import {
+  consultarPedidoServidor,
+  criarLinkPagamento,
+  criarPedidoServidor,
+  lerRetorno,
+  novoOrderNsu,
+  verificarPagamento,
+} from '../services/pagamento';
 import { salvarPedido, type Pedido } from '../services/pedidos';
 import { formatarReais } from '../services/preco';
 
@@ -58,6 +65,18 @@ export default function PedidoTela() {
   const podePagar = !!mercado && valor !== null && (!agendado || !!janela) && fase === 'escolha';
 
   async function abrirCheckout(p: Pedido) {
+    if (API_PAGAMENTOS) {
+      // O servidor recebe o cliente de volta, confirma na InfinitePay e reabre o app.
+      await WebBrowser.openAuthSessionAsync(p.checkoutUrl, Linking.createURL('pagamento'));
+      const st = await consultarPedidoServidor(API_PAGAMENTOS, p.orderNsu).catch(() => null);
+      if (st?.pago) {
+        const pago: Pedido = { ...p, status: 'pago', receiptUrl: st.receiptUrl, metodo: st.metodo };
+        await salvarPedido(pago).catch(() => {});
+        setPedido(pago);
+        setFase('pago');
+      }
+      return;
+    }
     if (!URL_RETORNO_PAGAMENTO) {
       await WebBrowser.openBrowserAsync(p.checkoutUrl);
       return;
@@ -81,20 +100,31 @@ export default function PedidoTela() {
     if (!mercado || valor === null || !casa) return;
     setErro(null);
     setFase('gerando');
-    const orderNsu = novoOrderNsu();
     try {
-      const checkoutUrl = await criarLinkPagamento({
-        orderNsu,
-        valor,
-        descricao: `Frete ${mercado.nome} - ${agendado ? `agendado ${janela}` : 'entrega agora'}`,
-        redirectUrl: URL_RETORNO_PAGAMENTO ?? undefined,
-        cliente: { name: casa.nome !== 'Minha casa' ? casa.nome : undefined },
-      });
+      let orderNsu: string, checkoutUrl: string, valorCobrado = valor;
+      if (API_PAGAMENTOS) {
+        const r = await criarPedidoServidor(API_PAGAMENTOS, {
+          mercadoId: mercado.id,
+          agendado,
+          janela,
+          cliente: { nome: casa.nome, endereco: casa.endereco, lat: casa.lat, lon: casa.lon },
+        });
+        ({ orderNsu, url: checkoutUrl, valor: valorCobrado } = r);
+      } else {
+        orderNsu = novoOrderNsu();
+        checkoutUrl = await criarLinkPagamento({
+          orderNsu,
+          valor,
+          descricao: `Frete ${mercado.nome} - ${agendado ? `agendado ${janela}` : 'entrega agora'}`,
+          redirectUrl: URL_RETORNO_PAGAMENTO ?? undefined,
+          cliente: { name: casa.nome !== 'Minha casa' ? casa.nome : undefined },
+        });
+      }
       const p: Pedido = {
         orderNsu,
         mercadoId: mercado.id,
         mercadoNome: mercado.nome,
-        valor,
+        valor: valorCobrado,
         agendado,
         janela,
         criadoEm: new Date().toISOString(),

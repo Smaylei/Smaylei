@@ -1,0 +1,16 @@
+name = "mercado-frete-pagamentos"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[vars]
+INFINITEPAY_HANDLE = "smayleiluiz"
+APP_SCHEME = "mercadofrete"
+
+# Crie com: npx wrangler kv namespace create PEDIDOS  (e cole o id abaixo)
+[[kv_namespaces]]
+binding = "PEDIDOS"
+id = "COLE_AQUI_O_ID_DO_KV"
+
+# Segredos (nunca no arquivo):
+#   npx wrangler secret put INFINITEPAY_API_KEY
+#   npx wrangler secret put ADMIN_TOKEN

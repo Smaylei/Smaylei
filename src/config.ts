@@ -8,3 +8,11 @@ export const INFINITEPAY_HANDLE = 'smayleiluiz';
  * confirmação fica com o comprovante que o cliente recebe da InfinitePay.
  */
 export const URL_RETORNO_PAGAMENTO: string | null = null;
+
+/**
+ * Endereço do servidor de pagamentos (pasta server/, Cloudflare Worker), ex.:
+ * "https://mercado-frete-pagamentos.<sua-conta>.workers.dev". Com ele o valor é recalculado no
+ * servidor, o link vale para um único pagamento e o app recebe a confirmação automática.
+ * Enquanto for null, o app gera o link direto na InfinitePay (sem confirmação automática).
+ */
+export const API_PAGAMENTOS: string | null = null;

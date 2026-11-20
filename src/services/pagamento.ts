@@ -116,3 +116,28 @@ export function novoOrderNsu() {
   const data = `${agora.getFullYear()}${p(agora.getMonth() + 1)}${p(agora.getDate())}-${p(agora.getHours())}${p(agora.getMinutes())}`;
   return `frete-${data}-${Math.random().toString(36).slice(2, 7)}`;
 }
+
+// ---------- Via servidor de pagamentos (server/) ----------
+
+export type PedidoServidor = { orderNsu: string; valor: number; url: string };
+
+export async function criarPedidoServidor(
+  api: string,
+  p: { mercadoId: string; agendado: boolean; janela?: string; cliente: { nome: string; endereco: string; lat: number; lon: number } },
+): Promise<PedidoServidor> {
+  let resp: Response;
+  try {
+    resp = await fetch(`${api}/pedidos`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+  } catch {
+    throw new ErroPagamento('Sem conexão. Verifique a internet e tente de novo.');
+  }
+  const d = (await resp.json().catch(() => ({}))) as Partial<PedidoServidor> & { erro?: string };
+  if (!resp.ok || !d.url || !d.orderNsu || typeof d.valor !== 'number') throw new ErroPagamento(d.erro ?? 'Não foi possível gerar o pagamento.');
+  return { orderNsu: d.orderNsu, valor: d.valor, url: d.url };
+}
+
+export async function consultarPedidoServidor(api: string, orderNsu: string) {
+  const resp = await fetch(`${api}/pedidos/${encodeURIComponent(orderNsu)}`);
+  const d = (await resp.json().catch(() => ({}))) as { status?: string; receiptUrl?: string; metodo?: string };
+  return { pago: d.status === 'pago', receiptUrl: d.receiptUrl, metodo: d.metodo };
+}
