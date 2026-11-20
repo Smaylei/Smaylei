@@ -4,9 +4,8 @@ import { Alert, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text
 import { cores, raio } from '../components/tema';
 import * as Admin from '../services/admin';
 import { mascararCpf } from '../services/cpf';
-import { formatarReais } from '../services/preco';
 
-/** Clientes cadastrados: contato, taxa de deslocamento pendente e bloqueio. */
+/** Clientes cadastrados: contato e bloqueio. */
 export default function ClientesAdmin() {
   const [lista, setLista] = useState<Admin.ClienteAdmin[]>([]);
   const [busca, setBusca] = useState('');
@@ -29,7 +28,7 @@ export default function ClientesAdmin() {
   const filtro = busca.trim().toLowerCase();
   const itens = filtro ? lista.filter((c) => `${c.nome} ${c.endereco} ${c.telefone ?? ''}`.toLowerCase().includes(filtro)) : lista;
 
-  async function acao(id: string, a: 'bloquear' | 'desbloquear' | 'zerar-taxa') {
+  async function acao(id: string, a: 'bloquear' | 'desbloquear') {
     try {
       await Admin.acaoCliente(id, a);
       await carregar();
@@ -52,10 +51,8 @@ export default function ClientesAdmin() {
             CPF {mascararCpf(c.cpf)} · {c.telefone ?? 'sem telefone'}
           </Text>
           <Text style={s.detalhe}>📍 {c.endereco}</Text>
-          {c.taxa_pendente > 0 && <Text style={s.taxa}>Taxa de deslocamento pendente: {formatarReais(c.taxa_pendente)}</Text>}
           <View style={s.botoes}>
             {!!c.telefone && <Mini texto="WhatsApp" onPress={() => Linking.openURL(`https://wa.me/55${c.telefone!.replace(/\D/g, '').replace(/^55/, '')}`)} />}
-            {c.taxa_pendente > 0 && <Mini texto="Perdoar taxa" onPress={() => acao(c.id, 'zerar-taxa')} />}
             {c.bloqueado ? <Mini texto="Desbloquear" onPress={() => acao(c.id, 'desbloquear')} /> : <Mini texto="Bloquear" perigo onPress={() => acao(c.id, 'bloquear')} />}
           </View>
         </View>
@@ -79,7 +76,6 @@ const s = StyleSheet.create({
   linha: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   nome: { fontSize: 16, fontWeight: '800', color: cores.texto, flexShrink: 1 },
   detalhe: { fontSize: 13, color: cores.suave },
-  taxa: { fontSize: 13, fontWeight: '700', color: cores.alerta },
   botoes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
   mini: { borderWidth: 1, borderColor: cores.primaria, borderRadius: 10, paddingVertical: 7, paddingHorizontal: 10 },
   miniTexto: { color: cores.primaria, fontWeight: '700', fontSize: 13 },

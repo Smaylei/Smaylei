@@ -17,7 +17,6 @@ export default function CadastroMotorista() {
   const [carro, setCarro] = useState('');
   const [cor, setCor] = useState('');
   const [placa, setPlaca] = useState('');
-  const [pix, setPix] = useState('');
   const [selfie, setSelfie] = useState<string | null>(null);
   const [cnh, setCnh] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
@@ -36,7 +35,6 @@ export default function CadastroMotorista() {
               setCarro(e.carro);
               setPlaca(e.placa);
               setCor(e.cor ?? '');
-              setPix(e.pix ?? '');
             })
             .catch(() => {});
       });
@@ -61,7 +59,7 @@ export default function CadastroMotorista() {
     setMsg(null);
     try {
       if (!temConta) {
-        const r = await api<{ token: string }>(null, '/v2/motoristas', { method: 'POST', corpo: { nome: nome.trim(), cpf, telefone, carro, placa, cor, pix } });
+        const r = await api<{ token: string }>(null, '/v2/motoristas', { method: 'POST', corpo: { nome: nome.trim(), cpf, telefone, carro, placa, cor } });
         await guardarToken('motorista', r.token);
         setTemConta(true);
       }
@@ -105,7 +103,7 @@ export default function CadastroMotorista() {
           <Campo rotulo="Carro (modelo)" valor={carro} onChange={setCarro} exemplo="Ex.: Fiat Strada" />
           <Campo rotulo="Cor" valor={cor} onChange={setCor} exemplo="Ex.: Branca" />
           <Campo rotulo="Placa" valor={placa} onChange={(t) => setPlaca(t.toUpperCase())} exemplo="ABC1D23" erro={placa.length >= 7 && !placaOk} />
-          <Campo rotulo="Chave Pix (para receber os repasses)" valor={pix} onChange={setPix} />
+          <Text style={s.lgpd}>Seus saques vão por Pix para a chave CPF informada acima.</Text>
         </>
       )}
       {temConta && eu && (

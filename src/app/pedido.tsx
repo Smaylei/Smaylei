@@ -11,10 +11,9 @@ import { formatarReais } from '../services/preco';
 export default function PedidoTela() {
   const { modo } = useLocalSearchParams<{ modo?: string }>();
   const agendado = modo === 'agendar';
-  const { rotas, valorFrete } = useApp();
+  const { rotas, valorFrete, recarregarConfig } = useApp();
   const insets = useSafeAreaInsets();
   const [disp, setDisp] = useState<Disponibilidade | null>(null);
-  const [taxa, setTaxa] = useState(0);
   const [mercadoId, setMercadoId] = useState<string | null>(null);
   const [diaIdx, setDiaIdx] = useState(0);
   const [inicio, setInicio] = useState<string | null>(null);
@@ -23,13 +22,12 @@ export default function PedidoTela() {
 
   const carregar = useCallback(async () => {
     try {
-      const [d, eu] = await Promise.all([api<Disponibilidade>(null, '/v2/disponibilidade'), api<{ taxaPendente: number }>('cliente', '/v2/eu')]);
-      setDisp(d);
-      setTaxa(eu.taxaPendente);
+      recarregarConfig();
+      setDisp(await api<Disponibilidade>(null, '/v2/disponibilidade'));
     } catch (e) {
       setErro((e as Error).message);
     }
-  }, []);
+  }, [recarregarConfig]);
 
   useEffect(() => {
     const t = setTimeout(carregar, 0);
@@ -51,7 +49,7 @@ export default function PedidoTela() {
         method: 'POST',
         corpo: { mercadoId, agendado, inicio: agendado ? inicio : undefined },
       });
-      router.replace(`/corrida/${c.id}`);
+      router.replace(`/checkout/${c.id}`);
     } catch (e) {
       setErro((e as Error).message);
       setInicio(null);
@@ -136,8 +134,8 @@ export default function PedidoTela() {
         )}
 
         <View style={s.info}>
-          <Text style={s.infoTexto}>💳 Você paga o frete pelo app só quando o motorista chegar ao mercado.</Text>
-          {taxa > 0 && <Text style={[s.infoTexto, { color: cores.alerta }]}>+ {formatarReais(taxa)} de taxa de deslocamento pendente.</Text>}
+          <Text style={s.infoTexto}>🔒 Pagamento seguro dentro do app (Pix ou cartão). O valor fica retido e só é liberado ao motorista quando você confirmar que ele chegou ao mercado.</Text>
+          <Text style={s.infoTexto}>Se nenhum motorista aceitar ou você cancelar antes da chegada, o valor é devolvido.</Text>
         </View>
         {erro && <Text style={s.erro}>{erro}</Text>}
       </ScrollView>
@@ -145,10 +143,10 @@ export default function PedidoTela() {
       <View style={[s.rodape, { paddingBottom: 12 + insets.bottom }]}>
         <View style={{ flex: 1 }}>
           <Text style={s.rodapeRotulo}>{agendado && hora ? `${dia?.rotulo} · ${hora}` : 'Valor do frete'}</Text>
-          <Text style={s.rodapeValor}>{valor === null ? '—' : formatarReais(valor + taxa)}</Text>
+          <Text style={s.rodapeValor}>{valor === null ? '—' : formatarReais(valor)}</Text>
         </View>
         <Pressable style={[s.botao, !pode && { opacity: 0.45 }]} disabled={!pode} onPress={chamar}>
-          {enviando ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>{agendado ? 'Agendar' : 'Chamar motorista'}</Text>}
+          {enviando ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Pagar e {agendado ? 'agendar' : 'chamar'}</Text>}
         </Pressable>
       </View>
     </View>

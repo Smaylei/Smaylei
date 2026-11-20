@@ -9,7 +9,7 @@ import { formatarReais } from '../services/preco';
 
 type Aba = 'andamento' | 'agendadas' | 'historico';
 const ATUALIZAR_SEG = 15;
-const ATIVAS = ['buscando', 'aceito', 'aguardando_pagamento', 'pago'];
+const ATIVAS = ['buscando', 'aceito', 'no_local', 'em_andamento'];
 
 const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
 const diaHora = (iso: string) =>
@@ -132,7 +132,7 @@ export default function Painel() {
         <Numero rotulo="Motoristas online" valor={String(res.motoristasOnline)} />
         <Numero rotulo="Corridas ativas" valor={String(res.corridasAtivas)} />
         <Numero rotulo="Faturado hoje" valor={formatarReais(res.faturamentoHoje)} />
-        <Numero rotulo="A repassar" valor={formatarReais(res.aRepassar)} />
+        <Numero rotulo="Retido (antifraude)" valor={formatarReais(res.retido)} />
       </View>
 
       <View style={s.atalhos}>
@@ -141,6 +141,18 @@ export default function Painel() {
         </Pressable>
         <Pressable style={s.atalho} onPress={() => router.push('/clientes-admin')}>
           <Text style={s.atalhoTexto}>👤 Clientes</Text>
+        </Pressable>
+      </View>
+      <View style={s.atalhos}>
+        <Pressable style={[s.atalho, res.saquesPendentesQtd > 0 && s.atalhoAlerta]} onPress={() => router.push('/saques-admin')}>
+          <Text style={s.atalhoTexto}>
+            💸 Saques{res.saquesPendentesQtd ? ` · ${res.saquesPendentesQtd} a pagar (${formatarReais(res.saquesPendentes)})` : ''}
+          </Text>
+        </Pressable>
+        <Pressable style={[s.atalho, res.estornosPendentesQtd > 0 && s.atalhoAlerta]} onPress={() => router.push('/estornos-admin')}>
+          <Text style={s.atalhoTexto}>
+            ↩️ Estornos{res.estornosPendentesQtd ? ` · ${res.estornosPendentesQtd} (${formatarReais(res.estornosPendentes)})` : ''}
+          </Text>
         </Pressable>
       </View>
       <Text style={s.agenda}>
@@ -168,7 +180,7 @@ export default function Painel() {
           key={c.id}
           c={c}
           onCancelar={() =>
-            Alert.alert('Cancelar corrida?', `${c.cliente_nome} · ${c.janela}${c.pago_em ? `\nEstorne ${formatarReais(c.valor_cobrado ?? c.valor)} no app da InfinitePay.` : ''}`, [
+            Alert.alert('Cancelar corrida?', `${c.cliente_nome} · ${c.janela}${c.pago_em ? `\nO valor de ${formatarReais(c.valor)} vai para Estornos.` : ''}`, [
               { text: 'Voltar', style: 'cancel' },
               { text: 'Cancelar corrida', style: 'destructive', onPress: () => acao(() => Admin.cancelarCorrida(c.id)) },
             ])
@@ -203,17 +215,17 @@ function Cartao({ c, onCancelar }: { c: Admin.CorridaAdmin; onCancelar: () => vo
       <Text style={s.detalhe}>🛒 {c.mercado_nome}</Text>
       <Text style={s.detalhe}>🚗 {c.motorista_nome ? `${c.motorista_nome} (${c.motorista_placa})` : 'procurando motorista…'}</Text>
       <View style={s.linha}>
-        <Text style={s.valor}>{formatarReais(c.valor_cobrado ?? c.valor)}</Text>
+        <Text style={s.valor}>{formatarReais(c.valor)}</Text>
         <Text style={s.detalhe}>
-          {c.pago_em ? `Pago · ${c.metodo === 'pix' ? 'Pix' : 'cartão'}` : ''}
+          {c.pago_em ? `${c.metodo === 'pix' ? 'Pix' : 'cartão'} · ${c.liberado_em ? 'liberado ao motorista' : c.status === 'cancelado' ? 'estorno' : '🔒 retido'}` : 'não pago'}
           {c.ganho_motorista ? ` · motorista ${formatarReais(c.ganho_motorista)}` : ''}
         </Text>
       </View>
       {c.status === 'cancelado' && (
         <Text style={s.erro}>
-          Cancelada ({c.motivo === 'nao_pagou' ? 'cliente não pagou' : c.motivo === 'sem_motorista' ? 'sem motorista' : `por ${c.cancelado_por}`})
-          {c.taxa_aplicada ? ` · taxa ${formatarReais(c.taxa_aplicada)}` : ''}
-          {c.pago_em ? ` · estornar ${formatarReais(c.valor_cobrado ?? c.valor)}` : ''}
+          Cancelada ({c.motivo === 'cliente_ausente' ? 'cliente não apareceu' : c.motivo === 'sem_motorista' ? 'sem motorista' : c.motivo === 'nao_pago' ? 'não pagou' : `por ${c.cancelado_por}`})
+          {c.taxa_aplicada ? ` · taxa ${formatarReais(c.taxa_aplicada)} ao motorista` : ''}
+          {c.reembolso > 0 ? ` · estorno ${formatarReais(c.reembolso)}${c.reembolsado_em ? ' feito' : ' pendente'}` : ''}
         </Text>
       )}
       <View style={s.botoes}>
@@ -253,6 +265,7 @@ const s = StyleSheet.create({
   atalhos: { flexDirection: 'row', gap: 8 },
   atalho: { flex: 1, backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.primaria, padding: 12 },
   atalhoTexto: { fontSize: 14, fontWeight: '700', color: cores.primaria },
+  atalhoAlerta: { borderColor: cores.alerta, backgroundColor: cores.alertaFundo },
   agenda: { fontSize: 12, color: cores.suave },
   erro: { color: cores.erro, fontSize: 13 },
   abas: { flexDirection: 'row', gap: 6, marginTop: 6 },

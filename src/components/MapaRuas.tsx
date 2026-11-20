@@ -61,7 +61,8 @@ const SCRIPT = String.raw`
     if (est.casa){ var s=tela.apply(null,proj(est.casa.lat,est.casa.lon)), x=s[0], y=s[1];
       ctx.fillStyle='#D2463C'; ctx.beginPath(); ctx.moveTo(x,y); ctx.bezierCurveTo(x-12,y-14,x-9,y-28,x,y-28); ctx.bezierCurveTo(x+9,y-28,x+12,y-14,x,y); ctx.fill();
       ctx.beginPath(); ctx.arc(x,y-19,4,0,7); ctx.fillStyle='#FFFFFF'; ctx.fill(); rot('Casa',x+12,y-14,false); }
-    if (est.motorista){ var mm=tela.apply(null,proj(est.motorista.lat,est.motorista.lon));
+    var pm = posMotorista();
+    if (pm){ var mm=tela.apply(null,proj(pm[0],pm[1]));
       ctx.beginPath(); ctx.arc(mm[0],mm[1],13,0,7); ctx.fillStyle='#2F6FD6'; ctx.fill(); ctx.lineWidth=3; ctx.strokeStyle='#FFFFFF'; ctx.stroke();
       ctx.font='14px sans-serif'; ctx.fillText('🚗',mm[0]-8,mm[1]+5); ctx.font='600 12px -apple-system, Roboto, sans-serif'; rot('Motorista',mm[0]+16,mm[1]+4,false); }
   }
@@ -75,8 +76,23 @@ const SCRIPT = String.raw`
     if (!pts.length || (est.modo==='escolher' && !ruaPath && !est.casa)) (est.mercados||[]).forEach(function(m){ pts.push(proj(m.lat,m.lon)); });
     enquadrar(pts, 50);
   }
+  // Carro deslizando entre uma posição e a próxima (como nos apps de corrida).
+  var anim = null, DUR = 3000;
+  function posMotorista(){
+    if (!est || !est.motorista) return null;
+    if (!anim) return [est.motorista.lat, est.motorista.lon];
+    var t = Math.min(1, (performance.now()-anim.t0)/DUR), e = t*(2-t);
+    return [anim.de[0]+(anim.para[0]-anim.de[0])*e, anim.de[1]+(anim.para[1]-anim.de[1])*e];
+  }
+  function quadro(){ if (!anim) return; desenhar(); if (performance.now()-anim.t0 < DUR) requestAnimationFrame(quadro); else anim=null; }
   window.mfEstado = function(novo){
-    var antes = est; est = novo;
+    var antes = est;
+    if (antes && antes.motorista && novo.motorista && (antes.motorista.lat!==novo.motorista.lat || antes.motorista.lon!==novo.motorista.lon)) {
+      var atual = posMotorista() || [antes.motorista.lat, antes.motorista.lon];
+      anim = { de: atual, para: [novo.motorista.lat, novo.motorista.lon], t0: performance.now() };
+      requestAnimationFrame(quadro);
+    }
+    est = novo;
     if (!antes || antes.rua !== novo.rua){ ruaPath=null; est._ruaPts=null;
       if (novo.rua && porNome[novo.rua]){ ruaPath=new Path2D(); var pts=[]; porNome[novo.rua].forEach(function(w){ ruaPath.moveTo(X[w[3]],Y[w[3]]);
         for (var k=3;k<w.length;k++){ ruaPath.lineTo(X[w[k]],Y[w[k]]); pts.push([X[w[k]],Y[w[k]]]); } }); est._ruaPts=pts; } }

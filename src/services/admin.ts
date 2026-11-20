@@ -15,7 +15,10 @@ export type ConfigServidor = {
   comissaoMotoristaPct: number;
   taxaDeslocamento: number;
   esperaPagamentoMin: number;
+  esperaConfirmacaoMin: number;
+  raioChegadaM: number;
   ofertaMin: number;
+  saqueDias: number;
 };
 
 export type Resumo = {
@@ -24,7 +27,11 @@ export type Resumo = {
   motoristasOnline: number;
   motoristasPendentes: number;
   corridasAtivas: number;
-  aRepassar: number;
+  retido: number;
+  saquesPendentes: number;
+  saquesPendentesQtd: number;
+  estornosPendentes: number;
+  estornosPendentesQtd: number;
   faturamentoHoje: number;
 };
 
@@ -46,6 +53,9 @@ export type CorridaAdmin = {
   taxa_aplicada: number;
   criado_em: string;
   pago_em: string | null;
+  liberado_em: string | null;
+  reembolso: number;
+  reembolsado_em: string | null;
   cliente_nome: string;
   cliente_telefone: string | null;
   cliente_endereco: string;
@@ -64,15 +74,16 @@ export type MotoristaAdmin = {
   carro: string;
   placa: string;
   cor: string | null;
-  pix: string | null;
   status: 'pendente' | 'aprovado' | 'bloqueado';
   online: number;
   loc_em: string | null;
   criado_em: string;
   selfie: string | null;
   cnh: string | null;
-  a_repassar: number;
   corridas: number;
+  disponivel: number;
+  emLiberacao: number;
+  totalGanho: number;
 };
 
 export type ClienteAdmin = {
@@ -81,7 +92,6 @@ export type ClienteAdmin = {
   cpf: string;
   telefone: string | null;
   endereco: string;
-  taxa_pendente: number;
   bloqueado: number;
   criado_em: string;
   foto: string | null;
@@ -106,8 +116,39 @@ export const clientes = () => api<ClienteAdmin[]>('admin', '/v2/admin/clientes')
 export const salvarConfig = (c: Partial<ConfigServidor>) => api<ConfigServidor>('admin', '/v2/admin/config', { method: 'PUT', corpo: c });
 export const statusMotorista = (id: string, status: MotoristaAdmin['status']) =>
   api('admin', `/v2/admin/motoristas/${id}/status`, { method: 'POST', corpo: { status } });
-export const repasseFeito = (id: string) => api<{ valor: number; corridas: number }>('admin', `/v2/admin/motoristas/${id}/repasse`, { method: 'POST' });
-export const acaoCliente = (id: string, acao: 'bloquear' | 'desbloquear' | 'zerar-taxa') => api('admin', `/v2/admin/clientes/${id}/${acao}`, { method: 'POST' });
+export const acaoCliente = (id: string, acao: 'bloquear' | 'desbloquear') => api('admin', `/v2/admin/clientes/${id}/${acao}`, { method: 'POST' });
+
+export type SaqueAdmin = {
+  id: string;
+  motorista_id: string;
+  motorista_nome: string;
+  motorista_telefone: string;
+  valor: number;
+  chave_pix: string;
+  status: 'solicitado' | 'pago' | 'recusado';
+  criado_em: string;
+  pago_em: string | null;
+  motivo: string | null;
+};
+export type EstornoAdmin = {
+  id: string;
+  valor: number;
+  reembolso: number;
+  reembolsado_em: string | null;
+  motivo: string | null;
+  cancelado_em: string | null;
+  receipt_url: string | null;
+  metodo: string | null;
+  mercado_nome: string;
+  taxa_aplicada: number;
+  cliente_nome: string;
+  cliente_telefone: string | null;
+};
+export const saques = () => api<SaqueAdmin[]>('admin', '/v2/admin/saques');
+export const pagarSaque = (id: string) => api('admin', `/v2/admin/saques/${id}/pagar`, { method: 'POST' });
+export const recusarSaque = (id: string, motivo: string) => api('admin', `/v2/admin/saques/${id}/recusar`, { method: 'POST', corpo: { motivo } });
+export const estornos = () => api<EstornoAdmin[]>('admin', '/v2/admin/estornos');
+export const estornoFeito = (id: string) => api('admin', `/v2/admin/estornos/${id}/feito`, { method: 'POST' });
 export const cancelarCorrida = (id: string) => api('admin', `/v2/admin/corridas/${id}/cancelar`, { method: 'POST' });
 export const linkAgenda = () => api<{ url: string }>('admin', '/v2/admin/agenda-link');
 export const testarWhatsapp = () => api<{ ok: boolean }>('admin', '/v2/admin/whatsapp-teste', { method: 'POST' });

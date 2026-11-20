@@ -61,7 +61,7 @@ export async function fonteImagem(papel: Papel, caminho: string) {
 
 // ---------- tipos ----------
 
-export type Status = 'buscando' | 'aceito' | 'aguardando_pagamento' | 'pago' | 'entregue' | 'cancelado';
+export type Status = 'pagamento_pendente' | 'buscando' | 'aceito' | 'no_local' | 'em_andamento' | 'entregue' | 'cancelado';
 
 export type MotoristaPublico = {
   id: string;
@@ -85,17 +85,21 @@ export type CorridaCliente = {
   mercadoId: string;
   mercadoNome: string;
   valor: number;
-  taxaIncluida: number;
-  valorCobrado: number;
   checkoutUrl: string | null;
+  pagamentoAte?: string;
   receiptUrl?: string;
   metodo?: string;
   motivo?: string;
   taxaAplicada: number;
+  reembolso: number;
+  reembolsadoEm?: string;
   criadoEm: string;
-  chegouEm?: string;
   pagoEm?: string;
-  esperaPagamentoMin: number;
+  chegouEm?: string;
+  liberadoEm?: string;
+  entregueEm?: string;
+  esperaConfirmacaoMin: number;
+  taxaDeslocamento: number;
   motorista: MotoristaPublico | null;
 };
 
@@ -113,9 +117,19 @@ export type CorridaMotorista = {
   valor: number;
   ganho: number;
   chegouEm?: string;
-  pagoEm?: string;
+  liberadoEm?: string;
+  esperaConfirmacaoMin: number;
+  raioChegadaM: number;
+  taxaDeslocamento: number;
   kmAteMercado?: number | null;
   ofertaAte?: string;
+};
+
+export type Saldo = {
+  disponivel: number;
+  emLiberacao: number;
+  totalGanho: number;
+  proximoSaqueEm: string | null;
 };
 
 export type Mensagem = { id: number; autor: 'cliente' | 'motorista'; texto: string; criadoEm: string };
@@ -127,10 +141,11 @@ export type Disponibilidade = {
 };
 
 export const ROTULO_STATUS: Record<Status, string> = {
-  buscando: 'Procurando motorista',
-  aceito: 'Motorista a caminho do mercado',
-  aguardando_pagamento: 'Motorista no mercado — pague para começar',
-  pago: 'Pago — compras a caminho',
+  pagamento_pendente: 'Aguardando pagamento',
+  buscando: 'Pago · procurando motorista',
+  aceito: 'Motorista a caminho da coleta',
+  no_local: 'Motorista no local da coleta',
+  em_andamento: 'A caminho da entrega',
   entregue: 'Entregue',
   cancelado: 'Cancelado',
 };

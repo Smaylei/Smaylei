@@ -26,6 +26,8 @@ type Ctx = {
   rotas: Record<string, RotaMercado | null> | null;
   /** Valor final do frete, calculado em segundo plano a partir da rota e das tarifas. */
   valorFrete: (mercadoId: string, agendado: boolean) => number | null;
+  /** Busca de novo as tarifas definidas no App Admin. */
+  recarregarConfig: () => void;
 };
 
 const AppCtx = createContext<Ctx | null>(null);
@@ -43,6 +45,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTimeout(() => setRotas(rotasAteCasa({ lat: c.lat, lon: c.lon }, MERCADOS)), 50);
   }, []);
 
+  // Tarifas, margem e urgência vêm do servidor: qualquer mudança no App Admin vale aqui também.
+  const recarregarConfig = useCallback(() => {
+    if (!API) return;
+    fetch(`${API}/v2/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c: Partial<Config> | null) => {
+        if (c?.tarifas?.length) setConfig({ tarifas: c.tarifas, margem: c.margem ?? 0, urgencia: c.urgencia ?? URGENCIA_PADRAO });
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     Promise.all([carregarEndereco(), lerToken('cliente')]).then(([e, t]) => {
       setCasa(e);
@@ -50,15 +63,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCarregado(true);
       if (e) calcular(e);
     });
-    // Tarifas, margem e urgência vêm do servidor (definidas no App Admin).
-    if (API)
-      fetch(`${API}/v2/config`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((c: Partial<Config> | null) => {
-          if (c?.tarifas?.length) setConfig({ tarifas: c.tarifas, margem: c.margem ?? 0, urgencia: c.urgencia ?? URGENCIA_PADRAO });
-        })
-        .catch(() => {});
-  }, [calcular]);
+    const t0 = setTimeout(recarregarConfig, 0);
+    const t = setInterval(recarregarConfig, 60_000);
+    return () => {
+      clearTimeout(t0);
+      clearInterval(t);
+    };
+  }, [calcular, recarregarConfig]);
 
   const salvarCasa = useCallback(
     async (e: Endereco) => {
@@ -81,7 +92,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <AppCtx.Provider value={{ carregado, casa, temConta, salvarCasa, config, rotas, valorFrete }}>
+    <AppCtx.Provider value={{ carregado, casa, temConta, salvarCasa, config, rotas, valorFrete, recarregarConfig }}>
       {children}
     </AppCtx.Provider>
   );

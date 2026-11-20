@@ -1,4 +1,3 @@
-import * as Linking from 'expo-linking';
 import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -11,8 +10,8 @@ import { api, fonteImagem, ROTULO_STATUS, type CorridaCliente } from '../../serv
 import { rotaAte } from '../../services/eta';
 import { formatarReais } from '../../services/preco';
 
-const ATUALIZAR_MS = 5000;
-const ETAPAS: CorridaCliente['status'][] = ['buscando', 'aceito', 'aguardando_pagamento', 'pago', 'entregue'];
+const ATUALIZAR_MS = 3000; // o carro anda no mapa a cada atualização
+const ETAPAS: CorridaCliente['status'][] = ['buscando', 'aceito', 'no_local', 'em_andamento', 'entregue'];
 
 export default function Corrida() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -20,12 +19,11 @@ export default function Corrida() {
   const [c, setC] = useState<CorridaCliente | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [foto, setFoto] = useState<{ uri: string; headers?: Record<string, string> } | null>(null);
-  const [agora, setAgora] = useState(0);
+  const [ocupado, setOcupado] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
       setC(await api<CorridaCliente>('cliente', `/v2/corridas/${id}`));
-      setAgora(Date.now());
       setErro(null);
     } catch (e) {
       setErro((e as Error).message);
@@ -50,14 +48,23 @@ export default function Corrida() {
 
   const mercado = MERCADOS.find((m) => m.id === c?.mercadoId);
   const mot = c?.motorista;
-  // Destino do motorista: o mercado (até pagar) e depois a casa do cliente.
-  const destino = c?.status === 'pago' ? (casa ? { lat: casa.lat, lon: casa.lon } : null) : mercado ? { lat: mercado.lat, lon: mercado.lon } : null;
-  const latMot = mot?.lat != null ? Math.round(mot.lat * 1e4) / 1e4 : null;
-  const lonMot = mot?.lon != null ? Math.round(mot.lon * 1e4) / 1e4 : null;
+  // Antes da confirmação o motorista vai até a coleta (mercado); depois, até a casa do cliente.
+  const indoParaCasa = c?.status === 'em_andamento';
+  const destino = indoParaCasa ? (casa ? { lat: casa.lat, lon: casa.lon } : null) : mercado ? { lat: mercado.lat, lon: mercado.lon } : null;
+  const latMot = mot?.lat != null ? Math.round(mot.lat * 1e5) / 1e5 : null;
+  const lonMot = mot?.lon != null ? Math.round(mot.lon * 1e5) / 1e5 : null;
+  const latEta = latMot != null ? Math.round(latMot * 1e3) / 1e3 : null; // a rota só é recalculada a cada ~100 m
+  const lonEta = lonMot != null ? Math.round(lonMot * 1e3) / 1e3 : null;
   const eta = useMemo(
-    () => (latMot != null && lonMot != null && destino && ['aceito', 'pago'].includes(c?.status ?? '') ? rotaAte({ lat: latMot, lon: lonMot }, destino) : null),
+    () => (latEta != null && lonEta != null && destino && ['aceito', 'em_andamento'].includes(c?.status ?? '') ? rotaAte({ lat: latEta, lon: lonEta }, destino) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [latMot, lonMot, destino?.lat, destino?.lon, c?.status],
+    [latEta, lonEta, destino?.lat, destino?.lon, c?.status],
+  );
+  // Até a casa, depois da coleta, enquanto o motorista ainda vai ao mercado.
+  const etaCasaDepois = useMemo(
+    () => (mercado && casa && c?.status === 'aceito' ? rotaAte({ lat: mercado.lat, lon: mercado.lon }, { lat: casa.lat, lon: casa.lon }) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mercado?.id, casa?.lat, casa?.lon, c?.status],
   );
 
   const estadoMapa: EstadoMapa | null = useMemo(() => {
@@ -65,25 +72,34 @@ export default function Corrida() {
     return {
       modo: 'rota',
       casa: { lat: casa.lat, lon: casa.lon },
-      mercados: mercado ? [{ id: mercado.id, curto: mercado.nome.split(' ')[0], lat: mercado.lat, lon: mercado.lon }] : [],
+      mercados: mercado ? [{ id: mercado.id, curto: 'Coleta', lat: mercado.lat, lon: mercado.lon }] : [],
       sel: mercado?.id ?? null,
       motorista: latMot != null && lonMot != null ? { lat: latMot, lon: lonMot } : null,
       rota: eta ? { ida: eta.caminho, volta: [] } : null,
     };
   }, [c, casa, mercado, latMot, lonMot, eta]);
 
-  async function pagar() {
-    if (!c?.checkoutUrl) return;
-    await WebBrowser.openAuthSessionAsync(c.checkoutUrl, Linking.createURL('pagamento'));
-    carregar();
+  async function confirmar() {
+    setOcupado(true);
+    try {
+      setC(await api<CorridaCliente>('cliente', `/v2/corridas/${id}/confirmar-motorista`, { method: 'POST' }));
+    } catch (e) {
+      Alert.alert('Não foi possível', (e as Error).message);
+    } finally {
+      setOcupado(false);
+    }
   }
 
   function cancelar() {
     if (!c) return;
-    const comTaxa = c.status === 'aguardando_pagamento';
+    const comTaxa = c.status === 'no_local';
     Alert.alert(
       'Cancelar frete?',
-      comTaxa ? 'O motorista já está no mercado. Será cobrada a taxa de deslocamento no seu próximo frete.' : 'O horário fica livre para outra pessoa.',
+      comTaxa
+        ? `O motorista já está no local. A taxa de deslocamento de ${formatarReais(c.taxaDeslocamento)} fica com ele e o restante é devolvido.`
+        : c.pagoEm
+          ? 'O valor pago é devolvido para você.'
+          : 'O pedido é descartado.',
       [
         { text: 'Voltar', style: 'cancel' },
         {
@@ -101,26 +117,41 @@ export default function Corrida() {
   if (!c) return erro ? <Text style={[s.erro, { padding: 20 }]}>{erro}</Text> : <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
 
   const etapa = ETAPAS.indexOf(c.status);
-  const restante = c.status === 'aguardando_pagamento' && c.chegouEm ? Math.max(0, Math.ceil((Date.parse(c.chegouEm) + c.esperaPagamentoMin * 60000 - agora) / 60000)) : null;
+  const km = (v: number) => v.toFixed(1).replace('.', ',');
 
   return (
     <ScrollView contentContainerStyle={s.conteudo}>
       <Stack.Screen options={{ title: c.agendado ? `Frete · ${c.janela}` : 'Seu frete' }} />
 
-      <View style={[s.topo, c.status === 'cancelado' && { backgroundColor: cores.cartao }, c.status === 'aguardando_pagamento' && { backgroundColor: cores.alertaFundo }]}>
-        <Text style={[s.topoTitulo, c.status === 'cancelado' && { color: cores.erro }, c.status === 'aguardando_pagamento' && { color: cores.alerta }]}>
+      <View style={[s.topo, c.status === 'cancelado' && { backgroundColor: cores.cartao }, c.status === 'no_local' && { backgroundColor: cores.alertaFundo }]}>
+        <Text style={[s.topoTitulo, c.status === 'cancelado' && { color: cores.erro }, c.status === 'no_local' && { color: cores.alerta }]}>
           {ROTULO_STATUS[c.status]}
         </Text>
-        {eta && c.status === 'aceito' && <Text style={s.eta}>Chega ao mercado em ~{eta.min} min ({eta.km.toFixed(1).replace('.', ',')} km)</Text>}
-        {eta && c.status === 'pago' && <Text style={s.eta}>Chega na sua casa em ~{eta.min} min ({eta.km.toFixed(1).replace('.', ',')} km)</Text>}
-        {c.status === 'buscando' && <Text style={s.eta}>{c.agendado ? `Agendado para ${c.janela}. Avisamos quando um motorista aceitar.` : 'Avisando os motoristas próximos…'}</Text>}
-        {c.status === 'cancelado' && (
+        {eta && c.status === 'aceito' && (
           <Text style={s.eta}>
-            {c.motivo === 'sem_motorista' ? 'Nenhum motorista aceitou a tempo.' : c.motivo === 'nao_pagou' ? 'O pagamento não foi feito no prazo.' : 'Frete cancelado.'}
-            {c.taxaAplicada > 0 ? ` Taxa de deslocamento de ${formatarReais(c.taxaAplicada)} no próximo frete.` : ''}
+            Chega à coleta em <Text style={s.etaForte}>~{eta.min} min</Text> ({km(eta.km)} km)
+            {etaCasaDepois ? `\nDepois, ~${etaCasaDepois.min} min até sua casa` : ''}
           </Text>
         )}
-        {c.status !== 'cancelado' && (
+        {eta && c.status === 'em_andamento' && (
+          <Text style={s.eta}>
+            Chega na sua casa em <Text style={s.etaForte}>~{eta.min} min</Text> ({km(eta.km)} km)
+          </Text>
+        )}
+        {c.status === 'pagamento_pendente' && <Text style={s.eta}>Finalize o pagamento para chamar o motorista.</Text>}
+        {c.status === 'buscando' && (
+          <Text style={s.eta}>
+            {c.agendado ? `Agendado para ${c.janela}. Avisamos quando um motorista aceitar.` : 'Avisando os motoristas próximos…'}
+            {'\n'}🔒 Seu pagamento está retido com segurança.
+          </Text>
+        )}
+        {c.status === 'cancelado' && (
+          <Text style={s.eta}>
+            {c.motivo === 'sem_motorista' ? 'Nenhum motorista aceitou a tempo.' : c.motivo === 'nao_pago' ? 'O pagamento não foi concluído.' : 'Frete cancelado.'}
+            {c.reembolso > 0 ? ` ${formatarReais(c.reembolso)} ${c.reembolsadoEm ? 'devolvidos' : 'serão devolvidos'} para você.` : ''}
+          </Text>
+        )}
+        {c.status !== 'cancelado' && c.status !== 'pagamento_pendente' && (
           <View style={s.etapas}>
             {ETAPAS.map((e, i) => (
               <View key={e} style={[s.etapa, i <= etapa && s.etapaFeita]} />
@@ -129,18 +160,23 @@ export default function Corrida() {
         )}
       </View>
 
-      {c.status === 'aguardando_pagamento' && (
-        <View style={s.pagar}>
-          <Text style={s.pagarTexto}>O motorista chegou ao {c.mercadoNome}. Pague para ele pegar suas compras.</Text>
-          <Pressable style={[s.botao, { backgroundColor: cores.alerta }]} onPress={pagar}>
-            <Text style={s.botaoTexto}>Pagar {formatarReais(c.valorCobrado)}</Text>
+      {c.status === 'pagamento_pendente' && (
+        <Pressable style={s.botao} onPress={() => router.push(`/checkout/${c.id}`)}>
+          <Text style={s.botaoTexto}>Pagar {formatarReais(c.valor)}</Text>
+        </Pressable>
+      )}
+
+      {c.status === 'no_local' && (
+        <View style={s.confirmar}>
+          <Text style={s.confirmarTitulo}>O motorista chegou ao {c.mercadoNome}?</Text>
+          <Text style={s.confirmarTexto}>Confira a foto, o carro e a placa abaixo. Ao confirmar, o pagamento é liberado para ele e o frete começa.</Text>
+          <Pressable style={[s.botao, { backgroundColor: cores.alerta }]} onPress={confirmar} disabled={ocupado}>
+            {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Sim, o motorista está aqui</Text>}
           </Pressable>
-          {restante !== null && <Text style={s.pagarPrazo}>Prazo: {restante} min. Depois disso o frete é cancelado com taxa de deslocamento.</Text>}
-          {c.taxaIncluida > 0 && <Text style={s.pagarPrazo}>Inclui {formatarReais(c.taxaIncluida)} de taxa de deslocamento pendente.</Text>}
         </View>
       )}
 
-      {estadoMapa && ['aceito', 'aguardando_pagamento', 'pago'].includes(c.status) && <MapaRuas estado={estadoMapa} style={{ height: 300 }} />}
+      {estadoMapa && ['aceito', 'no_local', 'em_andamento'].includes(c.status) && <MapaRuas estado={estadoMapa} style={{ height: 320 }} />}
 
       {mot && c.status !== 'cancelado' && (
         <View style={s.motorista}>
@@ -160,17 +196,19 @@ export default function Corrida() {
       )}
 
       <View style={s.resumo}>
-        <Linha a="Mercado" b={c.mercadoNome} />
+        <Linha a="Coleta" b={c.mercadoNome} />
         <Linha a="Quando" b={c.agendado ? c.janela : 'Agora'} />
         <Linha a="Frete" b={formatarReais(c.valor)} />
-        {c.status === 'pago' || c.status === 'entregue' ? <Linha a="Pago" b={`${formatarReais(c.valorCobrado)} · ${c.metodo === 'pix' ? 'Pix' : 'cartão'}`} /> : null}
+        {c.pagoEm ? (
+          <Linha a="Pagamento" b={`${c.metodo === 'pix' ? 'Pix' : 'Cartão'} · ${c.liberadoEm ? 'liberado ao motorista' : c.status === 'cancelado' ? 'devolução' : 'retido'}`} />
+        ) : null}
       </View>
       {c.receiptUrl && (
         <Pressable onPress={() => WebBrowser.openBrowserAsync(c.receiptUrl!)}>
           <Text style={s.link}>Ver comprovante</Text>
         </Pressable>
       )}
-      {['buscando', 'aceito', 'aguardando_pagamento'].includes(c.status) && (
+      {['pagamento_pendente', 'buscando', 'aceito', 'no_local'].includes(c.status) && (
         <Pressable onPress={cancelar}>
           <Text style={[s.link, { color: cores.erro }]}>Cancelar frete</Text>
         </Pressable>
@@ -194,18 +232,19 @@ const s = StyleSheet.create({
   topo: { backgroundColor: cores.primariaClara, borderRadius: raio, padding: 16, gap: 4 },
   topoTitulo: { fontSize: 20, fontWeight: '800', color: cores.primaria },
   eta: { fontSize: 15, color: cores.texto },
+  etaForte: { fontWeight: '800', fontSize: 17 },
   etapas: { flexDirection: 'row', gap: 6, marginTop: 10 },
   etapa: { flex: 1, height: 6, borderRadius: 3, backgroundColor: cores.borda },
   etapaFeita: { backgroundColor: cores.primaria },
-  pagar: { backgroundColor: cores.cartao, borderWidth: 2, borderColor: cores.alerta, borderRadius: raio, padding: 14, gap: 8 },
-  pagarTexto: { fontSize: 15, color: cores.texto, fontWeight: '600' },
-  pagarPrazo: { fontSize: 12, color: cores.suave },
+  confirmar: { backgroundColor: cores.cartao, borderWidth: 2, borderColor: cores.alerta, borderRadius: raio, padding: 14, gap: 8 },
+  confirmarTitulo: { fontSize: 17, fontWeight: '800', color: cores.texto },
+  confirmarTexto: { fontSize: 14, color: cores.suave },
   motorista: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12 },
-  foto: { width: 60, height: 60, borderRadius: 30 },
+  foto: { width: 64, height: 64, borderRadius: 32 },
   fotoVazia: { backgroundColor: cores.fundo, alignItems: 'center', justifyContent: 'center' },
   motNome: { fontSize: 17, fontWeight: '800', color: cores.texto },
   motCarro: { fontSize: 14, color: cores.suave },
-  placa: { alignSelf: 'flex-start', marginTop: 4, fontSize: 14, fontWeight: '800', letterSpacing: 1, borderWidth: 1, borderColor: cores.texto, borderRadius: 4, paddingHorizontal: 6 },
+  placa: { alignSelf: 'flex-start', marginTop: 4, fontSize: 15, fontWeight: '800', letterSpacing: 1, borderWidth: 1, borderColor: cores.texto, borderRadius: 4, paddingHorizontal: 6 },
   chat: { backgroundColor: cores.primaria, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12 },
   chatTexto: { color: '#fff', fontWeight: '700' },
   resumo: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12, gap: 6 },

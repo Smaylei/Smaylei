@@ -14,8 +14,8 @@ type Eu = {
   online: boolean;
   temSelfie: boolean;
   temCnh: boolean;
-  aReceber: number;
-  corridasAReceber: number;
+  disponivel: number;
+  emLiberacao: number;
   comissaoPct: number;
   carro: string;
   placa: string;
@@ -106,7 +106,7 @@ export default function Motorista() {
   if (semConta) return <Redirect href="/cadastro-motorista" />;
   if (!eu) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
 
-  const atual = minhas.find((c) => ['aceito', 'aguardando_pagamento', 'pago'].includes(c.status) && Date.parse(c.inicio) - agora < 60 * 60000);
+  const atual = minhas.find((c) => ['aceito', 'no_local', 'em_andamento'].includes(c.status) && Date.parse(c.inicio) - agora < 60 * 60000);
   const voltando = minhas.find((c) => c.status === 'entregue' && Date.parse(c.fim) > agora);
   const proximos = minhas.filter((c) => c !== atual && ['aceito'].includes(c.status));
 
@@ -213,10 +213,12 @@ export default function Motorista() {
         </>
       )}
 
-      <View style={s.ganhos}>
-        <Text style={s.detalhe}>A receber ({eu.corridasAReceber} corridas · {eu.comissaoPct}% do frete)</Text>
-        <Text style={s.ganhosValor}>{formatarReais(eu.aReceber)}</Text>
-      </View>
+      <Pressable style={s.ganhos} onPress={() => router.push('/saldo-motorista')}>
+        <Text style={s.detalhe}>Saldo disponível para saque · você recebe {eu.comissaoPct}% do frete</Text>
+        <Text style={s.ganhosValor}>{formatarReais(eu.disponivel)}</Text>
+        {eu.emLiberacao > 0 && <Text style={s.detalhe}>+ {formatarReais(eu.emLiberacao)} em liberação (corridas aceitas)</Text>}
+        <Text style={s.link}>Ver saldo e pedir saque ›</Text>
+      </Pressable>
       <Text style={s.agendaInfo}>
         📅 Agenda do celular: {!agenda.ativo ? 'desligada' : agenda.ultima?.erro ? `⚠️ ${agenda.ultima.erro}` : agenda.ultima ? 'sincronizada' : '…'}
       </Text>

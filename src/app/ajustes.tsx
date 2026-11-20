@@ -8,7 +8,7 @@ import * as Admin from '../services/admin';
 export default function Ajustes() {
   const agenda = useAgenda();
   const [cfg, setCfg] = useState<Admin.ConfigServidor | null>(null);
-  const [texto, setTexto] = useState({ horaInicio: '', horaFim: '', bloqueioMin: '', passoMin: '', antecedenciaMin: '', comissaoMotoristaPct: '', taxaDeslocamento: '', esperaPagamentoMin: '', ofertaMin: '' });
+  const [texto, setTexto] = useState({ horaInicio: '', horaFim: '', bloqueioMin: '', passoMin: '', antecedenciaMin: '', comissaoMotoristaPct: '', taxaDeslocamento: '', esperaPagamentoMin: '', ofertaMin: '', esperaConfirmacaoMin: '', raioChegadaM: '', saqueDias: '' });
   const [salvando, setSalvando] = useState(false);
   const { carregarOpcoes } = agenda;
 
@@ -27,6 +27,9 @@ export default function Ajustes() {
             taxaDeslocamento: String(c.taxaDeslocamento).replace('.', ','),
             esperaPagamentoMin: String(c.esperaPagamentoMin),
             ofertaMin: String(c.ofertaMin),
+            esperaConfirmacaoMin: String(c.esperaConfirmacaoMin),
+            raioChegadaM: String(c.raioChegadaM),
+            saqueDias: String(c.saqueDias),
           });
         })
         .catch((e) => Alert.alert('Erro', (e as Error).message));
@@ -50,6 +53,9 @@ export default function Ajustes() {
         taxaDeslocamento: n(texto.taxaDeslocamento),
         esperaPagamentoMin: n(texto.esperaPagamentoMin),
         ofertaMin: n(texto.ofertaMin),
+        esperaConfirmacaoMin: n(texto.esperaConfirmacaoMin),
+        raioChegadaM: n(texto.raioChegadaM),
+        saqueDias: n(texto.saqueDias),
       });
       setCfg(novo);
       Alert.alert('Salvo', 'Os novos valores já valem para clientes e motoristas.');
@@ -107,10 +113,13 @@ export default function Ajustes() {
         <View style={s.grade}>
           {campo('Parte do motorista (%)', 'comissaoMotoristaPct')}
           {campo('Taxa de deslocamento (R$)', 'taxaDeslocamento', 'numbers-and-punctuation')}
-          {campo('Espera do pagamento (min)', 'esperaPagamentoMin')}
+          {campo('Prazo para pagar o pedido (min)', 'esperaPagamentoMin')}
+          {campo('Espera da confirmação no local (min)', 'esperaConfirmacaoMin')}
+          {campo('Distância máx. p/ "Cheguei" (m)', 'raioChegadaM')}
+          {campo('Saque a cada (dias)', 'saqueDias')}
         </View>
         <Text style={s.ajuda}>
-          O cliente paga quando o motorista chega ao mercado. Se cancelar ou não pagar dentro da espera, a taxa de deslocamento é cobrada no próximo frete.
+          O cliente paga ao pedir; o valor fica retido até ele confirmar que o motorista chegou ao local da coleta. Se cancelar ou não aparecer com o motorista já no local, a taxa de deslocamento vai para o motorista e o resto é estornado.
         </Text>
         <Pressable style={s.botao} onPress={salvarAtendimento} disabled={salvando}>
           {salvando ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Salvar ajustes</Text>}

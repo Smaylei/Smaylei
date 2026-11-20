@@ -9,7 +9,7 @@ import { formatarReais } from '../services/preco';
 
 type Fonte = { uri: string; headers?: Record<string, string> };
 
-/** Motoristas parceiros: aprovar/bloquear, ver selfie e CNH, registrar repasses. */
+/** Motoristas parceiros: aprovar/bloquear, ver selfie e CNH e o saldo de cada um. */
 export default function MotoristasAdmin() {
   const [lista, setLista] = useState<Admin.MotoristaAdmin[]>([]);
   const [aberto, setAberto] = useState<string | null>(null);
@@ -63,12 +63,12 @@ export default function MotoristasAdmin() {
               {m.carro}
               {m.cor ? ` ${m.cor}` : ''} · {m.placa} · {m.corridas} corridas
             </Text>
-            {m.a_repassar > 0 && <Text style={s.repasse}>A repassar: {formatarReais(m.a_repassar)}{m.pix ? ` · Pix ${m.pix}` : ''}</Text>}
+            <Text style={s.repasse}>Saldo: {formatarReais(m.disponivel)}{m.emLiberacao > 0 ? ` · em liberação ${formatarReais(m.emLiberacao)}` : ''} · total {formatarReais(m.totalGanho)}</Text>
           </Pressable>
 
           {aberto === m.id && (
             <View style={{ gap: 8, marginTop: 8 }}>
-              <Text style={s.detalhe}>CPF {formatarCpf(m.cpf)} · WhatsApp {m.telefone}</Text>
+              <Text style={s.detalhe}>CPF (chave Pix) {formatarCpf(m.cpf)} · WhatsApp {m.telefone}</Text>
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <Doc rotulo="Selfie" fonte={m.selfie ? fotos[m.selfie] : undefined} />
                 <Doc rotulo="CNH" fonte={m.cnh ? fotos[m.cnh] : undefined} largo />
@@ -77,17 +77,6 @@ export default function MotoristasAdmin() {
                 {m.status !== 'aprovado' && <Mini texto="Aprovar" onPress={() => acao(() => Admin.statusMotorista(m.id, 'aprovado'))} />}
                 {m.status !== 'bloqueado' && <Mini texto="Bloquear" perigo onPress={() => acao(() => Admin.statusMotorista(m.id, 'bloqueado'))} />}
                 <Mini texto="WhatsApp" onPress={() => Linking.openURL(`https://wa.me/55${m.telefone.replace(/\D/g, '').replace(/^55/, '')}`)} />
-                {m.a_repassar > 0 && (
-                  <Mini
-                    texto={`Repasse feito (${formatarReais(m.a_repassar)})`}
-                    onPress={() =>
-                      Alert.alert('Confirmar repasse', `Você já enviou ${formatarReais(m.a_repassar)} para ${m.nome}${m.pix ? ` (Pix ${m.pix})` : ''}?`, [
-                        { text: 'Ainda não', style: 'cancel' },
-                        { text: 'Sim, enviei', onPress: () => acao(() => Admin.repasseFeito(m.id), 'Repasse registrado.') },
-                      ])
-                    }
-                  />
-                )}
               </View>
             </View>
           )}
