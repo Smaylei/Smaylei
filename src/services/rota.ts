@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import type { Mercado } from '../data/mercados';
 import { distanciaRetaKm, type Trajeto } from './preco';
@@ -40,19 +39,9 @@ export async function geocodificar(endereco: string): Promise<Ponto | null> {
   }
 }
 
-/** Coordenadas do mercado, com cache local para não geocodificar toda vez. */
+/** Coordenadas do mercado (já conhecidas, sem consulta à internet). */
 export async function pontoDoMercado(m: Mercado): Promise<Ponto> {
-  const chave = `mercado:${m.id}`;
-  try {
-    const salvo = await AsyncStorage.getItem(chave);
-    if (salvo) return JSON.parse(salvo);
-  } catch {}
-  const p = await geocodificar(m.endereco);
-  if (p) {
-    AsyncStorage.setItem(chave, JSON.stringify(p)).catch(() => {});
-    return p;
-  }
-  return { lat: m.latAprox, lon: m.lonAprox };
+  return { lat: m.lat, lon: m.lon };
 }
 
 export async function minhaLocalizacao(): Promise<Ponto> {

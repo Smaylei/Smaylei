@@ -3,7 +3,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap">
 <style>
-  /* Layout: coluna única no celular; no PC, entrada à esquerda e resultado fixo à direita, como um cupom de caixa. */
+  /* Layout: painel de cadastro e mercados à esquerda, mapa de Guaramirim fixo à direita; no celular, tudo em uma coluna com o mapa logo após o cadastro. */
   :root {
     --bg: #F2F5F3;
     --surface: #FFFFFF;
@@ -13,300 +13,657 @@
     --accent: #1B8048;
     --accent-soft: #E1F2E8;
     --accent-fg: #FFFFFF;
-    --uber: #111111;
-    --uber-fg: #FFFFFF;
-    --nn: #FFC700;
-    --nn-fg: #111111;
-    --warn-bg: #FFF4D6;
-    --warn-fg: #8A5A00;
+    --volta: #2F6FD6;
+    --uber: #111111; --uber-fg: #FFFFFF;
+    --nn: #FFC700; --nn-fg: #111111;
+    --warn-bg: #FFF4D6; --warn-fg: #8A5A00;
+    --map-bg: #EEF1EC; --road: #FFFFFF; --road-edge: #C9D1CB; --road-major: #F6D77A; --road-minor: #DCE2DD;
+    --pin-home: #D2463C;
     --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
     --font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #0F1512; --surface: #18211C; --fg: #E6EEE9; --muted: #98A89F; --line: #2A362F;
-      --accent: #4CC783; --accent-soft: #1C3326; --accent-fg: #0B1A12;
+      --accent: #4CC783; --accent-soft: #1C3326; --accent-fg: #0B1A12; --volta: #6EA2FF;
       --uber: #F2F2F2; --uber-fg: #111111; --nn: #FFC700; --nn-fg: #111111;
-      --warn-bg: #3A2E10; --warn-fg: #F3C866; color-scheme: dark;
+      --warn-bg: #3A2E10; --warn-fg: #F3C866;
+      --map-bg: #141B17; --road: #34403A; --road-edge: #1D2621; --road-major: #8A7433; --road-minor: #2A342F;
+      --pin-home: #FF6B5E; color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --bg: #0F1512; --surface: #18211C; --fg: #E6EEE9; --muted: #98A89F; --line: #2A362F;
-    --accent: #4CC783; --accent-soft: #1C3326; --accent-fg: #0B1A12;
+    --accent: #4CC783; --accent-soft: #1C3326; --accent-fg: #0B1A12; --volta: #6EA2FF;
     --uber: #F2F2F2; --uber-fg: #111111; --nn: #FFC700; --nn-fg: #111111;
-    --warn-bg: #3A2E10; --warn-fg: #F3C866; color-scheme: dark;
+    --warn-bg: #3A2E10; --warn-fg: #F3C866;
+    --map-bg: #141B17; --road: #34403A; --road-edge: #1D2621; --road-major: #8A7433; --road-minor: #2A342F;
+    --pin-home: #FF6B5E; color-scheme: dark;
   }
   * { box-sizing: border-box; }
   body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.45; }
-  .wrap { max-width: 1080px; margin: 0 auto; padding-block: 20px 48px;
+  .wrap { max-width: 1200px; margin: 0 auto; padding-block: 18px 40px;
     padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
-  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 20px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 16px; }
   h1 { font-family: var(--font-display); font-size: 28px; margin: 0; letter-spacing: -0.01em; }
   h1 span { color: var(--accent); }
   .sub { color: var(--muted); font-size: 14px; }
-  .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
-  @media (min-width: 860px) { .grid { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); align-items: start; } .receipt { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); } }
-  section { display: flex; flex-direction: column; gap: 10px; }
-  .steps { display: flex; flex-direction: column; gap: 24px; }
-  h2 { font-family: var(--font-display); font-size: 17px; margin: 0; display: flex; gap: 10px; align-items: center; text-wrap: balance; }
-  .n { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); font-size: 13px; display: inline-grid; place-items: center; flex: none; }
-  .markets { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
-  .market { text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; cursor: pointer; color: var(--fg); font: inherit; }
-  .market:hover { border-color: var(--accent); }
-  .market[aria-checked="true"] { border: 2px solid var(--accent); background: var(--accent-soft); padding: 9px 11px; }
-  .market b { display: block; font-weight: 600; font-size: 14px; }
-  .market[aria-checked="true"] b { color: var(--accent); }
-  .market small { color: var(--muted); font-size: 12px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  label { font-size: 13px; color: var(--muted); font-weight: 500; }
-  input[type="text"], input[type="number"] { width: 100%; font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; }
-  input:focus-visible, .market:focus-visible, .btn:focus-visible, summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--accent); color: var(--accent-fg); text-decoration: none; font-weight: 600; border-radius: 10px; padding: 12px 16px; border: 0; cursor: pointer; font: inherit; font-weight: 600; }
-  .btn[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
-  .btn.ghost { background: transparent; color: var(--accent); padding: 8px 0; }
-  .hint { font-size: 13px; color: var(--muted); margin: 0; }
-  .row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-  @media (max-width: 480px) { .row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .row .full-sm { grid-column: 1 / -1; } }
-  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-  .receipt { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+  .layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "cad" "map" "list" "det" "tar"; }
+  @media (min-width: 900px) {
+    .layout { grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+      grid-template-areas: "cad map" "list map" "det map" "tar map"; align-items: start; }
+  }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  h2 { font-family: var(--font-display); font-size: 17px; margin: 0; text-wrap: balance; }
   .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; }
-  .route { font-size: 14px; margin: 0; }
+  label { font-size: 13px; color: var(--muted); font-weight: 500; }
+  input[type="text"], input[type="number"] { width: 100%; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  input:focus-visible, button:focus-visible, summary:focus-visible, canvas:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--accent); color: var(--accent-fg); font: inherit; font-weight: 600; border-radius: 10px; padding: 11px 16px; border: 0; cursor: pointer; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn.ghost { background: transparent; color: var(--accent); padding: 8px 4px; }
+  .btn.line { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+  .hint { font-size: 13px; color: var(--muted); margin: 0; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; background: var(--warn-bg); color: var(--warn-fg); border-radius: 999px; padding: 2px 8px; vertical-align: middle; }
+  .saved-addr { display: flex; gap: 12px; align-items: center; }
+  .saved-addr .dot { width: 36px; height: 36px; border-radius: 50%; background: color-mix(in srgb, var(--pin-home) 16%, transparent); color: var(--pin-home); display: grid; place-items: center; flex: none; font-size: 18px; }
+  .saved-addr b { display: block; }
+  .saved-addr .t { flex: 1; min-width: 0; }
+  .saved-addr small { color: var(--muted); }
+  .step { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--muted); }
+  .step i { font-style: normal; width: 20px; height: 20px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-size: 11px; font-weight: 700; flex: none; }
+  .step.ok i { background: var(--accent); color: var(--accent-fg); }
+  .row-actions { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  /* mapa */
+  .mapbox { grid-area: map; position: relative; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); background: var(--map-bg); height: 380px; min-width: 0; }
+  @media (min-width: 900px) { .mapbox { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); height: min(760px, calc(100dvh - 24px)); } }
+  [hidden] { display: none !important; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  canvas.picking { cursor: crosshair; }
+  .map-ctrl { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .map-ctrl button { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; font-size: 18px; font-weight: 600; cursor: pointer; }
+  .map-banner { position: absolute; left: 10px; top: 10px; right: 56px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 13px; }
+  .map-legend { position: absolute; left: 10px; bottom: 8px; display: flex; gap: 12px; font-size: 12px; background: color-mix(in srgb, var(--surface) 88%, transparent); border-radius: 8px; padding: 4px 8px; }
+  .map-legend span::before { content: ""; display: inline-block; width: 16px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; background: var(--accent); }
+  .map-legend span.v::before { background: var(--volta); }
+  .attr { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: var(--muted); }
+  .loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
+  /* mercados */
+  .list { grid-area: list; }
+  .markets { display: flex; flex-direction: column; gap: 8px; }
+  .market { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; text-align: left; width: 100%;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; cursor: pointer; color: var(--fg); font: inherit; }
+  .market:hover { border-color: var(--accent); }
+  .market[aria-pressed="true"] { border: 2px solid var(--accent); background: var(--accent-soft); padding: 9px 11px; }
+  .market b { font-weight: 600; font-size: 14px; }
+  .market small { color: var(--muted); font-size: 12px; grid-column: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .market .val { grid-row: 1 / span 2; grid-column: 2; text-align: right; font-family: var(--font-display); font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .market .val em { display: block; font-family: var(--font-body); font-style: normal; font-weight: 500; font-size: 12px; color: var(--muted); }
+  /* detalhe */
+  .det { grid-area: det; }
   .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
   .metric { background: var(--bg); border-radius: 10px; padding: 8px 4px; text-align: center; }
   .metric span { display: block; font-size: 11px; color: var(--muted); }
   .metric strong { font-size: 15px; font-variant-numeric: tabular-nums; }
-  .metric.total strong { color: var(--accent); }
+  .metric.ida strong { color: var(--accent); } .metric.volta strong { color: var(--volta); }
   .quote { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px dashed var(--line); }
   .logo { width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; font-size: 13px; flex: none; }
-  .logo.uber { background: var(--uber); color: var(--uber-fg); }
-  .logo.nn { background: var(--nn); color: var(--nn-fg); }
-  .quote .info { flex: 1; min-width: 0; }
-  .quote .info b { display: block; }
-  .quote .info small { color: var(--muted); font-size: 12px; }
+  .logo.uber { background: var(--uber); color: var(--uber-fg); } .logo.nn { background: var(--nn); color: var(--nn-fg); }
+  .quote .info { flex: 1; min-width: 0; } .quote .info b { display: block; } .quote .info small { color: var(--muted); font-size: 12px; }
   .price { font-family: var(--font-display); font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .total-box { background: var(--accent-soft); border-radius: 12px; padding: 14px; }
   .total-box p { margin: 0; color: var(--accent); font-weight: 600; font-size: 13px; }
   .total-box .big { font-family: var(--font-display); font-size: 34px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; line-height: 1.15; }
   .total-box small { color: var(--muted); }
-  .tag { display: inline-block; font-size: 11px; font-weight: 700; background: var(--warn-bg); color: var(--warn-fg); border-radius: 999px; padding: 2px 8px; vertical-align: middle; }
   .fine { font-size: 12px; color: var(--muted); margin: 0; }
-  details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  /* tarifas */
+  .tar { grid-area: tar; }
+  details { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; }
   summary { cursor: pointer; font-weight: 600; }
-  .fares { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 12px; }
+  .fares { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-top: 12px; }
   .fare h3 { font-size: 14px; margin: 0 0 8px; }
-  .fare .row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .actions { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-top: 10px; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .saved { font-size: 13px; color: var(--accent); }
+  .cad { grid-area: cad; }
   @media (prefers-reduced-motion: no-preference) { .market, .btn { transition: border-color .15s, background-color .15s, opacity .15s; } }
 </style>
 
 <div class="wrap">
   <header>
     <h1>Mercado <span>Frete</span></h1>
-    <span class="sub">Entrega de compras · Guaramirim/SC · preço por km rodado, ida e volta</span>
+    <span class="sub">Entrega de compras em Guaramirim/SC · frete ida e volta pelo km rodado</span>
   </header>
 
-  <div class="grid">
-    <div class="steps">
-      <section aria-labelledby="h-mercado">
-        <h2 id="h-mercado"><span class="n">1</span>Mercado de partida</h2>
-        <div class="markets" id="markets" role="radiogroup" aria-labelledby="h-mercado"></div>
-      </section>
-
-      <section aria-labelledby="h-cliente">
-        <h2 id="h-cliente"><span class="n">2</span>Endereço de entrega</h2>
-        <label for="endereco">Rua, número e bairro do cliente</label>
-        <input type="text" id="endereco" placeholder="Ex.: Rua Exemplo, 100, Corticeira" autocomplete="street-address">
-        <div><a class="btn" id="maps" target="_blank" rel="noopener" aria-disabled="true">Ver rota ida e volta no Google Maps ↗</a></div>
-        <p class="hint">O Google Maps abre com o trajeto mercado → cliente → mercado. Copie os km de cada trecho no passo 3.</p>
-      </section>
-
-      <section aria-labelledby="h-km">
-        <h2 id="h-km"><span class="n">3</span>Quilômetros rodados</h2>
-        <div class="row">
-          <div class="field"><label for="kmIda">Ida (km)</label><input type="number" id="kmIda" min="0" step="0.1" inputmode="decimal"></div>
-          <div class="field"><label for="kmVolta">Volta (km)</label><input type="number" id="kmVolta" min="0" step="0.1" inputmode="decimal" placeholder="igual à ida"></div>
-          <div class="field full-sm"><label for="minutos">Tempo total (min)</label><input type="number" id="minutos" min="0" step="1" inputmode="numeric" placeholder="automático"></div>
+  <div class="layout">
+    <!-- Cadastro -->
+    <section class="card cad" aria-labelledby="h-cad">
+      <h2 id="h-cad">Meu endereço</h2>
+      <div id="cadView" hidden>
+        <div class="saved-addr">
+          <div class="dot" aria-hidden="true">⌂</div>
+          <div class="t"><b id="cadNome"></b><small id="cadEnd"></small></div>
+          <button class="btn line" id="btnAlterar" type="button">Alterar</button>
         </div>
-        <p class="hint">Sem tempo informado, o cálculo usa velocidade média urbana de 35 km/h.</p>
-      </section>
-
-      <details id="tarifasBox">
-        <summary>Tarifas Uber e 99 (editáveis)</summary>
-        <p class="hint" style="margin-top:8px">Uber e 99 não publicam tabela oficial nem API de preços. Para calibrar, simule a mesma corrida em cada app e ajuste os valores até bater.</p>
-        <div class="fares" id="fares"></div>
-        <div class="field" style="max-width:240px;margin-top:12px"><label for="margem">Margem do app sobre a média (%)</label><input type="number" id="margem" min="0" step="1"></div>
-        <div class="actions">
-          <button class="btn" id="salvar" type="button">Salvar tarifas</button>
-          <button class="btn ghost" id="restaurar" type="button">Restaurar padrão</button>
-          <span class="saved" id="salvo" hidden>Tarifas salvas neste navegador.</span>
+      </div>
+      <div id="cadEdit" hidden>
+        <p class="hint" id="cadIntro">Cadastre uma vez. Depois é só tocar no mercado que o frete aparece.</p>
+        <div class="field"><label for="inNome">Nome</label><input type="text" id="inNome" placeholder="Ex.: Ana" autocomplete="name"></div>
+        <div class="field"><label for="inEnd">Endereço (rua, número e bairro)</label>
+          <input type="text" id="inEnd" list="ruas" placeholder="Ex.: Rua 28 de Agosto, 1200, Centro" autocomplete="off">
+          <datalist id="ruas"></datalist>
         </div>
-      </details>
+        <div class="step" id="passoRua"><i>1</i><span id="passoRuaTxt">Digite a rua: o mapa vai até ela.</span></div>
+        <div class="step" id="passoPin"><i>2</i><span>Toque no mapa no ponto exato da sua casa.</span></div>
+        <div class="row-actions">
+          <button class="btn" id="btnSalvar" type="button" disabled>Salvar endereço</button>
+          <button class="btn ghost" id="btnCancelar" type="button" hidden>Cancelar</button>
+          <span class="saved" id="cadMsg" role="status"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Mapa -->
+    <div class="mapbox" id="mapbox">
+      <canvas id="mapa" tabindex="0" aria-label="Mapa de ruas de Guaramirim com os mercados, seu endereço e a rota ida e volta"></canvas>
+      <div class="map-banner" id="mapBanner" hidden>Toque no mapa onde fica sua casa.</div>
+      <div class="map-ctrl">
+        <button type="button" id="zIn" aria-label="Aproximar">+</button>
+        <button type="button" id="zOut" aria-label="Afastar">−</button>
+        <button type="button" id="zFit" aria-label="Enquadrar rota" title="Enquadrar rota">⤢</button>
+      </div>
+      <div class="map-legend"><span>Ida</span><span class="v">Volta</span></div>
+      <div class="attr">© colaboradores do OpenStreetMap</div>
+      <div class="loading" id="mapLoading">Carregando ruas de Guaramirim…</div>
     </div>
 
-    <aside class="receipt" aria-live="polite">
+    <!-- Mercados -->
+    <section class="card list" aria-labelledby="h-list">
       <div>
-        <p class="eyebrow">Percurso <span class="tag" id="exemplo">exemplo</span></p>
-        <p class="route" id="rota"></p>
+        <h2 id="h-list">Escolha o mercado</h2>
+        <p class="hint" id="listHint">Frete ida e volta até o seu endereço.</p>
+      </div>
+      <div class="markets" id="markets"></div>
+    </section>
+
+    <!-- Detalhe -->
+    <section class="card det" aria-live="polite" aria-labelledby="h-det">
+      <div>
+        <p class="eyebrow">Percurso <span class="tag" id="tagExemplo" hidden>endereço de exemplo</span></p>
+        <h2 id="h-det">—</h2>
       </div>
       <div class="metrics">
-        <div class="metric"><span>Ida</span><strong id="mIda"></strong></div>
-        <div class="metric"><span>Volta</span><strong id="mVolta"></strong></div>
-        <div class="metric total"><span>Total</span><strong id="mTotal"></strong></div>
-        <div class="metric"><span>Tempo</span><strong id="mTempo"></strong></div>
+        <div class="metric ida"><span>Ida</span><strong id="mIda">—</strong></div>
+        <div class="metric volta"><span>Volta</span><strong id="mVolta">—</strong></div>
+        <div class="metric"><span>Total</span><strong id="mTotal">—</strong></div>
+        <div class="metric"><span>Tempo</span><strong id="mTempo">—</strong></div>
       </div>
       <div>
         <p class="eyebrow">Preço estimado · ida + volta</p>
         <div id="quotes"></div>
       </div>
       <div class="total-box">
-        <p id="sugLabel">Valor sugerido para o frete (média)</p>
-        <div class="big" id="sug"></div>
+        <p id="sugLabel">Valor do frete (média Uber e 99)</p>
+        <div class="big" id="sug">—</div>
         <small id="sugKm"></small>
       </div>
-      <p class="fine">Estimativa com as tarifas configuradas. Uber e 99 usam preço dinâmico, então o valor real pode variar com horário e demanda.</p>
-    </aside>
+      <p class="fine">Rota calculada pelas ruas de Guaramirim (OpenStreetMap), respeitando mão única. Uber e 99 usam preço dinâmico, então o valor real pode variar com horário e demanda.</p>
+    </section>
+
+    <!-- Tarifas -->
+    <details class="tar" id="tarifasBox">
+      <summary>Tarifas Uber e 99 (editáveis)</summary>
+      <p class="hint" style="margin-top:8px">Uber e 99 não publicam tabela oficial nem API de preços. Para calibrar, simule a mesma corrida em cada app e ajuste até bater.</p>
+      <div class="fares" id="fares"></div>
+      <div class="field" style="max-width:240px;margin-top:12px"><label for="margem">Margem do app sobre a média (%)</label><input type="number" id="margem" min="0" step="1"></div>
+      <div class="row-actions" style="margin-top:10px">
+        <button class="btn" id="salvarTar" type="button">Salvar tarifas</button>
+        <button class="btn ghost" id="restaurarTar" type="button">Restaurar padrão</button>
+        <span class="saved" id="tarMsg" role="status"></span>
+      </div>
+    </details>
   </div>
 </div>
 
 <script>
 (() => {
-  const CIDADE = 'Guaramirim - SC';
-  const MERCADOS = [
-    ['Cooper Atacarejo', 'Rua Aldano José Vieira, 455, Avaí'],
-    ['Komprão Koch Atacadista', 'Rua Vereador João Pereira Lima, 697, Centro'],
-    ['Burei Supermercado', 'Rua 28 de Agosto, 502, Centro'],
-    ['Super Três', 'Rua 28 de Agosto, 4014, Centro'],
-    ['Supermercado Martini', 'Rua 28 de Agosto, 3035'],
-  ];
-  const PADRAO = [
-    { id: 'uberx', plataforma: 'Uber', categoria: 'UberX', tarifaBase: 2.0, porKm: 1.35, porMinuto: 0.26, tarifaMinima: 7.0 },
-    { id: '99pop', plataforma: '99', categoria: '99Pop', tarifaBase: 2.3, porKm: 1.3, porMinuto: 0.22, tarifaMinima: 6.5 },
-  ];
-  const CAMPOS = [['tarifaBase', 'Base (R$)'], ['porKm', 'Por km (R$)'], ['porMinuto', 'Por minuto (R$)'], ['tarifaMinima', 'Mínima (R$)']];
-  const EXEMPLO = { ida: 4.3, volta: 4.5 };
-  const VEL = 35;
-
+  'use strict';
   const $ = (id) => document.getElementById(id);
-  const store = {
+  const ls = {
     get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
   };
 
-  let tarifas = store.get('mf:tarifas', PADRAO);
-  let margem = store.get('mf:margem', 0);
-  let mercado = store.get('mf:mercado5', 0);
-  if (!MERCADOS[mercado]) mercado = 0;
-
+  // ---------- preço ----------
+  const TARIFAS_PADRAO = [
+    { id: 'uberx', plataforma: 'Uber', categoria: 'UberX', tarifaBase: 2.0, porKm: 1.35, porMinuto: 0.26, tarifaMinima: 7.0 },
+    { id: '99pop', plataforma: '99', categoria: '99Pop', tarifaBase: 2.3, porKm: 1.3, porMinuto: 0.22, tarifaMinima: 6.5 },
+  ];
+  const CAMPOS = [['tarifaBase', 'Base (R$)'], ['porKm', 'Por km (R$)'], ['porMinuto', 'Por min (R$)'], ['tarifaMinima', 'Mínima (R$)']];
+  let tarifas = ls.get('mf:tarifas', null) || JSON.parse(JSON.stringify(TARIFAS_PADRAO));
+  let margem = ls.get('mf:margem', 0);
   const cent = (v) => Math.round(v * 100) / 100;
   const reais = (v) => 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  const km = (v) => v.toFixed(1).replace('.', ',') + ' km';
+  const fmtKm = (v) => v.toFixed(1).replace('.', ',') + ' km';
   const num = (el) => { const v = parseFloat(String(el.value).replace(',', '.')); return Number.isFinite(v) && v >= 0 ? v : null; };
-
-  function estimar(t, kmTotal, minTotal) {
-    const valorKm = kmTotal * t.porKm, valorTempo = minTotal * t.porMinuto;
-    const bruto = t.tarifaBase + valorKm + valorTempo;
-    const minima = bruto < t.tarifaMinima;
+  function estimar(t, km, min) {
+    const valorKm = km * t.porKm, valorTempo = min * t.porMinuto, bruto = t.tarifaBase + valorKm + valorTempo, minima = bruto < t.tarifaMinima;
     return { t, valorKm: cent(valorKm), valorTempo: cent(valorTempo), valor: cent(minima ? t.tarifaMinima : bruto), minima };
   }
-
-  // Mercados
-  const box = $('markets');
-  MERCADOS.forEach(([nome, end], i) => {
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'market'; b.setAttribute('role', 'radio'); b.id = 'mercado-' + i;
-    const bn = document.createElement('b'); bn.textContent = nome;
-    const sm = document.createElement('small'); sm.textContent = end;
-    b.append(bn, sm);
-    b.addEventListener('click', () => { mercado = i; store.set('mf:mercado5', i); render(); });
-    box.append(b);
-  });
-
-  // Tarifas
-  function montarTarifas() {
-    const f = $('fares'); f.textContent = '';
-    tarifas.forEach((t) => {
-      const d = document.createElement('div'); d.className = 'fare';
-      const h = document.createElement('h3'); h.textContent = t.plataforma + ' · ' + t.categoria; d.append(h);
-      const r = document.createElement('div'); r.className = 'row';
-      CAMPOS.forEach(([k, rot]) => {
-        const fd = document.createElement('div'); fd.className = 'field';
-        const id = 'f-' + t.id + '-' + k;
-        const l = document.createElement('label'); l.htmlFor = id; l.textContent = rot;
-        const inp = document.createElement('input'); inp.type = 'number'; inp.step = '0.01'; inp.min = '0'; inp.id = id; inp.value = t[k];
-        inp.dataset.t = t.id; inp.dataset.k = k;
-        inp.addEventListener('input', () => { const v = num(inp); if (v !== null) { t[k] = v; render(); } });
-        fd.append(l, inp); r.append(fd);
-      });
-      d.append(r); f.append(d);
-    });
-    $('margem').value = margem;
+  function cotar(r) {
+    const est = tarifas.map((t) => estimar(t, r.kmTotal, r.minTotal));
+    const media = est.reduce((s, e) => s + e.valor, 0) / (est.length || 1);
+    return { est, sugerido: cent(media * (1 + margem / 100)) };
   }
-  $('margem').addEventListener('input', () => { const v = num($('margem')); if (v !== null) { margem = v; render(); } });
-  $('salvar').addEventListener('click', () => {
-    const ok = store.set('mf:tarifas', tarifas) && store.set('mf:margem', margem);
-    const s = $('salvo'); s.textContent = ok ? 'Tarifas salvas neste navegador.' : 'Não foi possível salvar neste navegador; os valores valem até fechar a página.';
-    s.hidden = false; setTimeout(() => { s.hidden = true; }, 3500);
+
+  // ---------- dados do mapa ----------
+  const VELOC = { motorway: 80, trunk: 70, primary: 60, secondary: 45, tertiary: 40, unclassified: 35, residential: 30, living_street: 15, service: 15, road: 30, track: 20, link: 40 };
+  const ACESSO_KMH = 20;
+  let G = null; // grafo e geometria
+  let mercados = [];
+  const norm = (s) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+  function montar(d) {
+    const n = d.n.length / 2;
+    const lat0 = d.base[0], lon0 = d.base[1];
+    const lat = new Float64Array(n), lon = new Float64Array(n);
+    for (let i = 0; i < n; i++) { lat[i] = lat0 + d.n[2 * i] / 1e5; lon[i] = lon0 + d.n[2 * i + 1] / 1e5; }
+    const latC = -26.4744, lonC = -48.9981, kx = Math.cos(latC * Math.PI / 180) * 111320, ky = 110540;
+    const X = new Float64Array(n), Y = new Float64Array(n);
+    for (let i = 0; i < n; i++) { X[i] = (lon[i] - lonC) * kx; Y[i] = (lat[i] - latC) * ky; }
+    const proj = (la, lo) => [(lo - lonC) * kx, (la - latC) * ky];
+    const unproj = (x, y) => [y / ky + latC, x / kx + lonC];
+    // arestas dirigidas
+    const ef = [], et = [], el = [], es = [];
+    const byName = new Map();
+    const paths = d.classes.map(() => new Path2D());
+    for (const w of d.w) {
+      const cls = d.classes[w[0]], nome = d.nomes[w[1]], ow = w[2], sp = VELOC[cls] / 3.6;
+      const p = paths[w[0]];
+      p.moveTo(X[w[3]], Y[w[3]]);
+      for (let k = 4; k < w.length; k++) {
+        const a = w[k - 1], b = w[k];
+        p.lineTo(X[b], Y[b]);
+        const L = Math.hypot(X[b] - X[a], Y[b] - Y[a]);
+        if (ow !== -1) { ef.push(a); et.push(b); el.push(L); es.push(L / sp); }
+        if (ow !== 1) { ef.push(b); et.push(a); el.push(L); es.push(L / sp); }
+      }
+      if (nome) { if (!byName.has(nome)) byName.set(nome, []); byName.get(nome).push(w); }
+    }
+    const m = ef.length;
+    const csr = (from, to) => {
+      const start = new Int32Array(n + 1);
+      for (let i = 0; i < m; i++) start[from[i] + 1]++;
+      for (let i = 0; i < n; i++) start[i + 1] += start[i];
+      const pos = start.slice(0, n), adj = new Int32Array(m);
+      for (let i = 0; i < m; i++) adj[pos[from[i]]++] = i;
+      return { start, adj, to };
+    };
+    const fwd = csr(ef, et), rev = csr(et, ef);
+    return { n, X, Y, lat, lon, proj, unproj, paths, classes: d.classes, byName, el: Float64Array.from(el), es: Float64Array.from(es), fwd, rev };
+  }
+
+  function maisProximo(x, y) {
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < G.n; i++) { const dx = G.X[i] - x, dy = G.Y[i] - y, dd = dx * dx + dy * dy; if (dd < bd) { bd = dd; best = i; } }
+    return { i: best, d: Math.sqrt(bd) };
+  }
+
+  // Dijkstra por tempo; devolve tempo, distância e predecessor
+  function dijkstra(g, src) {
+    const n = G.n, T = new Float64Array(n).fill(Infinity), D = new Float64Array(n), P = new Int32Array(n).fill(-1);
+    const hv = [], hn = [];
+    const push = (t, v) => { hv.push(t); hn.push(v); let i = hv.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (hv[p] <= hv[i]) break; [hv[p], hv[i]] = [hv[i], hv[p]]; [hn[p], hn[i]] = [hn[i], hn[p]]; i = p; } };
+    const pop = () => { const t = hv[0], v = hn[0], lt = hv.pop(), lv = hn.pop(); if (hv.length) { hv[0] = lt; hn[0] = lv; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let s = i; if (l < hv.length && hv[l] < hv[s]) s = l; if (r < hv.length && hv[r] < hv[s]) s = r; if (s === i) break; [hv[s], hv[i]] = [hv[i], hv[s]]; [hn[s], hn[i]] = [hn[i], hn[s]]; i = s; } } return [t, v]; };
+    T[src] = 0; push(0, src);
+    while (hv.length) {
+      const [t, u] = pop();
+      if (t > T[u]) continue;
+      for (let k = g.start[u]; k < g.start[u + 1]; k++) {
+        const e = g.adj[k], v = g.to[e], nt = t + G.es[e];
+        if (nt < T[v]) { T[v] = nt; D[v] = D[u] + G.el[e]; P[v] = u; push(nt, v); }
+      }
+    }
+    return { T, D, P };
+  }
+
+  // Rotas de todos os mercados até a casa (ida) e da casa até eles (volta): 2 buscas no total
+  let rotas = null;
+  function calcularRotas() {
+    if (!G || !casaAtual()) { rotas = null; return; }
+    const c = casaAtual();
+    const [cx, cy] = G.proj(c.lat, c.lon);
+    const hc = maisProximo(cx, cy);
+    const ida = dijkstra(G.rev, hc.i);   // mercado -> casa
+    const volta = dijkstra(G.fwd, hc.i); // casa -> mercado
+    rotas = {};
+    for (const mk of mercados) {
+      const [mx, my] = G.proj(mk.lat, mk.lon);
+      const hm = maisProximo(mx, my);
+      const acesso = hm.d + hc.d;
+      if (!Number.isFinite(ida.T[hm.i]) || !Number.isFinite(volta.T[hm.i])) { rotas[mk.id] = null; continue; }
+      const kmIda = (ida.D[hm.i] + acesso) / 1000, kmVolta = (volta.D[hm.i] + acesso) / 1000;
+      const minAcesso = (acesso / 1000) / ACESSO_KMH * 60;
+      const minIda = ida.T[hm.i] / 60 + minAcesso, minVolta = volta.T[hm.i] / 60 + minAcesso;
+      // geometria: ida segue P de 'ida' a partir do mercado; volta reconstrói de trás pra frente
+      const pIda = [hm.i]; for (let v = hm.i; v !== hc.i && v >= 0;) { v = ida.P[v]; if (v >= 0) pIda.push(v); }
+      const pVolta = [hm.i]; for (let v = hm.i; v !== hc.i && v >= 0;) { v = volta.P[v]; if (v >= 0) pVolta.push(v); }
+      rotas[mk.id] = { kmIda, kmVolta, kmTotal: kmIda + kmVolta, minIda, minVolta, minTotal: minIda + minVolta, pIda, pVolta, m: [mx, my], h: [cx, cy] };
+    }
+  }
+
+  // ---------- cadastro ----------
+  const EXEMPLO = { nome: 'Exemplo', endereco: 'Bairro Corticeira (exemplo)', lat: -26.4893, lon: -48.9872, exemplo: true };
+  let casa = ls.get('mf:casa', null);
+  let editando = !casa;
+  let rascunho = null; // {lat, lon}
+  let refPerfil = null;
+  const casaAtual = () => (editando ? (rascunho ? { ...rascunho } : (casa || EXEMPLO)) : (casa || EXEMPLO));
+  const usandoExemplo = () => !editando ? !casa : (!rascunho && !casa);
+
+  async function conectarCadastro() {
+    try {
+      const cl = window.claude;
+      if (!cl || !cl.use) return;
+      const [db, user] = await Promise.all([cl.use('db'), cl.use('user')]);
+      if (!db || !user) return;
+      const id = await user.id();
+      if (!id) return;
+      refPerfil = db.doc('data/users/' + id + '/perfil');
+      const snap = await refPerfil.get();
+      const salvo = snap.exists ? (snap.data() || {}).casa : null;
+      if (salvo && typeof salvo.lat === 'number') {
+        casa = salvo; ls.set('mf:casa', casa);
+        if (!rascunho) editando = false;
+        atualizarTudo(true);
+      } else if (casa) {
+        refPerfil.set({ casa }).catch(() => {});
+      }
+    } catch { /* fica só no navegador */ }
+  }
+
+  function salvarCasa() {
+    if (!rascunho) return;
+    const end = $('inEnd').value.trim();
+    casa = { nome: $('inNome').value.trim() || 'Minha casa', endereco: end || 'Endereço marcado no mapa', lat: rascunho.lat, lon: rascunho.lon };
+    const ok = ls.set('mf:casa', casa);
+    if (refPerfil) refPerfil.set({ casa }).catch(() => {});
+    editando = false; rascunho = null; ruaDestacada = null;
+    $('cadMsg').textContent = ok || refPerfil ? 'Endereço salvo.' : 'Endereço salvo até fechar a página.';
+    atualizarTudo(true);
+  }
+
+  function renderCadastro() {
+    $('cadView').hidden = editando; $('cadEdit').hidden = !editando;
+    if (!editando && casa) { $('cadNome').textContent = casa.nome; $('cadEnd').textContent = casa.endereco; }
+    $('btnCancelar').hidden = !casa;
+    $('btnSalvar').disabled = !rascunho;
+    $('passoPin').classList.toggle('ok', !!rascunho);
+    $('passoRua').classList.toggle('ok', !!ruaDestacada);
+    $('passoRuaTxt').textContent = ruaDestacada ? 'Rua encontrada: ' + ruaDestacada + '.' : 'Digite a rua: o mapa vai até ela.';
+    $('mapBanner').hidden = !editando || !!rascunho;
+    $('mapa').classList.toggle('picking', editando);
+    $('cadIntro').textContent = casa ? 'Digite a nova rua e toque no mapa no novo ponto.' : 'Cadastre uma vez. Depois é só tocar no mercado que o frete aparece.';
+  }
+
+  // ---------- busca de rua ----------
+  let ruaDestacada = null, ruaPath = null, nomesNorm = [];
+  function prepararRuas() {
+    const nomes = [...G.byName.keys()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    nomesNorm = nomes.map((nm) => [norm(nm), nm]).sort((a, b) => b[0].length - a[0].length);
+    const dl = $('ruas');
+    for (const nm of nomes) { const o = document.createElement('option'); o.value = nm; dl.append(o); }
+  }
+  function acharRua(texto) {
+    const t = norm(texto).replace(/^r\.?\s/, 'rua ').replace(/^av\.?\s/, 'avenida ');
+    if (t.length < 4) return null;
+    for (const [nn, nm] of nomesNorm) if (t.startsWith(nn) || (t.length >= 6 && nn.startsWith(t))) return nm;
+    for (const [nn, nm] of nomesNorm) if (t.includes(nn)) return nm;
+    return null;
+  }
+  function destacarRua(nm) {
+    if (nm === ruaDestacada) return;
+    ruaDestacada = nm; ruaPath = null;
+    if (nm) {
+      ruaPath = new Path2D();
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const w of G.byName.get(nm)) {
+        ruaPath.moveTo(G.X[w[3]], G.Y[w[3]]);
+        for (let k = 3; k < w.length; k++) { const i = w[k]; ruaPath.lineTo(G.X[i], G.Y[i]); x0 = Math.min(x0, G.X[i]); x1 = Math.max(x1, G.X[i]); y0 = Math.min(y0, G.Y[i]); y1 = Math.max(y1, G.Y[i]); }
+      }
+      enquadrar(x0, y0, x1, y1, 60);
+    }
+    renderCadastro(); desenhar();
+  }
+
+  // ---------- mapa ----------
+  const cv = $('mapa'), ctx = cv.getContext('2d');
+  const view = { cx: 0, cy: 0, s: 0.2 };
+  let W = 0, H = 0, dpr = 1;
+  const cores = {};
+  function lerCores() {
+    const cs = getComputedStyle(document.documentElement);
+    for (const k of ['map-bg', 'road', 'road-edge', 'road-major', 'road-minor', 'accent', 'volta', 'pin-home', 'fg', 'surface', 'muted', 'line']) cores[k] = cs.getPropertyValue('--' + k).trim();
+  }
+  function tamanho() {
+    const r = cv.getBoundingClientRect(); dpr = window.devicePixelRatio || 1;
+    W = r.width; H = r.height; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  }
+  const toScreen = (x, y) => [(x - view.cx) * view.s + W / 2, H / 2 - (y - view.cy) * view.s];
+  const toWorld = (sx, sy) => [(sx - W / 2) / view.s + view.cx, (H / 2 - sy) / view.s + view.cy];
+  function enquadrar(x0, y0, x1, y1, pad) {
+    if (!W) return;
+    const w = Math.max(x1 - x0, 80), h = Math.max(y1 - y0, 80);
+    view.cx = (x0 + x1) / 2; view.cy = (y0 + y1) / 2;
+    view.s = Math.min((W - 2 * pad) / w, (H - 2 * pad) / h);
+    view.s = Math.max(0.01, Math.min(view.s, 3));
+    view.cx += 30 / view.s; // espaço para os rótulos à direita dos marcadores
+  }
+  function enquadrarAtual() {
+    if (!G) return;
+    const pts = [];
+    const r = rotas && rotas[sel];
+    if (r && !editando) { for (const i of r.pIda.concat(r.pVolta)) pts.push([G.X[i], G.Y[i]]); pts.push(r.h, r.m); }
+    else { for (const mk of mercados) pts.push(G.proj(mk.lat, mk.lon)); const c = casaAtual(); pts.push(G.proj(c.lat, c.lon)); }
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    enquadrar(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), 70);
+  }
+
+  const ESTILO = { // [largura em px, cor]
+    motorway: [5, 'road-major'], trunk: [5, 'road-major'], primary: [4.5, 'road-major'], secondary: [4, 'road-major'],
+    tertiary: [3.2, 'road'], link: [3, 'road'], unclassified: [2.4, 'road'], residential: [2.4, 'road'], road: [2.2, 'road'],
+    living_street: [2, 'road'], service: [1.4, 'road-minor'], track: [1.2, 'road-minor'],
+  };
+  const ORDEM = ['track', 'service', 'living_street', 'road', 'residential', 'unclassified', 'link', 'tertiary', 'secondary', 'primary', 'trunk', 'motorway'];
+  function caminho(lista) { const p = new Path2D(); lista.forEach((i, k) => (k ? p.lineTo(G.X[i], G.Y[i]) : p.moveTo(G.X[i], G.Y[i]))); return p; }
+
+  function desenhar() {
+    if (!W) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = cores['map-bg']; ctx.fillRect(0, 0, W, H);
+    if (!G) return;
+    const zoomF = Math.max(0.55, Math.min(1.6, Math.sqrt(view.s / 0.25)));
+    ctx.setTransform(view.s * dpr, 0, 0, -view.s * dpr, (W / 2 - view.cx * view.s) * dpr, (H / 2 + view.cy * view.s) * dpr);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const desenharClasse = (nome, extra, cor) => {
+      const ci = G.classes.indexOf(nome); if (ci < 0) return;
+      const [w, c] = ESTILO[nome];
+      ctx.lineWidth = (w * zoomF + extra) / view.s; ctx.strokeStyle = cor || cores[c]; ctx.stroke(G.paths[ci]);
+    };
+    if (view.s > 0.12) for (const nm of ORDEM) if (ESTILO[nm][1] !== 'road-minor') desenharClasse(nm, 1.6, cores['road-edge']);
+    for (const nm of ORDEM) desenharClasse(nm, 0);
+    if (ruaPath && editando) { ctx.lineWidth = 7 * zoomF / view.s; ctx.strokeStyle = cores.accent; ctx.globalAlpha = 0.35; ctx.stroke(ruaPath); ctx.globalAlpha = 1; }
+    const r = rotas && rotas[sel];
+    if (r && !editando) {
+      ctx.lineWidth = 5 / view.s; ctx.strokeStyle = cores.volta; ctx.setLineDash([10 / view.s, 7 / view.s]); ctx.stroke(caminho(r.pVolta));
+      ctx.setLineDash([]); ctx.lineWidth = 5 / view.s; ctx.strokeStyle = cores.accent; ctx.stroke(caminho(r.pIda));
+    }
+    // marcadores em coordenadas de tela
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.font = '600 12px ' + getComputedStyle(document.body).fontFamily;
+    for (const mk of mercados) {
+      const [sx, sy] = toScreen(...G.proj(mk.lat, mk.lon));
+      const ativo = mk.id === sel && !editando;
+      ctx.beginPath(); ctx.arc(sx, sy, ativo ? 9 : 7, 0, Math.PI * 2);
+      ctx.fillStyle = ativo ? cores.accent : cores.surface; ctx.fill();
+      ctx.lineWidth = 2.5; ctx.strokeStyle = cores.accent; ctx.stroke();
+      rotulo(mk.curto, sx + 12, sy + 4, ativo);
+    }
+    const c = casaAtual();
+    if (c) {
+      const [sx, sy] = toScreen(...G.proj(c.lat, c.lon));
+      ctx.fillStyle = cores['pin-home'];
+      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.bezierCurveTo(sx - 12, sy - 14, sx - 9, sy - 28, sx, sy - 28); ctx.bezierCurveTo(sx + 9, sy - 28, sx + 12, sy - 14, sx, sy); ctx.fill();
+      ctx.beginPath(); ctx.arc(sx, sy - 19, 4, 0, Math.PI * 2); ctx.fillStyle = cores.surface; ctx.fill();
+      rotulo(usandoExemplo() ? 'Exemplo' : (editando ? 'Nova casa' : 'Casa'), sx + 12, sy - 14, false);
+    }
+  }
+  function rotulo(txt, x, y, forte) {
+    const w = ctx.measureText(txt).width;
+    ctx.fillStyle = cores.surface; ctx.globalAlpha = 0.9; ctx.fillRect(x - 3, y - 12, w + 6, 16); ctx.globalAlpha = 1;
+    ctx.fillStyle = forte ? cores.accent : cores.fg; ctx.fillText(txt, x, y);
+  }
+
+  // interação: arrastar, pinça, roda, toque
+  const ptrs = new Map(); let moveu = 0, pinch = null;
+  cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, [e.offsetX, e.offsetY]); moveu = 0; if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), s: view.s }; } });
+  cv.addEventListener('pointermove', (e) => {
+    if (!ptrs.has(e.pointerId)) return;
+    const [px, py] = ptrs.get(e.pointerId); const nx = e.offsetX, ny = e.offsetY;
+    ptrs.set(e.pointerId, [nx, ny]);
+    if (ptrs.size === 1) { moveu += Math.abs(nx - px) + Math.abs(ny - py); view.cx -= (nx - px) / view.s; view.cy += (ny - py) / view.s; desenhar(); }
+    else if (ptrs.size === 2 && pinch) {
+      const [a, b] = [...ptrs.values()]; const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      zoomEm((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (pinch.s * d / pinch.d) / view.s); moveu = 99;
+    }
   });
-  $('restaurar').addEventListener('click', () => {
-    tarifas = JSON.parse(JSON.stringify(PADRAO)); margem = 0;
-    store.set('mf:tarifas', tarifas); store.set('mf:margem', margem);
-    montarTarifas(); render();
-  });
+  const soltar = (e) => {
+    const tinha = ptrs.has(e.pointerId); ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null;
+    if (tinha && e.type === 'pointerup' && moveu < 6 && ptrs.size === 0) tocar(e.offsetX, e.offsetY);
+  };
+  cv.addEventListener('pointerup', soltar); cv.addEventListener('pointercancel', soltar);
+  cv.addEventListener('wheel', (e) => { e.preventDefault(); zoomEm(e.offsetX, e.offsetY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+  function zoomEm(sx, sy, f) {
+    const [wx, wy] = toWorld(sx, sy);
+    view.s = Math.max(0.01, Math.min(view.s * f, 4));
+    view.cx = wx - (sx - W / 2) / view.s; view.cy = wy + (sy - H / 2) / view.s; desenhar();
+  }
+  $('zIn').onclick = () => zoomEm(W / 2, H / 2, 1.6);
+  $('zOut').onclick = () => zoomEm(W / 2, H / 2, 1 / 1.6);
+  $('zFit').onclick = () => { enquadrarAtual(); desenhar(); };
+  function tocar(sx, sy) {
+    if (!G) return;
+    if (!editando) {
+      for (const mk of mercados) { const [mx, my] = toScreen(...G.proj(mk.lat, mk.lon)); if (Math.hypot(mx - sx, my - sy) < 16) { selecionar(mk.id); return; } }
+      return;
+    }
+    const [wx, wy] = toWorld(sx, sy);
+    const p = maisProximo(wx, wy);
+    const [la, lo] = (p.d < 60 / Math.max(view.s, 0.05) && p.d < 120) ? [G.lat[p.i], G.lon[p.i]] : G.unproj(wx, wy);
+    rascunho = { lat: la, lon: lo };
+    atualizarTudo(false);
+  }
 
-  ['endereco', 'kmIda', 'kmVolta', 'minutos'].forEach((id) => $(id).addEventListener('input', render));
-
-  function render() {
-    const [nome, end] = MERCADOS[mercado];
-    box.querySelectorAll('.market').forEach((b, i) => b.setAttribute('aria-checked', String(i === mercado)));
-
-    const cliente = $('endereco').value.trim();
-    const maps = $('maps');
-    if (cliente.length >= 5) {
-      const origem = `${nome}, ${end}, ${CIDADE}`;
-      const destinoCliente = /guaramirim|jaragu|schroeder|massaranduba|joinville|\bsc\b/i.test(cliente) ? cliente : `${cliente}, ${CIDADE}`;
-      const u = new URL('https://www.google.com/maps/dir/');
-      u.searchParams.set('api', '1');
-      u.searchParams.set('origin', origem);
-      u.searchParams.set('destination', origem);
-      u.searchParams.set('waypoints', destinoCliente);
-      u.searchParams.set('travelmode', 'driving');
-      maps.href = u.toString(); maps.setAttribute('aria-disabled', 'false');
-    } else { maps.removeAttribute('href'); maps.setAttribute('aria-disabled', 'true'); }
-
-    let ida = num($('kmIda')), volta = num($('kmVolta'));
-    const exemplo = ida === null;
-    if (exemplo) { ida = EXEMPLO.ida; volta = EXEMPLO.volta; }
-    if (volta === null) volta = ida;
-    const kmTotal = ida + volta;
-    const minInf = num($('minutos'));
-    const minTotal = minInf !== null ? minInf : (kmTotal / VEL) * 60;
-
-    $('exemplo').hidden = !exemplo;
-    $('rota').textContent = `${nome} → ${cliente || 'cliente'} → ${nome}`;
-    $('mIda').textContent = km(ida); $('mVolta').textContent = km(volta);
-    $('mTotal').textContent = km(kmTotal); $('mTempo').textContent = Math.round(minTotal) + ' min';
-
-    const est = tarifas.map((t) => estimar(t, kmTotal, minTotal));
+  // ---------- mercados e detalhe ----------
+  let sel = ls.get('mf:sel', 'cooper');
+  function selecionar(id) { sel = id; ls.set('mf:sel', id); renderLista(); renderDetalhe(); enquadrarAtual(); desenhar(); }
+  function renderLista() {
+    const box = $('markets'); box.textContent = '';
+    $('listHint').textContent = usandoExemplo() ? 'Valores para o endereço de exemplo. Cadastre o seu acima.' : 'Frete ida e volta até o endereço cadastrado.';
+    for (const mk of mercados) {
+      const r = rotas && rotas[mk.id];
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'market'; b.setAttribute('aria-pressed', String(mk.id === sel));
+      const nb = document.createElement('b'); nb.textContent = mk.nome;
+      const sm = document.createElement('small'); sm.textContent = mk.end + (mk.fonte === 'numeracao' ? ' · posição estimada' : '');
+      const val = document.createElement('span'); val.className = 'val';
+      if (r) { val.textContent = reais(cotar(r).sugerido); const em = document.createElement('em'); em.textContent = fmtKm(r.kmTotal) + ' ida e volta'; val.append(em); }
+      else val.textContent = G ? 'sem rota' : '…';
+      b.append(nb, val, sm);
+      b.addEventListener('click', () => selecionar(mk.id));
+      box.append(b);
+    }
+  }
+  function renderDetalhe() {
+    const mk = mercados.find((m) => m.id === sel) || mercados[0];
+    const r = rotas && mk && rotas[mk.id];
+    $('tagExemplo').hidden = !usandoExemplo();
+    $('h-det').textContent = mk ? `${mk.curto} → ${usandoExemplo() ? 'exemplo' : 'casa'} → ${mk.curto}` : '—';
     const q = $('quotes'); q.textContent = '';
-    est.forEach((e) => {
+    if (!r) { for (const id of ['mIda', 'mVolta', 'mTotal', 'mTempo', 'sug']) $(id).textContent = '—'; $('sugKm').textContent = ''; return; }
+    $('mIda').textContent = fmtKm(r.kmIda); $('mVolta').textContent = fmtKm(r.kmVolta);
+    $('mTotal').textContent = fmtKm(r.kmTotal); $('mTempo').textContent = Math.round(r.minTotal) + ' min';
+    const { est, sugerido } = cotar(r);
+    for (const e of est) {
       const row = document.createElement('div'); row.className = 'quote';
       const lg = document.createElement('div'); lg.className = 'logo ' + (e.t.plataforma === 'Uber' ? 'uber' : 'nn'); lg.textContent = e.t.plataforma;
       const info = document.createElement('div'); info.className = 'info';
       const b = document.createElement('b'); b.textContent = e.t.categoria;
-      const sm = document.createElement('small');
-      sm.textContent = e.minima ? 'Tarifa mínima aplicada' : `Base ${reais(e.t.tarifaBase)} + km ${reais(e.valorKm)} + tempo ${reais(e.valorTempo)}`;
+      const sm = document.createElement('small'); sm.textContent = e.minima ? 'Tarifa mínima aplicada' : `Base ${reais(e.t.tarifaBase)} + km ${reais(e.valorKm)} + tempo ${reais(e.valorTempo)}`;
       info.append(b, sm);
       const p = document.createElement('div'); p.className = 'price'; p.textContent = reais(e.valor);
       row.append(lg, info, p); q.append(row);
-    });
-    const media = est.reduce((s, e) => s + e.valor, 0) / (est.length || 1);
-    const sug = cent(media * (1 + margem / 100));
-    $('sugLabel').textContent = margem ? `Valor sugerido para o frete (média + ${String(margem).replace('.', ',')}%)` : 'Valor sugerido para o frete (média)';
-    $('sug').textContent = reais(sug);
-    $('sugKm').textContent = (kmTotal > 0 ? reais(sug / kmTotal) : reais(0)) + ' por km rodado';
+    }
+    $('sugLabel').textContent = margem ? `Valor do frete (média Uber e 99 + ${String(margem).replace('.', ',')}%)` : 'Valor do frete (média Uber e 99)';
+    $('sug').textContent = reais(sugerido);
+    $('sugKm').textContent = reais(sugerido / r.kmTotal) + ' por km rodado';
   }
 
-  montarTarifas();
-  render();
+  function atualizarTudo(reenquadrar) {
+    calcularRotas(); renderCadastro(); renderLista(); renderDetalhe();
+    if (reenquadrar) enquadrarAtual();
+    desenhar();
+  }
+
+  // ---------- eventos do cadastro ----------
+  $('inEnd').addEventListener('input', () => { if (G) destacarRua(acharRua($('inEnd').value)); });
+  $('btnSalvar').addEventListener('click', salvarCasa);
+  $('btnAlterar').addEventListener('click', () => {
+    editando = true; rascunho = null; $('cadMsg').textContent = '';
+    $('inNome').value = casa ? casa.nome : ''; $('inEnd').value = casa ? casa.endereco : '';
+    atualizarTudo(false); $('inEnd').focus();
+  });
+  $('btnCancelar').addEventListener('click', () => { editando = false; rascunho = null; ruaDestacada = null; atualizarTudo(true); });
+
+  // ---------- tarifas ----------
+  function montarTarifas() {
+    const f = $('fares'); f.textContent = '';
+    for (const t of tarifas) {
+      const d = document.createElement('div'); d.className = 'fare';
+      const h = document.createElement('h3'); h.textContent = t.plataforma + ' · ' + t.categoria; d.append(h);
+      const g = document.createElement('div'); g.className = 'grid2';
+      for (const [k, rot] of CAMPOS) {
+        const fd = document.createElement('div'); fd.className = 'field';
+        const id = 'f-' + t.id + '-' + k;
+        const l = document.createElement('label'); l.htmlFor = id; l.textContent = rot;
+        const inp = document.createElement('input'); inp.type = 'number'; inp.step = '0.01'; inp.min = '0'; inp.id = id; inp.value = t[k];
+        inp.addEventListener('input', () => { const v = num(inp); if (v !== null) { t[k] = v; renderLista(); renderDetalhe(); } });
+        fd.append(l, inp); g.append(fd);
+      }
+      d.append(g); f.append(d);
+    }
+    $('margem').value = margem;
+  }
+  $('margem').addEventListener('input', () => { const v = num($('margem')); if (v !== null) { margem = v; renderLista(); renderDetalhe(); } });
+  $('salvarTar').addEventListener('click', () => { const ok = ls.set('mf:tarifas', tarifas) && ls.set('mf:margem', margem); $('tarMsg').textContent = ok ? 'Tarifas salvas neste navegador.' : 'Não foi possível salvar neste navegador.'; });
+  $('restaurarTar').addEventListener('click', () => { tarifas = JSON.parse(JSON.stringify(TARIFAS_PADRAO)); margem = 0; ls.set('mf:tarifas', tarifas); ls.set('mf:margem', 0); montarTarifas(); renderLista(); renderDetalhe(); $('tarMsg').textContent = 'Valores padrão restaurados.'; });
+
+  // ---------- início ----------
+  const CURTO = { cooper: 'Cooper', komprao: 'Komprão', burei: 'Burei', 'super-tres': 'Super Três', martini: 'Martini' };
+  lerCores(); tamanho(); montarTarifas(); renderCadastro(); renderLista(); renderDetalhe(); desenhar();
+  new ResizeObserver(() => { tamanho(); desenhar(); }).observe(cv);
+  const tema = () => { lerCores(); desenhar(); };
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', tema);
+  new MutationObserver(tema).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  fetch('guaramirim-ruas.json').then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }).then((d) => {
+    G = montar(d);
+    mercados = d.mercados.map((m) => ({ ...m, curto: CURTO[m.id] || m.nome }));
+    if (!mercados.some((m) => m.id === sel)) sel = mercados[0].id;
+    prepararRuas();
+    $('mapLoading').hidden = true;
+    atualizarTudo(true);
+    conectarCadastro();
+  }).catch(() => { $('mapLoading').textContent = 'Não foi possível carregar o mapa. Recarregue a página.'; });
 })();
 </script>

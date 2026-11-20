@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { MERCADOS, type Mercado } from '../data/mercados';
+import { carregarEndereco, salvarEndereco, type Endereco } from '../services/cadastro';
 import {
   estimarIdaEVolta,
   formatarKm,
@@ -22,125 +23,225 @@ import {
   geocodificar,
   minhaLocalizacao,
   pontoDoMercado,
-  type Ponto,
   type ResultadoRota,
 } from '../services/rota';
 import { cores, raio } from './tema';
 
 type Props = { tarifas: Tarifa[]; margem: number };
-
-type Resultado = { rota: ResultadoRota; estimativas: Estimativa[]; sugerido: number; mercado: Mercado };
+type Cotacao = { rota: ResultadoRota; estimativas: Estimativa[]; sugerido: number };
 
 export default function TelaCalculo({ tarifas, margem }: Props) {
-  const [mercado, setMercado] = useState<Mercado>(MERCADOS[0]);
-  const [endereco, setEndereco] = useState('');
-  const [localAtual, setLocalAtual] = useState<Ponto | null>(null);
-  const [carregando, setCarregando] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
-  const [resultado, setResultado] = useState<Resultado | null>(null);
+  const [casa, setCasa] = useState<Endereco | null>(null);
+  const [carregado, setCarregado] = useState(false);
+  const [editando, setEditando] = useState(false);
+  const [rotas, setRotas] = useState<Record<string, ResultadoRota | null>>({});
+  const [calculando, setCalculando] = useState(false);
+  const [sel, setSel] = useState<string>(MERCADOS[0].id);
 
-  async function usarMinhaLocalizacao() {
-    setErro(null);
-    try {
-      setCarregando(true);
-      const p = await minhaLocalizacao();
-      setLocalAtual(p);
-      setEndereco('');
-    } catch (e) {
-      setErro((e as Error).message);
-    } finally {
-      setCarregando(false);
-    }
-  }
+  useEffect(() => {
+    carregarEndereco().then((e) => {
+      setCasa(e);
+      setEditando(!e);
+      setCarregado(true);
+    });
+  }, []);
 
-  async function calcular() {
-    setErro(null);
-    setResultado(null);
-    if (!localAtual && endereco.trim().length < 5) {
-      setErro('Digite o endereço de entrega ou use sua localização.');
-      return;
-    }
-    setCarregando(true);
-    try {
-      let cliente = localAtual;
-      if (!cliente) {
-        const texto = /guaramirim|jaragu|schroeder|massaranduba|joinville|\bsc\b/i.test(endereco)
-          ? endereco
-          : `${endereco}, Guaramirim - SC`;
-        cliente = await geocodificar(texto);
-        if (!cliente) throw new Error('Endereço não encontrado. Inclua rua, número e bairro.');
-      }
-      const origem = await pontoDoMercado(mercado);
-      const rota = await calcularIdaEVolta(origem, cliente);
-      const estimativas = tarifas.map((t) => estimarIdaEVolta(rota, t));
-      setResultado({ rota, estimativas, sugerido: precoSugerido(estimativas, margem), mercado });
-    } catch (e) {
-      setErro((e as Error).message);
-    } finally {
-      setCarregando(false);
-    }
-  }
+  // Assim que houver endereço, calcula a rota ida e volta de todos os mercados.
+  const calcularTodos = useCallback(async (c: Endereco) => {
+    setCalculando(true);
+    const destino = { lat: c.lat, lon: c.lon };
+    const pares = await Promise.all(
+      MERCADOS.map(async (m) => {
+        try {
+          return [m.id, await calcularIdaEVolta(await pontoDoMercado(m), destino)] as const;
+        } catch {
+          return [m.id, null] as const;
+        }
+      }),
+    );
+    setRotas(Object.fromEntries(pares));
+    setCalculando(false);
+  }, []);
+
+  useEffect(() => {
+    if (casa) calcularTodos(casa);
+  }, [casa, calcularTodos]);
+
+  const cotar = (r: ResultadoRota): Cotacao => {
+    const estimativas = tarifas.map((t) => estimarIdaEVolta(r, t));
+    return { rota: r, estimativas, sugerido: precoSugerido(estimativas, margem) };
+  };
+
+  if (!carregado) return <ActivityIndicator style={{ marginTop: 40 }} color={cores.primaria} />;
+
+  const mercado = MERCADOS.find((m) => m.id === sel) ?? MERCADOS[0];
+  const rotaSel = rotas[mercado.id];
 
   return (
     <ScrollView contentContainerStyle={s.conteudo} keyboardShouldPersistTaps="handled">
-      <Text style={s.secao}>1. Mercado de partida</Text>
-      <View style={s.listaMercados}>
-        {MERCADOS.map((m) => {
-          const ativo = m.id === mercado.id;
-          return (
-            <Pressable
-              key={m.id}
-              onPress={() => setMercado(m)}
-              style={[s.mercado, ativo && s.mercadoAtivo]}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: ativo }}
-            >
-              <Text style={[s.mercadoNome, ativo && s.mercadoNomeAtivo]}>{m.nome}</Text>
-              <Text style={s.mercadoEnd} numberOfLines={1}>
-                {m.endereco.split(', Guaramirim')[0]}
-              </Text>
+      {editando || !casa ? (
+        <FormCadastro
+          inicial={casa}
+          onCancelar={casa ? () => setEditando(false) : undefined}
+          onSalvo={(e) => {
+            setCasa(e);
+            setEditando(false);
+            salvarEndereco(e).catch(() => {});
+          }}
+        />
+      ) : (
+        <View style={s.cartao}>
+          <Text style={s.rotulo}>Meu endereço</Text>
+          <View style={s.linhaCasa}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.casaNome}>{casa.nome}</Text>
+              <Text style={s.detalhe}>{casa.endereco}</Text>
+            </View>
+            <Pressable onPress={() => setEditando(true)} style={s.botaoBorda}>
+              <Text style={s.botaoBordaTexto}>Alterar</Text>
             </Pressable>
-          );
-        })}
-      </View>
+          </View>
+        </View>
+      )}
 
-      <Text style={s.secao}>2. Endereço de entrega</Text>
-      <TextInput
-        style={s.input}
-        placeholder="Ex.: Rua João Butschardt, 100, Centro"
-        placeholderTextColor={cores.suave}
-        value={localAtual ? 'Minha localização atual' : endereco}
-        onChangeText={(t) => {
-          setLocalAtual(null);
-          setEndereco(t);
-        }}
-        returnKeyType="search"
-        onSubmitEditing={calcular}
-      />
-      <Pressable onPress={usarMinhaLocalizacao} style={s.botaoSec}>
-        <Text style={s.botaoSecTexto}>📍 Usar minha localização</Text>
-      </Pressable>
-
-      <Pressable onPress={calcular} style={[s.botao, carregando && { opacity: 0.6 }]} disabled={carregando}>
-        {carregando ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Calcular ida e volta</Text>}
-      </Pressable>
-
-      {erro && <Text style={s.erro}>{erro}</Text>}
-
-      {resultado && <CartaoResultado r={resultado} margem={margem} />}
+      {casa && !editando && (
+        <>
+          <Text style={s.secao}>Escolha o mercado</Text>
+          <View style={s.listaMercados}>
+            {MERCADOS.map((m) => {
+              const r = rotas[m.id];
+              const ativo = m.id === sel;
+              return (
+                <Pressable
+                  key={m.id}
+                  onPress={() => setSel(m.id)}
+                  style={[s.mercado, ativo && s.mercadoAtivo]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: ativo }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[s.mercadoNome, ativo && s.mercadoNomeAtivo]}>{m.nome}</Text>
+                    <Text style={s.mercadoEnd} numberOfLines={1}>
+                      {m.endereco.split(', Guaramirim')[0]}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    {calculando && r === undefined ? (
+                      <ActivityIndicator color={cores.primaria} />
+                    ) : r ? (
+                      <>
+                        <Text style={s.mercadoValor}>{formatarReais(cotar(r).sugerido)}</Text>
+                        <Text style={s.mercadoEnd}>{formatarKm(r.kmIda + r.kmVolta)} ida e volta</Text>
+                      </>
+                    ) : (
+                      <Text style={s.mercadoEnd}>sem rota</Text>
+                    )}
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+          {rotaSel && <CartaoResultado mercado={mercado} c={cotar(rotaSel)} margem={margem} />}
+        </>
+      )}
     </ScrollView>
   );
 }
 
-function CartaoResultado({ r, margem }: { r: Resultado; margem: number }) {
-  const { rota } = r;
+function FormCadastro({
+  inicial,
+  onSalvo,
+  onCancelar,
+}: {
+  inicial: Endereco | null;
+  onSalvo: (e: Endereco) => void;
+  onCancelar?: () => void;
+}) {
+  const [nome, setNome] = useState(inicial?.nome ?? '');
+  const [endereco, setEndereco] = useState(inicial?.endereco ?? '');
+  const [ocupado, setOcupado] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function salvarPorEndereco() {
+    setErro(null);
+    if (endereco.trim().length < 5) {
+      setErro('Digite rua, número e bairro.');
+      return;
+    }
+    setOcupado(true);
+    try {
+      const texto = /guaramirim|jaragu|schroeder|massaranduba|joinville|\bsc\b/i.test(endereco)
+        ? endereco
+        : `${endereco}, Guaramirim - SC`;
+      const p = await geocodificar(texto);
+      if (!p) throw new Error('Endereço não encontrado. Confira rua, número e bairro, ou use sua localização.');
+      onSalvo({ nome: nome.trim() || 'Minha casa', endereco: endereco.trim(), lat: p.lat, lon: p.lon });
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function salvarPorLocalizacao() {
+    setErro(null);
+    setOcupado(true);
+    try {
+      const p = await minhaLocalizacao();
+      onSalvo({
+        nome: nome.trim() || 'Minha casa',
+        endereco: endereco.trim() || 'Localização salva pelo GPS',
+        lat: p.lat,
+        lon: p.lon,
+      });
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <View style={s.cartao}>
+      <Text style={s.titulo}>Meu endereço</Text>
+      <Text style={s.detalhe}>Cadastre uma vez. Depois é só tocar no mercado que o frete aparece.</Text>
+      <Text style={s.campoRotulo}>Nome</Text>
+      <TextInput style={s.input} value={nome} onChangeText={setNome} placeholder="Ex.: Ana" placeholderTextColor={cores.suave} />
+      <Text style={s.campoRotulo}>Endereço (rua, número e bairro)</Text>
+      <TextInput
+        style={s.input}
+        value={endereco}
+        onChangeText={setEndereco}
+        placeholder="Ex.: Rua 28 de Agosto, 1200, Centro"
+        placeholderTextColor={cores.suave}
+        returnKeyType="done"
+        onSubmitEditing={salvarPorEndereco}
+      />
+      <Pressable onPress={salvarPorEndereco} style={[s.botao, ocupado && { opacity: 0.6 }]} disabled={ocupado}>
+        {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Salvar endereço</Text>}
+      </Pressable>
+      <Pressable onPress={salvarPorLocalizacao} style={s.botaoSec} disabled={ocupado}>
+        <Text style={s.botaoSecTexto}>📍 Estou em casa: usar minha localização</Text>
+      </Pressable>
+      {onCancelar && (
+        <Pressable onPress={onCancelar} style={s.botaoSec}>
+          <Text style={[s.botaoSecTexto, { color: cores.suave }]}>Cancelar</Text>
+        </Pressable>
+      )}
+      {erro && <Text style={s.erro}>{erro}</Text>}
+    </View>
+  );
+}
+
+function CartaoResultado({ mercado, c, margem }: { mercado: Mercado; c: Cotacao; margem: number }) {
+  const { rota } = c;
   const kmTotal = rota.kmIda + rota.kmVolta;
   const minTotal = Math.round(rota.minIda + rota.minVolta);
   return (
-    <View style={s.cartao}>
+    <View style={[s.cartao, { marginTop: 16 }]}>
       <Text style={s.rotulo}>Percurso</Text>
       <Text style={s.trajeto}>
-        {r.mercado.nome} → cliente → {r.mercado.nome}
+        {mercado.nome} → casa → {mercado.nome}
       </Text>
       <View style={s.linhaKm}>
         <Metrica titulo="Ida" valor={formatarKm(rota.kmIda)} />
@@ -149,13 +250,11 @@ function CartaoResultado({ r, margem }: { r: Resultado; margem: number }) {
         <Metrica titulo="Tempo" valor={`${minTotal} min`} />
       </View>
       {rota.fonte === 'estimada' && (
-        <Text style={s.aviso}>
-          Sem acesso ao serviço de rotas: distância estimada pela linha reta × 1,35. Confira a conexão.
-        </Text>
+        <Text style={s.aviso}>Sem acesso ao serviço de rotas: distância estimada pela linha reta × 1,35.</Text>
       )}
 
       <Text style={[s.rotulo, { marginTop: 16 }]}>Preço estimado (ida + volta)</Text>
-      {r.estimativas.map((e) => (
+      {c.estimativas.map((e) => (
         <View key={e.tarifa.id} style={s.linhaPreco}>
           <View style={[s.selo, { backgroundColor: e.tarifa.plataforma === 'Uber' ? cores.uber : cores.noventaENove }]}>
             <Text style={[s.seloTexto, { color: e.tarifa.plataforma === 'Uber' ? '#fff' : '#000' }]}>
@@ -175,13 +274,9 @@ function CartaoResultado({ r, margem }: { r: Resultado; margem: number }) {
       ))}
 
       <View style={s.sugerido}>
-        <Text style={s.sugeridoRotulo}>
-          Valor sugerido para o frete{margem ? ` (média + ${margem}%)` : ' (média)'}
-        </Text>
-        <Text style={s.sugeridoValor}>{formatarReais(r.sugerido)}</Text>
-        <Text style={s.detalhe}>
-          {formatarReais(kmTotal > 0 ? r.sugerido / kmTotal : 0)} por km rodado
-        </Text>
+        <Text style={s.sugeridoRotulo}>Valor do frete{margem ? ` (média + ${margem}%)` : ' (média Uber e 99)'}</Text>
+        <Text style={s.sugeridoValor}>{formatarReais(c.sugerido)}</Text>
+        <Text style={s.detalhe}>{formatarReais(kmTotal > 0 ? c.sugerido / kmTotal : 0)} por km rodado</Text>
       </View>
       <Text style={s.notaRodape}>
         Estimativa com base nas tarifas configuradas. Uber e 99 aplicam preço dinâmico; o valor real pode variar.
@@ -201,9 +296,13 @@ function Metrica({ titulo, valor, destaque }: { titulo: string; valor: string; d
 
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40 },
-  secao: { fontSize: 15, fontWeight: '700', color: cores.texto, marginTop: 8, marginBottom: 8 },
+  secao: { fontSize: 15, fontWeight: '700', color: cores.texto, marginTop: 20, marginBottom: 8 },
+  titulo: { fontSize: 17, fontWeight: '700', color: cores.texto },
   listaMercados: { gap: 8 },
   mercado: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     backgroundColor: cores.cartao,
     borderWidth: 1,
     borderColor: cores.borda,
@@ -215,8 +314,12 @@ const s = StyleSheet.create({
   mercadoNome: { fontSize: 15, fontWeight: '600', color: cores.texto },
   mercadoNomeAtivo: { color: cores.primaria },
   mercadoEnd: { fontSize: 12, color: cores.suave, marginTop: 2 },
+  mercadoValor: { fontSize: 17, fontWeight: '700', color: cores.texto, fontVariant: ['tabular-nums'] },
+  linhaCasa: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6 },
+  casaNome: { fontSize: 16, fontWeight: '700', color: cores.texto },
+  campoRotulo: { fontSize: 13, color: cores.suave, marginTop: 12, marginBottom: 4 },
   input: {
-    backgroundColor: cores.cartao,
+    backgroundColor: cores.fundo,
     borderWidth: 1,
     borderColor: cores.borda,
     borderRadius: raio,
@@ -225,39 +328,21 @@ const s = StyleSheet.create({
     fontSize: 15,
     color: cores.texto,
   },
+  botao: { backgroundColor: cores.primaria, borderRadius: raio, paddingVertical: 15, alignItems: 'center', marginTop: 14 },
+  botaoTexto: { color: '#fff', fontSize: 16, fontWeight: '700' },
   botaoSec: { paddingVertical: 10, alignSelf: 'flex-start' },
   botaoSecTexto: { color: cores.primaria, fontWeight: '600', fontSize: 14 },
-  botao: {
-    backgroundColor: cores.primaria,
-    borderRadius: raio,
-    paddingVertical: 15,
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  botaoTexto: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  erro: { color: cores.erro, marginTop: 12, fontSize: 14 },
-  cartao: {
-    backgroundColor: cores.cartao,
-    borderRadius: raio,
-    padding: 16,
-    marginTop: 20,
-    borderWidth: 1,
-    borderColor: cores.borda,
-  },
+  botaoBorda: { borderWidth: 1, borderColor: cores.borda, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 14 },
+  botaoBordaTexto: { color: cores.texto, fontWeight: '600' },
+  erro: { color: cores.erro, marginTop: 8, fontSize: 14 },
+  cartao: { backgroundColor: cores.cartao, borderRadius: raio, padding: 16, borderWidth: 1, borderColor: cores.borda },
   rotulo: { fontSize: 12, fontWeight: '700', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5 },
   trajeto: { fontSize: 14, color: cores.texto, marginTop: 4 },
   linhaKm: { flexDirection: 'row', marginTop: 12, gap: 8 },
   metrica: { flex: 1, backgroundColor: cores.fundo, borderRadius: 10, padding: 8, alignItems: 'center' },
   metricaTitulo: { fontSize: 11, color: cores.suave },
   metricaValor: { fontSize: 14, fontWeight: '700', color: cores.texto, marginTop: 2 },
-  aviso: {
-    marginTop: 10,
-    backgroundColor: cores.alertaFundo,
-    color: cores.alerta,
-    padding: 8,
-    borderRadius: 8,
-    fontSize: 12,
-  },
+  aviso: { marginTop: 10, backgroundColor: cores.alertaFundo, color: cores.alerta, padding: 8, borderRadius: 8, fontSize: 12 },
   linhaPreco: {
     flexDirection: 'row',
     alignItems: 'center',

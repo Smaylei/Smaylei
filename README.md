@@ -7,8 +7,8 @@ O percurso cobrado é sempre **ida e volta**: mercado → endereço do cliente �
 
 ## Como funciona
 
-1. O usuário escolhe o mercado de partida (Cooper, Komprão, Burei, Super Três e Martini).
-2. Digita o endereço de entrega ou usa a localização do celular.
+1. O usuário cadastra o endereço uma vez (digitando ou pelo GPS).
+2. O app já mostra o frete de cada mercado (Cooper, Komprão, Burei, Super Três e Martini); tocar num mercado abre o detalhe.
 3. O app calcula a rota real de carro (ida e volta) e mostra:
    - km da ida, km da volta, km total e tempo total;
    - preço estimado **UberX** e **99Pop** para o percurso completo;
@@ -69,3 +69,10 @@ src/data/mercados.ts            supermercados de Guaramirim
 src/data/tarifas.ts             tarifas padrão Uber/99
 tests/preco.test.ts             testes
 ```
+
+## Versão para PC (navegador)
+
+`web/mercado-frete.html` + `web/guaramirim-ruas.json`: o mesmo cálculo, sem internet para
+rotas. O mapa de ruas de Guaramirim (OpenStreetMap, ODbL) vai embutido no JSON e a rota ida e
+volta é calculada no próprio navegador (Dijkstra pelo menor tempo, respeitando mão única).
+A pessoa cadastra o endereço marcando a casa no mapa; depois cada mercado já mostra o frete.
