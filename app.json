@@ -1,13 +1,14 @@
 {
   "expo": {
-    "name": "app",
-    "slug": "app",
+    "name": "Mercado Frete",
+    "slug": "mercado-frete",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "br.com.mercadofrete.app"
     },
     "android": {
       "adaptiveIcon": {
@@ -16,10 +17,19 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "br.com.mercadofrete.app"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Usamos sua localização para calcular a distância do mercado até o endereço de entrega."
+        }
+      ]
+    ]
   }
 }
