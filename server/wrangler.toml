@@ -2,15 +2,26 @@ name = "mercado-frete-pagamentos"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
 
+# Central: banco SQLite (Durable Object) com clientes, motoristas, corridas, chat e localização
+[[durable_objects.bindings]]
+name = "CENTRAL"
+class_name = "Central"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Central"]
+
+# Fotos e documentos (privado) — ative o R2 no painel da Cloudflare, crie o bucket e descomente:
+# [[r2_buckets]]
+# binding = "DOCS"
+# bucket_name = "mercado-frete-docs"
+
 [vars]
 INFINITEPAY_HANDLE = "smayleiluiz"
 APP_SCHEME = "mercadofrete"
 
-# Armazenamento dos pedidos (criado com: npx wrangler kv namespace create PEDIDOS)
-[[kv_namespaces]]
-binding = "PEDIDOS"
-id = "2a0883e39bab43039155cf34c447c327"
-
 # Segredos (nunca no arquivo):
 #   npx wrangler secret put INFINITEPAY_API_KEY
 #   npx wrangler secret put ADMIN_TOKEN
+#   npx wrangler secret put WHATSAPP_PHONE
+#   npx wrangler secret put CALLMEBOT_APIKEY

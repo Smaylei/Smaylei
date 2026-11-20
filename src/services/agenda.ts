@@ -57,18 +57,29 @@ export function rotuloDia(data: string, hoje: string): string {
 
 const sobrepoe = (a: Bloco, b: Bloco) => a.inicio < b.fim && b.inicio < a.fim;
 
-/** Horários livres (início em ms) de um dia: cada atendimento ocupa `bloqueioMin`. */
-export function horariosLivres(data: string, cfg: ConfigAgenda, ocupados: Bloco[], agora: number): number[] {
+/**
+ * Horários livres (início em ms) de um dia: cada atendimento ocupa `bloqueioMin`.
+ * `capacidade` = quantos fretes podem acontecer ao mesmo tempo (motoristas disponíveis).
+ */
+export function horariosLivres(data: string, cfg: ConfigAgenda, ocupados: Bloco[], agora: number, capacidade = 1): number[] {
   const ini = minutos(cfg.horaInicio), fim = minutos(cfg.horaFim);
   const livres: number[] = [];
   for (let t = ini; t + cfg.bloqueioMin <= fim; t += cfg.passoMin) {
     const s = instante(data, t);
     if (s < agora + cfg.antecedenciaMin * MIN) continue;
     const bloco = { inicio: s, fim: s + cfg.bloqueioMin * MIN };
-    if (!ocupados.some((o) => sobrepoe(o, bloco))) livres.push(s);
+    if (ocupados.filter((o) => sobrepoe(o, bloco)).length < capacidade) livres.push(s);
   }
   return livres;
 }
+
+/** Dentro do horário de atendimento? */
+export function dentroDoHorario(cfg: ConfigAgenda, agora: number): boolean {
+  const hoje = dataLocal(agora);
+  return agora >= instante(hoje, minutos(cfg.horaInicio)) && agora + cfg.bloqueioMin * MIN <= instante(hoje, minutos(cfg.horaFim));
+}
+
+export const sobrepoeBloco = sobrepoe;
 
 /** Pode pedir "agora"? Aberto, dentro do horário e sem nada nos próximos `bloqueioMin`. */
 export function agoraDisponivel(cfg: ConfigAgenda, ocupados: Bloco[], agora: number): { ok: boolean; motivo?: string } {
@@ -83,19 +94,19 @@ export function agoraDisponivel(cfg: ConfigAgenda, ocupados: Bloco[], agora: num
 }
 
 /** Confere se um horário escolhido ainda está livre (antes de reservar). */
-export function horarioValido(inicio: number, cfg: ConfigAgenda, ocupados: Bloco[], agora: number): boolean {
-  if (!cfg.aberto) return false;
-  return horariosLivres(dataLocal(inicio), cfg, ocupados, agora).includes(inicio);
+export function horarioValido(inicio: number, cfg: ConfigAgenda, ocupados: Bloco[], agora: number, capacidade = 1): boolean {
+  if (!cfg.aberto || capacidade < 1) return false;
+  return horariosLivres(dataLocal(inicio), cfg, ocupados, agora, capacidade).includes(inicio);
 }
 
 /** Próximos dias com horários livres. */
-export function proximosDias(cfg: ConfigAgenda, ocupados: Bloco[], agora: number, dias = 6) {
+export function proximosDias(cfg: ConfigAgenda, ocupados: Bloco[], agora: number, dias = 6, capacidade = 1) {
   const hoje = dataLocal(agora);
   const out: { data: string; rotulo: string; horarios: { inicio: string; hora: string }[] }[] = [];
-  if (!cfg.aberto) return out;
+  if (!cfg.aberto || capacidade < 1) return out;
   for (let i = 0; i < dias + 2 && out.length < dias; i++) {
     const data = dataLocal(instante(hoje, 12 * 60) + i * 24 * 60 * MIN);
-    const livres = horariosLivres(data, cfg, ocupados, agora);
+    const livres = horariosLivres(data, cfg, ocupados, agora, capacidade);
     if (livres.length)
       out.push({ data, rotulo: rotuloDia(data, hoje), horarios: livres.map((s) => ({ inicio: new Date(s).toISOString(), hora: horaLocal(s) })) });
   }

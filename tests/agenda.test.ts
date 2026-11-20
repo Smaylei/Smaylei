@@ -52,3 +52,11 @@ test('antecedência mínima de 30 min e fechado não oferece dias', () => {
   assert.deepEqual(proximosDias({ ...cfg, aberto: false }, [], madrugada), []);
   assert.equal(proximosDias(cfg, [], madrugada)[0].rotulo, 'Hoje 23/11');
 });
+
+test('com 2 motoristas, um horário aceita 2 fretes ao mesmo tempo', () => {
+  const um: Bloco[] = [{ inicio: t('10:00'), fim: t('10:40') }];
+  const dois: Bloco[] = [...um, { inicio: t('10:00'), fim: t('10:40') }];
+  assert.ok(horariosLivres(DIA, cfg, um, madrugada, 2).map(horaLocal).includes('10:00'));
+  assert.ok(!horariosLivres(DIA, cfg, dois, madrugada, 2).map(horaLocal).includes('10:00'));
+  assert.equal(horarioValido(t('10:00'), cfg, [], madrugada, 0), false); // sem motorista aprovado
+});
