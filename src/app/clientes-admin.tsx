@@ -1,6 +1,6 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { cores, raio } from '../components/tema';
 import * as Admin from '../services/admin';
 import { mascararCpf } from '../services/cpf';
@@ -52,7 +52,6 @@ export default function ClientesAdmin() {
           </Text>
           <Text style={s.detalhe}>📍 {c.endereco}</Text>
           <View style={s.botoes}>
-            {!!c.telefone && <Mini texto="WhatsApp" onPress={() => Linking.openURL(`https://wa.me/55${c.telefone!.replace(/\D/g, '').replace(/^55/, '')}`)} />}
             {c.bloqueado ? <Mini texto="Desbloquear" onPress={() => acao(c.id, 'desbloquear')} /> : <Mini texto="Bloquear" perigo onPress={() => acao(c.id, 'bloquear')} />}
           </View>
         </View>

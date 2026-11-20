@@ -11,7 +11,6 @@ import { enviarPosicao, posicaoAtual } from '../../services/localizacao';
 import { formatarReais } from '../../services/preco';
 
 const ATUALIZAR_MS = 4000;
-const soDigitos = (t: string) => t.replace(/\D/g, '');
 const ATIVA = ['aceito', 'no_local', 'em_andamento'];
 
 /** Abre o Google Maps (ou o app de mapas do celular) já navegando até o destino. */
@@ -130,7 +129,6 @@ export default function CorridaMotoristaTela() {
 
   if (!c) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   const esperando = c.status === 'no_local' && c.chegouEm ? Math.floor((agora - Date.parse(c.chegouEm)) / 60000) : 0;
-  const tel = c.cliente?.telefone ? soDigitos(c.cliente.telefone) : '';
   const km = (v: number) => v.toFixed(1).replace('.', ',');
 
   return (
@@ -167,13 +165,8 @@ export default function CorridaMotoristaTela() {
         <Text style={s.detalhe}>{c.cliente?.endereco}</Text>
         <View style={{ flexDirection: 'row', gap: 16, flexWrap: 'wrap' }}>
           <Pressable onPress={() => router.push(`/chat/${c.id}`)}>
-            <Text style={s.link}>💬 Chat</Text>
+            <Text style={s.link}>💬 Chat com o cliente</Text>
           </Pressable>
-          {!!tel && (
-            <Pressable onPress={() => Linking.openURL(`https://wa.me/${tel.startsWith('55') ? tel : `55${tel}`}`)}>
-              <Text style={s.link}>WhatsApp</Text>
-            </Pressable>
-          )}
         </View>
       </View>
 

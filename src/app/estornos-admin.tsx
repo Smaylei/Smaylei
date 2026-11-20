@@ -1,7 +1,7 @@
 import { useFocusEffect } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useState } from 'react';
-import { Alert, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { cores, raio } from '../components/tema';
 import * as Admin from '../services/admin';
 import { formatarReais } from '../services/preco';
@@ -57,9 +57,6 @@ export default function EstornosAdmin() {
           {e.cancelado_em && <Text style={s.detalhe}>Cancelada em {data(e.cancelado_em)}</Text>}
           <View style={s.botoes}>
             {e.receipt_url && <Mini texto="Comprovante" onPress={() => WebBrowser.openBrowserAsync(e.receipt_url!)} />}
-            {!!e.cliente_telefone && (
-              <Mini texto="WhatsApp" onPress={() => Linking.openURL(`https://wa.me/55${e.cliente_telefone!.replace(/\D/g, '').replace(/^55/, '')}`)} />
-            )}
             <Mini
               texto="Marcar estornado"
               onPress={() =>

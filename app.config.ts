@@ -69,6 +69,6 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       package: 'br.com.mercadofrete.admin',
       adaptiveIcon: { ...base.android?.adaptiveIcon, backgroundColor: '#15201A', backgroundImage: './assets/admin-icon-background.png' },
     },
-    plugins: [...plugins, ['expo-calendar', { calendarPermission: AGENDA, remindersPermission: false }]],
+    plugins: [...plugins, ['expo-calendar', { calendarPermission: AGENDA, remindersPermission: false }], ['expo-notifications', {}]],
   };
 };

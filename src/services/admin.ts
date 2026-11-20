@@ -32,6 +32,7 @@ export type Resumo = {
   saquesPendentesQtd: number;
   estornosPendentes: number;
   estornosPendentesQtd: number;
+  avisosNaoLidos: number;
   faturamentoHoje: number;
 };
 
@@ -151,5 +152,7 @@ export const estornos = () => api<EstornoAdmin[]>('admin', '/v2/admin/estornos')
 export const estornoFeito = (id: string) => api('admin', `/v2/admin/estornos/${id}/feito`, { method: 'POST' });
 export const cancelarCorrida = (id: string) => api('admin', `/v2/admin/corridas/${id}/cancelar`, { method: 'POST' });
 export const linkAgenda = () => api<{ url: string }>('admin', '/v2/admin/agenda-link');
-export const testarWhatsapp = () => api<{ ok: boolean }>('admin', '/v2/admin/whatsapp-teste', { method: 'POST' });
+export type Aviso = { id: number; texto: string; corridaId: string | null; criadoEm: string; lido: number };
+export const avisos = () => api<{ naoLidos: number; avisos: Aviso[] }>('admin', '/v2/admin/avisos');
+export const avisosLidos = () => api('admin', '/v2/admin/avisos/lidos', { method: 'POST' });
 export const arquivo = (chave: string) => `/v2/admin/arquivo?chave=${encodeURIComponent(chave)}`;

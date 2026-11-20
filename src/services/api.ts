@@ -101,6 +101,7 @@ export type CorridaCliente = {
   esperaConfirmacaoMin: number;
   taxaDeslocamento: number;
   motorista: MotoristaPublico | null;
+  mensagens: number;
 };
 
 export type CorridaMotorista = {
@@ -132,7 +133,7 @@ export type Saldo = {
   proximoSaqueEm: string | null;
 };
 
-export type Mensagem = { id: number; autor: 'cliente' | 'motorista'; texto: string; criadoEm: string };
+export type Mensagem = { id: number; autor: 'cliente' | 'motorista' | 'suporte'; texto: string; criadoEm: string };
 
 export type Disponibilidade = {
   agora: { ok: boolean; motivo?: string };

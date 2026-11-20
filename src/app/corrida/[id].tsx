@@ -195,6 +195,12 @@ export default function Corrida() {
         </View>
       )}
 
+      {!mot && ['buscando'].includes(c.status) && (
+        <Pressable style={s.chatSuporte} onPress={() => router.push(`/chat/${c.id}`)}>
+          <Text style={s.chatSuporteTexto}>💬 Falar com o suporte</Text>
+        </Pressable>
+      )}
+
       <View style={s.resumo}>
         <Linha a="Coleta" b={c.mercadoNome} />
         <Linha a="Quando" b={c.agendado ? c.janela : 'Agora'} />
@@ -245,6 +251,8 @@ const s = StyleSheet.create({
   motNome: { fontSize: 17, fontWeight: '800', color: cores.texto },
   motCarro: { fontSize: 14, color: cores.suave },
   placa: { alignSelf: 'flex-start', marginTop: 4, fontSize: 15, fontWeight: '800', letterSpacing: 1, borderWidth: 1, borderColor: cores.texto, borderRadius: 4, paddingHorizontal: 6 },
+  chatSuporte: { borderWidth: 1, borderColor: cores.primaria, borderRadius: raio, paddingVertical: 12, alignItems: 'center' },
+  chatSuporteTexto: { color: cores.primaria, fontWeight: '700', fontSize: 15 },
   chat: { backgroundColor: cores.primaria, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12 },
   chatTexto: { color: '#fff', fontWeight: '700' },
   resumo: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12, gap: 6 },

@@ -20,8 +20,6 @@ const env = {
   INFINITEPAY_HANDLE: 'loja',
   ADMIN_TOKEN: 'senha-admin',
   APP_SCHEME: 'mercadofrete',
-  WHATSAPP_PHONE: '+5547999149325',
-  CALLMEBOT_APIKEY: 'k',
   DOCS: {
     put: async (k, v, o) => void arquivos.set(k, { v, ct: o?.httpMetadata?.contentType }),
     get: async (k) => (arquivos.has(k) ? { body: arquivos.get(k).v, httpMetadata: { contentType: arquivos.get(k).ct } } : null),
@@ -29,7 +27,6 @@ const env = {
 };
 const central = new Central(ctx, env);
 env.CENTRAL = { idFromName: () => 'x', get: () => ({ fetch: (r) => central.fetch(r) }) };
-const zaps = [];
 let linkCriado;
 globalThis.fetch = async (url, init) => {
   url = String(url);
@@ -38,10 +35,6 @@ globalThis.fetch = async (url, init) => {
     return new Response(JSON.stringify({ url: 'https://checkout.infinitepay.io/loja?lenc=x' }));
   }
   if (url.endsWith('/payment_check')) return new Response(JSON.stringify({ success: true, paid: true, capture_method: 'pix' }));
-  if (url.startsWith('https://api.callmebot.com/')) {
-    zaps.push(new URL(url).searchParams.get('text'));
-    return new Response('ok');
-  }
   throw new Error('fetch inesperado ' + url);
 };
 const B = 'https://srv.test';
@@ -59,6 +52,7 @@ async function call(path, { metodo = 'GET', token, corpo, bruto, tipo } = {}) {
   }
 }
 const ADM = 'senha-admin';
+const ultimoAviso = async () => (await call('/v2/admin/avisos', { token: ADM })).d.avisos[0]?.texto ?? '';
 const JPG = new Uint8Array(5000).fill(1);
 const COOPER = { lat: -26.471870, lon: -48.976217 }; // posição do mercado
 const LONGE = { lat: -26.49, lon: -49.01 };
@@ -99,7 +93,7 @@ test('fluxo completo: paga ao pedir (retido) → aceite → GPS no local → cli
 
   await pagar(c.d.id);
   assert.equal((await call(`/v2/corridas/${c.d.id}`, { token: cliente })).d.status, 'buscando');
-  assert.match(zaps.at(-1), /PAGO.*retido/);
+  assert.match(await ultimoAviso(), /PAGO.*retido/);
   assert.equal((await call('/v2/admin/resumo', { token: ADM })).d.retido, c.d.valor);
 
   const of = await call('/v2/ofertas', { token: motorista });
@@ -123,6 +117,18 @@ test('fluxo completo: paga ao pedir (retido) → aceite → GPS no local → cli
   assert.equal(s.disponivel, ganho);
   assert.equal(s.emLiberacao, 0);
 
+  // chat interno: cliente, motorista e suporte; motorista não recebe o telefone do cliente
+  assert.equal(of.d[0].cliente.telefone, null);
+  await call(`/v2/corridas/${c.d.id}/mensagens`, { metodo: 'POST', token: cliente, corpo: { texto: 'Estou no caixa 3' } });
+  assert.match(await ultimoAviso(), /Mensagem do cliente/);
+  await call(`/v2/admin/corridas/${c.d.id}/mensagens`, { metodo: 'POST', token: ADM, corpo: { texto: 'Suporte aqui, tudo certo?' } });
+  const chat = await call(`/v2/corridas/${c.d.id}/mensagens`, { metodo: 'POST', token: motorista, corpo: { texto: 'Chegando' } });
+  assert.deepEqual(chat.d.map((m) => m.autor), ['cliente', 'suporte', 'motorista']);
+  const av = await call('/v2/admin/avisos', { token: ADM });
+  assert.ok(av.d.naoLidos > 0);
+  await call('/v2/admin/avisos/lidos', { metodo: 'POST', token: ADM });
+  assert.equal((await call('/v2/admin/avisos', { token: ADM })).d.naoLidos, 0);
+
   const ent = await call(`/v2/corridas/${c.d.id}/entregue`, { metodo: 'POST', token: motorista });
   assert.equal(ent.s, 200, JSON.stringify(ent.d));
   assert.equal(ent.d.status, 'entregue');
@@ -133,7 +139,7 @@ test('saque semanal: pede, admin vê a ordem com Pix CPF, marca pago; segundo sa
   const sq = await call('/v2/saques', { metodo: 'POST', token: motorista });
   assert.equal(sq.s, 200, JSON.stringify(sq.d));
   assert.equal(sq.d.valor, s0.disponivel);
-  assert.match(zaps.at(-1), /SAQUE SOLICITADO[\s\S]*15350946056/);
+  assert.match(await ultimoAviso(), /SAQUE SOLICITADO[\s\S]*15350946056/);
   assert.equal((await call('/v2/saldo', { token: motorista })).d.disponivel, 0);
   const ordens = await call('/v2/admin/saques', { token: ADM });
   assert.equal(ordens.d[0].chave_pix, '15350946056');
@@ -175,7 +181,7 @@ test('sem motorista no prazo → cancelada com estorno total; agendado bloqueia 
   assert.equal(st.d.status, 'cancelado');
   assert.equal(st.d.motivo, 'sem_motorista');
   assert.equal(st.d.reembolso, c.d.valor);
-  assert.match(zaps.at(-1), /ESTORNAR/);
+  assert.match(await ultimoAviso(), /ESTORNAR/);
 
   const dia = (await call('/v2/disponibilidade')).d.dias[1];
   const h = dia.horarios[2];
@@ -183,8 +189,25 @@ test('sem motorista no prazo → cancelada com estorno total; agendado bloqueia 
   assert.equal(ag.s, 200, JSON.stringify(ag.d));
   const ocupados = (await call('/v2/disponibilidade')).d.dias.find((d) => d.data === dia.data).horarios.map((x) => x.hora);
   assert.ok(!ocupados.includes(h.hora)); // reservado enquanto paga
+  assert.equal((await call('/v2/agenda-disponivel', { token: motorista })).d.length, 0); // ainda não pago
+  await pagar(ag.d.id);
+  const agDisp = await call('/v2/agenda-disponivel', { token: motorista });
+  assert.equal(agDisp.d[0].data, dia.data);
+  assert.equal(agDisp.d[0].corridas[0].id, ag.d.id);
   await call(`/v2/corridas/${ag.d.id}/cancelar`, { metodo: 'POST', token: cliente });
   assert.ok((await call('/v2/disponibilidade')).d.dias.find((d) => d.data === dia.data).horarios.some((x) => x.hora === h.hora));
+  assert.equal((await call('/v2/agenda-disponivel', { token: motorista })).d.length, 0);
+});
+
+test('agenda de corridas: parceiro aceita uma corrida de outro dia e ela vai para a agenda dele', async () => {
+  const dia = (await call('/v2/disponibilidade')).d.dias[3];
+  const h = dia.horarios[5];
+  const ag = await call('/v2/corridas', { metodo: 'POST', token: cliente, corpo: { mercadoId: 'cooper', agendado: true, inicio: h.inicio } });
+  await pagar(ag.d.id);
+  assert.equal((await call(`/v2/ofertas/${ag.d.id}/aceitar`, { metodo: 'POST', token: motorista })).d.status, 'aceito');
+  const minha = await call('/v2/agenda', { token: motorista });
+  assert.ok(minha.d.some((c) => c.id === ag.d.id));
+  assert.ok(!(await call('/v2/agenda-disponivel', { token: motorista })).d.some((d) => d.corridas.some((c) => c.id === ag.d.id)));
 });
 
 test('pedido não pago expira em 15 min e libera o horário', async () => {

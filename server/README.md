@@ -32,12 +32,7 @@ Depois coloque essa URL em `API_PAGAMENTOS` (`src/config.ts`) e gere o app de no
 - Cliente cancela pelo app: agendado até o horário; urgente até 5 min após pagar.
 - `GET /agenda.ics?k=...` (link no App Admin → Ajustes) com lembrete 15 min antes.
 
-### WhatsApp (CallMeBot, grátis para uso pessoal)
+### Avisos
 
-1. No seu WhatsApp, salve o contato do CallMeBot (número em https://www.callmebot.com/blog/free-api-whatsapp-messages/)
-   e envie: `I allow callmebot to send me messages`.
-2. O bot responde com a sua **apikey**.
-3. Na Cloudflare (Workers → mercado-frete-pagamentos → Configurações → Variáveis e segredos), adicione como **Segredo**:
-   - `WHATSAPP_PHONE`: seu número com DDI, ex. `+5547999999999`
-   - `CALLMEBOT_APIKEY`: a apikey recebida
-4. No App Admin → Ajustes → "Enviar mensagem de teste".
+Os avisos (pedido pago, aceite, cancelamento, saque, mensagem de cliente, motorista novo) ficam no
+App Admin (sino 🔔 no painel) e aparecem como notificação no celular. Não usamos mais WhatsApp.

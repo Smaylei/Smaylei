@@ -1,3 +1,5 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Notifications from 'expo-notifications';
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
@@ -14,10 +16,6 @@ const ATIVAS = ['buscando', 'aceito', 'no_local', 'em_andamento'];
 const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
 const diaHora = (iso: string) =>
   new Date(iso).toLocaleString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
-const wa = (t?: string | null) => {
-  const d = (t ?? '').replace(/\D/g, '');
-  return d ? `https://wa.me/${d.startsWith('55') ? d : `55${d}`}` : null;
-};
 
 function eventos(lista: Admin.CorridaAdmin[]): EventoAgenda[] {
   return lista
@@ -47,8 +45,15 @@ export default function Painel() {
 
   const atualizar = useCallback(async () => {
     try {
-      const [r, c] = await Promise.all([Admin.resumo(), Admin.corridas()]);
+      const [r, c, av] = await Promise.all([Admin.resumo(), Admin.corridas(), Admin.avisos()]);
       setRes(r);
+      // Avisos novos (pedidos, aceites, cancelamentos, saques, mensagens) viram notificação no celular.
+      const visto = Number((await AsyncStorage.getItem('avisos:visto').catch(() => null)) ?? 0);
+      const novos = av.avisos.filter((a) => a.id > visto);
+      if (visto > 0)
+        for (const a of novos.slice(0, 3).reverse())
+          Notifications.scheduleNotificationAsync({ content: { title: 'Frete Admin', body: a.texto.split('\n')[0], sound: true }, trigger: null }).catch(() => {});
+      if (av.avisos[0]) AsyncStorage.setItem('avisos:visto', String(av.avisos[0].id)).catch(() => {});
       setLista(c);
       setAgora(Date.now());
       setLogado(true);
@@ -111,9 +116,14 @@ export default function Painel() {
         options={{
           title: 'Frete Admin',
           headerRight: () => (
-            <Pressable onPress={() => router.push('/ajustes')} hitSlop={10}>
-              <Text style={{ color: '#fff', fontWeight: '700' }}>Ajustes</Text>
-            </Pressable>
+            <View style={{ flexDirection: 'row', gap: 18 }}>
+              <Pressable onPress={() => router.push('/avisos-admin')} hitSlop={10}>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>🔔{res.avisosNaoLidos ? ` ${res.avisosNaoLidos}` : ''}</Text>
+              </Pressable>
+              <Pressable onPress={() => router.push('/ajustes')} hitSlop={10}>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Ajustes</Text>
+              </Pressable>
+            </View>
           ),
         }}
       />
@@ -202,7 +212,6 @@ function Numero({ rotulo, valor }: { rotulo: string; valor: string }) {
 
 function Cartao({ c, onCancelar }: { c: Admin.CorridaAdmin; onCancelar: () => void }) {
   const ativa = ATIVAS.includes(c.status);
-  const waCli = wa(c.cliente_telefone), waMot = wa(c.motorista_telefone);
   return (
     <View style={[s.cartao, !ativa && { opacity: c.status === 'cancelado' ? 0.65 : 0.9 }]}>
       <View style={s.linha}>
@@ -230,8 +239,7 @@ function Cartao({ c, onCancelar }: { c: Admin.CorridaAdmin; onCancelar: () => vo
       )}
       <View style={s.botoes}>
         <Mini texto="Mapa" onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${c.cliente_lat},${c.cliente_lon}`)} />
-        {waCli && <Mini texto="WhatsApp cliente" onPress={() => Linking.openURL(waCli)} />}
-        {waMot && <Mini texto="WhatsApp motorista" onPress={() => Linking.openURL(waMot)} />}
+        <Mini texto="💬 Chat" onPress={() => router.push(`/chat/${c.id}`)} />
         {ativa && <Mini texto="Cancelar" perigo onPress={onCancelar} />}
       </View>
     </View>

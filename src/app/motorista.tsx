@@ -108,6 +108,8 @@ export default function Motorista() {
 
   const atual = minhas.find((c) => ['aceito', 'no_local', 'em_andamento'].includes(c.status) && Date.parse(c.inicio) - agora < 60 * 60000);
   const voltando = minhas.find((c) => c.status === 'entregue' && Date.parse(c.fim) > agora);
+  const agoraOfertas = ofertas.filter((o) => !o.agendado);
+  const agendadas = ofertas.length - agoraOfertas.length;
   const proximos = minhas.filter((c) => c !== atual && ['aceito'].includes(c.status));
 
   return (
@@ -174,9 +176,18 @@ export default function Motorista() {
         </View>
       )}
 
-      <Text style={s.secao}>Corridas disponíveis</Text>
-      {ofertas.length === 0 && <Text style={s.vazio}>{eu.online ? 'Nenhuma no momento. Avisamos quando aparecer.' : 'Fique online para ver as corridas de agora. Agendadas aparecem aqui também.'}</Text>}
-      {ofertas.map((o) => (
+      {eu.status === 'aprovado' && (
+        <Pressable style={s.agendaCorridas} onPress={() => router.push('/agenda-corridas')}>
+          <Text style={s.agendaCorridasTitulo}>📅 Agenda de corridas</Text>
+          <Text style={s.detalhe}>
+            {agendadas > 0 ? `${agendadas} corrida${agendadas > 1 ? 's' : ''} agendada${agendadas > 1 ? 's' : ''} disponível${agendadas > 1 ? 'eis' : ''} para aceitar` : 'Veja e aceite corridas dos próximos dias'}
+          </Text>
+        </Pressable>
+      )}
+
+      <Text style={s.secao}>Corridas de agora</Text>
+      {agoraOfertas.length === 0 && <Text style={s.vazio}>{eu.online ? 'Nenhuma no momento. Avisamos quando aparecer.' : 'Fique online para receber corridas de agora.'}</Text>}
+      {agoraOfertas.map((o) => (
         <View key={o.id} style={s.oferta}>
           <View style={s.linha}>
             <Text style={[s.selo, o.agendado ? s.seloAgendado : s.seloAgora]}>{o.agendado ? `AGENDADA · ${o.janela}` : 'AGORA'}</Text>
@@ -250,6 +261,8 @@ const s = StyleSheet.create({
   texto: { fontSize: 15, color: cores.texto },
   detalhe: { fontSize: 13, color: cores.suave },
   proximo: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12, gap: 2 },
+  agendaCorridas: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 2, borderColor: '#1F4FA8', padding: 14, gap: 2 },
+  agendaCorridasTitulo: { fontSize: 17, fontWeight: '800', color: '#1F4FA8' },
   ganhos: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 14, marginTop: 8 },
   ganhosValor: { fontSize: 26, fontWeight: '800', color: cores.primaria },
   agendaInfo: { fontSize: 12, color: cores.suave },

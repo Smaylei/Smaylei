@@ -6,10 +6,14 @@ import { cores } from '../../components/tema';
 import { api, type Mensagem } from '../../services/api';
 import { VARIANTE } from '../../variante';
 
-/** Chat da corrida entre cliente e motorista (o mesmo componente nos dois apps). */
+const NOME = { cliente: 'Cliente', motorista: 'Motorista', suporte: 'Suporte' } as const;
+
+/** Chat interno da corrida: cliente, motorista da vez e suporte (Admin). Mesmo componente nos três apps. */
 export default function Chat() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const papel = VARIANTE === 'motorista' ? 'motorista' : 'cliente';
+  const papel = VARIANTE === 'motorista' ? 'motorista' : VARIANTE === 'admin' ? 'admin' : 'cliente';
+  const eu = papel === 'admin' ? 'suporte' : papel;
+  const rota = papel === 'admin' ? `/v2/admin/corridas/${id}/mensagens` : `/v2/corridas/${id}/mensagens`;
   const insets = useSafeAreaInsets();
   const [msgs, setMsgs] = useState<Mensagem[]>([]);
   const [texto, setTexto] = useState('');
@@ -25,12 +29,12 @@ export default function Chat() {
 
   const buscar = useCallback(async () => {
     try {
-      juntar(await api<Mensagem[]>(papel, `/v2/corridas/${id}/mensagens?depois=${ultimo.current}`));
+      juntar(await api<Mensagem[]>(papel, `${rota}?depois=${ultimo.current}`));
       setErro(null);
     } catch (e) {
       setErro((e as Error).message);
     }
-  }, [id, papel, juntar]);
+  }, [rota, papel, juntar]);
 
   useFocusEffect(
     useCallback(() => {
@@ -48,7 +52,7 @@ export default function Chat() {
     if (!t) return;
     setTexto('');
     try {
-      juntar(await api<Mensagem[]>(papel, `/v2/corridas/${id}/mensagens?depois=${ultimo.current}`, { method: 'POST', corpo: { texto: t } }));
+      juntar(await api<Mensagem[]>(papel, `${rota}?depois=${ultimo.current}`, { method: 'POST', corpo: { texto: t } }));
     } catch (e) {
       setErro((e as Error).message);
       setTexto(t);
@@ -63,11 +67,12 @@ export default function Chat() {
         keyExtractor={(m) => String(m.id)}
         contentContainerStyle={{ padding: 12, gap: 8 }}
         onContentSizeChange={() => lista.current?.scrollToEnd({ animated: true })}
-        ListEmptyComponent={<Text style={s.vazio}>Combine detalhes da entrega por aqui.</Text>}
+        ListEmptyComponent={<Text style={s.vazio}>Converse sobre a entrega por aqui. O suporte também acompanha este chat.</Text>}
         renderItem={({ item }) => {
-          const meu = item.autor === papel;
+          const meu = item.autor === eu;
           return (
-            <View style={[s.balao, meu ? s.meu : s.outro]}>
+            <View style={[s.balao, meu ? s.meu : item.autor === 'suporte' ? s.suporte : s.outro]}>
+              {!meu && <Text style={s.autor}>{NOME[item.autor]}</Text>}
               <Text style={[s.texto, meu && { color: '#fff' }]}>{item.texto}</Text>
               <Text style={[s.hora, meu && { color: '#D7F0E1' }]}>
                 {new Date(item.criadoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
@@ -92,6 +97,8 @@ const s = StyleSheet.create({
   balao: { maxWidth: '80%', borderRadius: 14, paddingVertical: 8, paddingHorizontal: 12 },
   meu: { alignSelf: 'flex-end', backgroundColor: cores.primaria },
   outro: { alignSelf: 'flex-start', backgroundColor: cores.cartao, borderWidth: 1, borderColor: cores.borda },
+  suporte: { alignSelf: 'flex-start', backgroundColor: cores.alertaFundo, borderWidth: 1, borderColor: cores.alerta },
+  autor: { fontSize: 11, fontWeight: '800', color: cores.suave, marginBottom: 2 },
   texto: { fontSize: 15, color: cores.texto },
   hora: { fontSize: 10, color: cores.suave, marginTop: 2, alignSelf: 'flex-end' },
   erro: { color: cores.erro, fontSize: 12, paddingHorizontal: 12 },

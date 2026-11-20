@@ -1,6 +1,6 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Image, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { cores, raio } from '../components/tema';
 import * as Admin from '../services/admin';
 import { fonteImagem } from '../services/api';
@@ -68,7 +68,7 @@ export default function MotoristasAdmin() {
 
           {aberto === m.id && (
             <View style={{ gap: 8, marginTop: 8 }}>
-              <Text style={s.detalhe}>CPF (chave Pix) {formatarCpf(m.cpf)} · WhatsApp {m.telefone}</Text>
+              <Text style={s.detalhe}>CPF (chave Pix) {formatarCpf(m.cpf)} · Tel. {m.telefone}</Text>
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <Doc rotulo="Selfie" fonte={m.selfie ? fotos[m.selfie] : undefined} />
                 <Doc rotulo="CNH" fonte={m.cnh ? fotos[m.cnh] : undefined} largo />
@@ -76,7 +76,6 @@ export default function MotoristasAdmin() {
               <View style={s.botoes}>
                 {m.status !== 'aprovado' && <Mini texto="Aprovar" onPress={() => acao(() => Admin.statusMotorista(m.id, 'aprovado'))} />}
                 {m.status !== 'bloqueado' && <Mini texto="Bloquear" perigo onPress={() => acao(() => Admin.statusMotorista(m.id, 'bloqueado'))} />}
-                <Mini texto="WhatsApp" onPress={() => Linking.openURL(`https://wa.me/55${m.telefone.replace(/\D/g, '').replace(/^55/, '')}`)} />
               </View>
             </View>
           )}

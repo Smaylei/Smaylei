@@ -136,7 +136,6 @@ Mesmo projeto, outra variante (`APP_VARIANT=admin`): nome, ícone e identificado
 - **Agenda:** cada frete pago vira evento na agenda do celular (Google Agenda no Android,
   Calendário no iPhone) com lembrete 15 min antes; cancelado sai da agenda.
 - **Ajustes:** horário de atendimento, bloqueio por frete (40 min), intervalo entre horários,
-  tarifas/margem/urgência (valem para todos os clientes), link .ics e teste do WhatsApp.
 - Acesso com a senha `ADMIN_TOKEN` cadastrada na Cloudflare.
 
 ```bash

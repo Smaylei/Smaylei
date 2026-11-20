@@ -39,12 +39,14 @@ export default function Layout() {
             <Stack.Screen name="agenda-motorista" options={{ title: 'Minha agenda' }} />
             <Stack.Screen name="corrida-motorista/[id]" options={{ title: 'Corrida' }} />
             <Stack.Screen name="saldo-motorista" options={{ title: 'Saldo e saques' }} />
+            <Stack.Screen name="agenda-corridas" options={{ title: 'Agenda de corridas' }} />
             {/* admin */}
             <Stack.Screen name="painel" options={{ title: 'Frete Admin' }} />
             <Stack.Screen name="motoristas-admin" options={{ title: 'Motoristas' }} />
             <Stack.Screen name="clientes-admin" options={{ title: 'Clientes' }} />
             <Stack.Screen name="saques-admin" options={{ title: 'Saques dos motoristas' }} />
             <Stack.Screen name="estornos-admin" options={{ title: 'Estornos' }} />
+            <Stack.Screen name="avisos-admin" options={{ title: 'Avisos' }} />
             <Stack.Screen name="ajustes" options={{ title: 'Ajustes' }} />
             <Stack.Screen name="tarifas" options={{ title: 'Tarifas' }} />
           </Stack>

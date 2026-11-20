@@ -75,15 +75,6 @@ export default function Ajustes() {
     }
   }
 
-  async function testarWhatsapp() {
-    try {
-      await Admin.testarWhatsapp();
-      Alert.alert('Enviado', 'Confira a mensagem de teste no seu WhatsApp.');
-    } catch (e) {
-      Alert.alert('WhatsApp', (e as Error).message);
-    }
-  }
-
   if (!cfg) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
 
   const campo = (rotulo: string, chave: keyof typeof texto, teclado: 'numeric' | 'numbers-and-punctuation' = 'numeric') => (
@@ -155,15 +146,6 @@ export default function Ajustes() {
         </Text>
       </View>
 
-      <Text style={s.secao}>WhatsApp</Text>
-      <View style={s.cartao}>
-        <Text style={s.ajuda}>
-          Avisos de pedido, aceite, pagamento, cancelamento e novos motoristas chegam no WhatsApp +55 47 99914-9325 (falta só cadastrar a CALLMEBOT_APIKEY na Cloudflare).
-        </Text>
-        <Pressable onPress={testarWhatsapp}>
-          <Text style={s.link}>Enviar mensagem de teste</Text>
-        </Pressable>
-      </View>
 
       <Pressable
         onPress={async () => {

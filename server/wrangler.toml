@@ -23,5 +23,3 @@ APP_SCHEME = "mercadofrete"
 # Segredos (nunca no arquivo):
 #   npx wrangler secret put INFINITEPAY_API_KEY
 #   npx wrangler secret put ADMIN_TOKEN
-#   npx wrangler secret put WHATSAPP_PHONE
-#   npx wrangler secret put CALLMEBOT_APIKEY
