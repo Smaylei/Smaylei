@@ -11,10 +11,10 @@ class_name = "Central"
 tag = "v1"
 new_sqlite_classes = ["Central"]
 
-# Fotos e documentos (privado) — ative o R2 no painel da Cloudflare, crie o bucket e descomente:
-# [[r2_buckets]]
-# binding = "DOCS"
-# bucket_name = "mercado-frete-docs"
+# Fotos e documentos (privado)
+[[r2_buckets]]
+binding = "DOCS"
+bucket_name = "mercado-frete-docs"
 
 [vars]
 INFINITEPAY_HANDLE = "smayleiluiz"

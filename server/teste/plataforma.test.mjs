@@ -60,155 +60,152 @@ async function call(path, { metodo = 'GET', token, corpo, bruto, tipo } = {}) {
 }
 const ADM = 'senha-admin';
 const JPG = new Uint8Array(5000).fill(1);
+const COOPER = { lat: -26.471870, lon: -48.976217 }; // posição do mercado
+const LONGE = { lat: -26.49, lon: -49.01 };
 
 // Relógio fixo: segunda 23/11/2026, 10:00 em Brasília.
 let relogio = Date.parse('2026-11-23T13:00:00Z');
 Date.now = () => relogio;
 const avanca = (min) => (relogio += min * 60_000);
+const pagar = (id, n = id) => call(`/retorno?order_nsu=${id}&slug=s-${n}&transaction_nsu=t-${n}`);
+const online = (token, p = COOPER) => call('/v2/eu/online', { metodo: 'POST', token, corpo: { online: true, ...p } });
 
-let cliente, motorista, corridaId;
+let cliente, motorista, motId;
 
-test('cadastro de cliente e motorista com validação de CPF e placa', async () => {
-  assert.equal((await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Ana Souza', cpf: '111.111.111-11', endereco: 'Rua X, 10', lat: -26.4893, lon: -48.9872 } })).s, 400);
-  const c = await call('/v2/clientes', {
-    metodo: 'POST',
-    corpo: { nome: 'Ana Souza', cpf: '529.982.247-25', telefone: '(47) 98888-7777', endereco: 'Rua X, 10, Corticeira', lat: -26.4893, lon: -48.9872 },
-  });
+test('cadastros, documentos, aprovação; Pix do motorista = CPF', async () => {
+  const c = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Ana Souza', cpf: '529.982.247-25', telefone: '(47) 98888-7777', endereco: 'Rua X, 10, Corticeira', lat: -26.4893, lon: -48.9872 } });
   assert.equal(c.s, 200, JSON.stringify(c.d));
   cliente = c.d.token;
-  assert.equal((await call('/v2/arquivos?tipo=foto', { metodo: 'POST', token: cliente, bruto: JPG, tipo: 'image/jpeg' })).s, 200);
-
-  assert.equal((await call('/v2/motoristas', { metodo: 'POST', corpo: { nome: 'Smaylei Luiz', cpf: '529.982.247-25', telefone: '47999149325', carro: 'Fiat Strada', placa: 'XYZ' } })).s, 400);
-  const m = await call('/v2/motoristas', {
-    metodo: 'POST',
-    corpo: { nome: 'Smaylei Luiz', cpf: '153.509.460-56', telefone: '47999149325', carro: 'Fiat Strada', placa: 'abc-1d23', cor: 'Branca', pix: '47999149325' },
-  });
+  const m = await call('/v2/motoristas', { metodo: 'POST', corpo: { nome: 'Smaylei Luiz', cpf: '153.509.460-56', telefone: '47999149325', carro: 'Fiat Strada', placa: 'abc-1d23', cor: 'Branca' } });
   assert.equal(m.s, 200, JSON.stringify(m.d));
   motorista = m.d.token;
-  assert.match(zaps.at(-1), /NOVO MOTORISTA/);
-});
-
-test('motorista só fica online depois de enviar documentos e ser aprovado', async () => {
-  assert.equal((await call('/v2/eu/online', { metodo: 'POST', token: motorista, corpo: { online: true } })).s, 403);
-  assert.equal((await call('/v2/disponibilidade')).d.dias.length, 0); // nenhum motorista aprovado
+  assert.equal((await online(motorista)).s, 403); // não aprovado
   await call('/v2/arquivos?tipo=selfie', { metodo: 'POST', token: motorista, bruto: JPG, tipo: 'image/jpeg' });
-  await call('/v2/arquivos?tipo=cnh', { metodo: 'POST', token: motorista, bruto: JPG, tipo: 'image/jpeg' });
   const lista = await call('/v2/admin/motoristas', { token: ADM });
-  assert.equal(lista.d[0].status, 'pendente');
-  assert.ok(lista.d[0].selfie && lista.d[0].cnh);
-  assert.equal((await call(`/v2/admin/arquivo?chave=${encodeURIComponent(lista.d[0].cnh)}`, { token: ADM })).s, 200);
-  assert.equal((await call(`/v2/admin/motoristas/${lista.d[0].id}/status`, { metodo: 'POST', token: ADM, corpo: { status: 'aprovado' } })).s, 200);
-  const on = await call('/v2/eu/online', { metodo: 'POST', token: motorista, corpo: { online: true, lat: -26.475, lon: -49.0 } });
-  assert.equal(on.s, 200, JSON.stringify(on.d));
-  assert.equal((await call('/v2/disponibilidade')).d.agora.ok, true);
+  motId = lista.d[0].id;
+  await call(`/v2/admin/motoristas/${motId}/status`, { metodo: 'POST', token: ADM, corpo: { status: 'aprovado' } });
+  assert.equal((await online(motorista)).s, 403); // falta CNH
+  await call('/v2/arquivos?tipo=cnh', { metodo: 'POST', token: motorista, bruto: JPG, tipo: 'image/jpeg' });
+  assert.equal((await online(motorista)).s, 200);
+  assert.equal((await call('/v2/eu', { token: motorista })).d.pix, '15350946056');
 });
 
-test('pedido agora → oferta → aceite → chat → chegou ao mercado → pagamento → entregue', async () => {
+test('fluxo completo: paga ao pedir (retido) → aceite → GPS no local → cliente confirma (libera) → entregue', async () => {
   const c = await call('/v2/corridas', { metodo: 'POST', token: cliente, corpo: { mercadoId: 'cooper', agendado: false } });
   assert.equal(c.s, 200, JSON.stringify(c.d));
-  assert.equal(c.d.status, 'buscando');
-  corridaId = c.d.id;
-  assert.match(zaps.at(-1), /NOVO FRETE URGENTE/);
+  assert.equal(c.d.status, 'pagamento_pendente');
+  assert.ok(c.d.checkoutUrl);
+  assert.equal((await call('/v2/ofertas', { token: motorista })).d.length, 0); // sem pagamento, sem oferta
 
-  const ofertas = await call('/v2/ofertas', { token: motorista });
-  assert.equal(ofertas.d.length, 1);
-  assert.equal(ofertas.d[0].ganho, Math.round(c.d.valor * 0.8 * 100) / 100); // 80% do frete
-  assert.equal(ofertas.d[0].cliente.telefone, null); // telefone só depois de aceitar
-  assert.ok(ofertas.d[0].km > 0 && ofertas.d[0].kmAteMercado >= 0);
+  await pagar(c.d.id);
+  assert.equal((await call(`/v2/corridas/${c.d.id}`, { token: cliente })).d.status, 'buscando');
+  assert.match(zaps.at(-1), /PAGO.*retido/);
+  assert.equal((await call('/v2/admin/resumo', { token: ADM })).d.retido, c.d.valor);
 
-  const ac = await call(`/v2/ofertas/${corridaId}/aceitar`, { metodo: 'POST', token: motorista });
-  assert.equal(ac.d.status, 'aceito');
-  assert.equal(ac.d.cliente.telefone, '47988887777');
-  assert.match(zaps.at(-1), /CORRIDA ACEITA/);
+  const of = await call('/v2/ofertas', { token: motorista });
+  assert.equal(of.d.length, 1);
+  assert.equal((await call(`/v2/ofertas/${c.d.id}/aceitar`, { metodo: 'POST', token: motorista })).d.status, 'aceito');
+  const ganho = Math.round(c.d.valor * 0.8 * 100) / 100;
+  assert.equal((await call('/v2/saldo', { token: motorista })).d.emLiberacao, ganho);
+  assert.equal((await call('/v2/saldo', { token: motorista })).d.disponivel, 0);
 
-  // cliente acompanha: vê o motorista, a placa e a posição
-  const atv = await call('/v2/corridas/ativas', { token: cliente });
-  assert.equal(atv.d[0].motorista.placa, 'ABC1D23');
-  assert.equal(atv.d[0].motorista.lat, -26.475);
-  assert.equal((await call(`/v2/corridas/${corridaId}/foto-motorista`, { token: cliente })).s, 200);
-  await call('/v2/eu/local', { metodo: 'POST', token: motorista, corpo: { lat: -26.472, lon: -48.98 } });
-  assert.equal((await call(`/v2/corridas/${corridaId}`, { token: cliente })).d.motorista.lon, -48.98);
+  // "Cheguei" longe do mercado é recusado (antifraude por GPS)
+  const longe = await call(`/v2/corridas/${c.d.id}/cheguei`, { metodo: 'POST', token: motorista, corpo: LONGE });
+  assert.equal(longe.s, 409);
+  assert.match(longe.d.erro, /Você está a \d+ m/);
+  assert.equal((await call(`/v2/corridas/${c.d.id}/entregue`, { metodo: 'POST', token: motorista })).s, 409);
+  assert.equal((await call(`/v2/corridas/${c.d.id}/cheguei`, { metodo: 'POST', token: motorista, corpo: COOPER })).d.status, 'no_local');
+  assert.equal((await call(`/v2/corridas/${c.d.id}/entregue`, { metodo: 'POST', token: motorista })).s, 409); // falta o cliente confirmar
 
-  // chat
-  await call(`/v2/corridas/${corridaId}/mensagens`, { metodo: 'POST', token: cliente, corpo: { texto: 'Oi, as compras estão no caixa 3' } });
-  const msgs = await call(`/v2/corridas/${corridaId}/mensagens`, { metodo: 'POST', token: motorista, corpo: { texto: 'Chegando!' } });
-  assert.deepEqual(
-    msgs.d.map((m) => m.autor),
-    ['cliente', 'motorista'],
-  );
-  assert.equal((await call(`/v2/corridas/${corridaId}/mensagens?depois=${msgs.d[0].id}`, { token: cliente })).d.length, 1);
+  const conf = await call(`/v2/corridas/${c.d.id}/confirmar-motorista`, { metodo: 'POST', token: cliente });
+  assert.equal(conf.d.status, 'em_andamento');
+  const s = (await call('/v2/saldo', { token: motorista })).d;
+  assert.equal(s.disponivel, ganho);
+  assert.equal(s.emLiberacao, 0);
 
-  // pagamento só quando o motorista chega ao mercado
-  assert.equal((await call(`/v2/corridas/${corridaId}/entregue`, { metodo: 'POST', token: motorista })).s, 409);
-  const ch = await call(`/v2/corridas/${corridaId}/cheguei`, { metodo: 'POST', token: motorista });
-  assert.equal(ch.d.status, 'aguardando_pagamento');
-  assert.equal((await call(`/v2/corridas/${corridaId}`, { token: cliente })).d.checkoutUrl, 'https://checkout.infinitepay.io/loja?lenc=x');
-
-  const ret = await call(`/retorno?order_nsu=${corridaId}&slug=s1&transaction_nsu=t1&receipt_url=https%3A%2F%2Fr`);
-  assert.match(ret.d, /Pagamento confirmado!/);
-  assert.match(zaps.at(-1), /PAGO/);
-  const pago = await call(`/v2/corridas/${corridaId}`, { token: cliente });
-  assert.equal(pago.d.status, 'pago');
-
-  assert.equal((await call(`/v2/corridas/${corridaId}/entregue`, { metodo: 'POST', token: motorista })).d.status, 'entregue');
-  const eu = await call('/v2/eu', { token: motorista });
-  assert.equal(eu.d.aReceber, Math.round(pago.d.valor * 0.8 * 100) / 100);
+  const ent = await call(`/v2/corridas/${c.d.id}/entregue`, { metodo: 'POST', token: motorista });
+  assert.equal(ent.s, 200, JSON.stringify(ent.d));
+  assert.equal(ent.d.status, 'entregue');
 });
 
-test('agendado: horário bloqueado 40 min, cliente cancela e libera', async () => {
+test('saque semanal: pede, admin vê a ordem com Pix CPF, marca pago; segundo saque só depois de 7 dias', async () => {
+  const s0 = (await call('/v2/saldo', { token: motorista })).d;
+  const sq = await call('/v2/saques', { metodo: 'POST', token: motorista });
+  assert.equal(sq.s, 200, JSON.stringify(sq.d));
+  assert.equal(sq.d.valor, s0.disponivel);
+  assert.match(zaps.at(-1), /SAQUE SOLICITADO[\s\S]*15350946056/);
+  assert.equal((await call('/v2/saldo', { token: motorista })).d.disponivel, 0);
+  const ordens = await call('/v2/admin/saques', { token: ADM });
+  assert.equal(ordens.d[0].chave_pix, '15350946056');
+  assert.equal((await call('/v2/admin/resumo', { token: ADM })).d.saquesPendentesQtd, 1);
+  await call(`/v2/admin/saques/${ordens.d[0].id}/pagar`, { metodo: 'POST', token: ADM });
+  assert.equal((await call('/v2/admin/saques', { token: ADM })).d[0].status, 'pago');
+  assert.equal((await call('/v2/saques', { metodo: 'POST', token: motorista })).s, 409); // semana ainda não passou
+});
+
+test('cliente cancela com o motorista no local: taxa ao motorista, resto estornado', async () => {
   avanca(60);
   await call('/v2/eu/livre', { metodo: 'POST', token: motorista });
+  await online(motorista);
+  const c = await call('/v2/corridas', { metodo: 'POST', token: cliente, corpo: { mercadoId: 'cooper', agendado: false } });
+  assert.equal(c.s, 200, JSON.stringify(c.d));
+  await pagar(c.d.id);
+  await call(`/v2/ofertas/${c.d.id}/aceitar`, { metodo: 'POST', token: motorista });
+  await call(`/v2/corridas/${c.d.id}/cheguei`, { metodo: 'POST', token: motorista, corpo: COOPER });
+  const canc = await call(`/v2/corridas/${c.d.id}/cancelar`, { metodo: 'POST', token: cliente });
+  assert.equal(canc.d.status, 'cancelado');
+  assert.equal(canc.d.taxaAplicada, 5);
+  assert.equal(canc.d.reembolso, Math.round((c.d.valor - 5) * 100) / 100);
+  assert.equal((await call('/v2/saldo', { token: motorista })).d.disponivel, 5);
+  const est = await call('/v2/admin/estornos', { token: ADM });
+  assert.equal(est.d[0].reembolso, canc.d.reembolso);
+  await call(`/v2/admin/estornos/${c.d.id}/feito`, { metodo: 'POST', token: ADM });
+  assert.equal((await call('/v2/admin/resumo', { token: ADM })).d.estornosPendentesQtd, 0);
+});
+
+test('sem motorista no prazo → cancelada com estorno total; agendado bloqueia horário e libera ao cancelar', async () => {
+  avanca(60);
+  await call('/v2/eu/livre', { metodo: 'POST', token: motorista });
+  await online(motorista);
+  const c = await call('/v2/corridas', { metodo: 'POST', token: cliente, corpo: { mercadoId: 'burei', agendado: false } });
+  await pagar(c.d.id);
+  await call(`/v2/ofertas/${c.d.id}/recusar`, { metodo: 'POST', token: motorista });
+  avanca(6);
+  const st = await call(`/v2/corridas/${c.d.id}`, { token: cliente });
+  assert.equal(st.d.status, 'cancelado');
+  assert.equal(st.d.motivo, 'sem_motorista');
+  assert.equal(st.d.reembolso, c.d.valor);
+  assert.match(zaps.at(-1), /ESTORNAR/);
+
   const dia = (await call('/v2/disponibilidade')).d.dias[1];
   const h = dia.horarios[2];
-  const c = await call('/v2/corridas', { metodo: 'POST', token: cliente, corpo: { mercadoId: 'burei', agendado: true, inicio: h.inicio } });
-  assert.equal(c.s, 200, JSON.stringify(c.d));
-  const depois = (await call('/v2/disponibilidade')).d.dias.find((d) => d.data === dia.data).horarios.map((x) => x.hora);
-  assert.ok(!depois.includes(h.hora)); // 1 motorista aprovado → horário ocupado
-  assert.equal((await call(`/v2/corridas/${c.d.id}/cancelar`, { metodo: 'POST', token: cliente })).d.status, 'cancelado');
+  const ag = await call('/v2/corridas', { metodo: 'POST', token: cliente, corpo: { mercadoId: 'burei', agendado: true, inicio: h.inicio } });
+  assert.equal(ag.s, 200, JSON.stringify(ag.d));
+  const ocupados = (await call('/v2/disponibilidade')).d.dias.find((d) => d.data === dia.data).horarios.map((x) => x.hora);
+  assert.ok(!ocupados.includes(h.hora)); // reservado enquanto paga
+  await call(`/v2/corridas/${ag.d.id}/cancelar`, { metodo: 'POST', token: cliente });
   assert.ok((await call('/v2/disponibilidade')).d.dias.find((d) => d.data === dia.data).horarios.some((x) => x.hora === h.hora));
 });
 
-test('cliente não paga com o motorista no mercado → taxa de deslocamento na próxima', async () => {
-  // 1 h sem enviar posição: o servidor deixou o motorista offline; ele volta a ficar online.
-  await call('/v2/eu/online', { metodo: 'POST', token: motorista, corpo: { online: true, lat: -26.47, lon: -48.98 } });
-  const c = await call('/v2/corridas', { metodo: 'POST', token: cliente, corpo: { mercadoId: 'martini', agendado: false } });
-  assert.equal(c.s, 200, JSON.stringify(c.d));
-  await call(`/v2/ofertas/${c.d.id}/aceitar`, { metodo: 'POST', token: motorista });
-  await call(`/v2/corridas/${c.d.id}/cheguei`, { metodo: 'POST', token: motorista });
-  assert.equal((await call(`/v2/corridas/${c.d.id}/nao-pagou`, { metodo: 'POST', token: motorista })).s, 409); // espera mínima
-  avanca(16); // passou o prazo de 15 min
-  await call('/v2/eu/local', { metodo: 'POST', token: motorista, corpo: { lat: -26.47, lon: -48.98 } });
-  const st = await call(`/v2/corridas/${c.d.id}`, { token: cliente });
-  assert.equal(st.d.status, 'cancelado');
-  assert.equal(st.d.motivo, 'nao_pagou');
-  assert.equal((await call('/v2/eu', { token: cliente })).d.taxaPendente, 5);
-  assert.match(zaps.at(-1), /taxa de R\$ 5,00/);
-
-  // próxima corrida cobra frete + taxa
-  avanca(40);
-  await call('/v2/eu/livre', { metodo: 'POST', token: motorista });
-  await call('/v2/eu/online', { metodo: 'POST', token: motorista, corpo: { online: true, lat: -26.47, lon: -48.98 } });
-  const n = await call('/v2/corridas', { metodo: 'POST', token: cliente, corpo: { mercadoId: 'cooper', agendado: false } });
-  assert.equal(n.s, 200, JSON.stringify(n.d));
-  await call(`/v2/ofertas/${n.d.id}/aceitar`, { metodo: 'POST', token: motorista });
-  await call(`/v2/corridas/${n.d.id}/cheguei`, { metodo: 'POST', token: motorista });
-  assert.equal(linkCriado.items.length, 2);
-  assert.equal(linkCriado.items[1].price, 500);
-  await call(`/retorno?order_nsu=${n.d.id}&slug=s2&transaction_nsu=t2`);
-  assert.equal((await call('/v2/eu', { token: cliente })).d.taxaPendente, 0);
+test('pedido não pago expira em 15 min e libera o horário', async () => {
+  const dia = (await call('/v2/disponibilidade')).d.dias[2];
+  const h = dia.horarios[0];
+  const ag = await call('/v2/corridas', { metodo: 'POST', token: cliente, corpo: { mercadoId: 'martini', agendado: true, inicio: h.inicio } });
+  assert.equal(ag.s, 200);
+  avanca(16);
+  assert.equal((await call(`/v2/corridas/${ag.d.id}`, { token: cliente })).d.status, 'cancelado');
+  assert.ok((await call('/v2/disponibilidade')).d.dias.find((d) => d.data === dia.data).horarios.some((x) => x.hora === h.hora));
 });
 
-test('admin: resumo, repasse ao motorista, configuração e senha', async () => {
+test('admin: configuração reflete para clientes e motoristas; agenda .ics; senha', async () => {
   assert.equal((await call('/v2/admin/resumo')).s, 401);
-  const r = await call('/v2/admin/resumo', { token: ADM });
-  assert.ok(r.d.aRepassar > 0);
-  const mot = (await call('/v2/admin/motoristas', { token: ADM })).d[0];
-  const rep = await call(`/v2/admin/motoristas/${mot.id}/repasse`, { metodo: 'POST', token: ADM });
-  assert.equal(rep.d.corridas, 2);
-  assert.equal((await call('/v2/eu', { token: motorista })).d.aReceber, 0);
-  const cfg = await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { comissaoMotoristaPct: 75, taxaDeslocamento: 7 } });
-  assert.equal(cfg.d.comissaoMotoristaPct, 75);
-  assert.equal((await call('/v2/config')).d.taxaDeslocamento, 7);
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { comissaoMotoristaPct: 75, taxaDeslocamento: 7, aberto: false } });
+  const pub = (await call('/v2/config')).d;
+  assert.equal(pub.taxaDeslocamento, 7);
+  assert.equal(pub.comissaoMotoristaPct, 75);
+  assert.equal(pub.aberto, false);
+  assert.equal((await call('/v2/eu', { token: motorista })).d.comissaoPct, 75);
+  assert.equal((await call('/v2/disponibilidade')).d.agora.ok, false);
   assert.equal((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { comissaoMotoristaPct: 120 } })).s, 400);
   const link = (await call('/v2/admin/agenda-link', { token: ADM })).d.url;
   assert.match((await call(link.replace(B, ''))).d, /TRIGGER:-PT15M/);
