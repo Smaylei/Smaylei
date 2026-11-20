@@ -46,7 +46,7 @@ export async function criarLinkPagamento(p: NovoPagamento): Promise<string> {
     items: [{ quantity: 1, price: centavos, description: p.descricao.slice(0, 120) }],
     order_nsu: p.orderNsu,
   };
-  if (p.redirectUrl) corpo.redirect_url = p.redirectUrl;
+  if (p.redirectUrl?.startsWith('https://')) corpo.redirect_url = p.redirectUrl; // a API recusa outros esquemas
   if (p.cliente && Object.values(p.cliente).some(Boolean)) corpo.customer = p.cliente;
 
   let resp: Response;
@@ -60,7 +60,7 @@ export async function criarLinkPagamento(p: NovoPagamento): Promise<string> {
     throw new ErroPagamento('Sem conexão com a InfinitePay. Verifique a internet e tente de novo.');
   }
   const dados: Record<string, unknown> = await resp.json().catch(() => ({}));
-  // A documentação não mostra o nome do campo; aceitamos as variantes conhecidas.
+  // Resposta observada: { url: "https://checkout.infinitepay.io/<handle>?lenc=..." }
   const url = [dados.url, dados.checkout_url, dados.link, dados.payment_url].find(
     (v): v is string => typeof v === 'string' && v.startsWith('http'),
   );

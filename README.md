@@ -87,7 +87,11 @@ A pessoa cadastra o endereço marcando a casa no mapa; depois cada mercado já m
   (`src/services/pagamento.ts`, InfiniteTag em `src/config.ts`). O app gera o link
   (`POST https://api.checkout.infinitepay.io/links`), abre o checkout e, ao voltar, confirma em
   `/payment_check`. Nenhuma chave secreta fica no app.
-- **Pré-requisito:** ativar "Checkout integrado" nas Configurações do Checkout da InfinitePay.
-  Sem isso a API responde `external_checkout_not_enabled`.
+- **Checkout integrado:** ativado na conta (testado: a API devolve `{ "url": "https://checkout.infinitepay.io/smayleiluiz?lenc=..." }`).
 - **Confirmação automática no servidor (webhook):** ainda não implementada; hoje a confirmação
   acontece quando o cliente volta do checkout para o app.
+- **Retorno ao app:** a InfinitePay só aceita `redirect_url` https (recusa `mercadofrete://`).
+  Enquanto não houver uma página https de retorno (`URL_RETORNO_PAGAMENTO` em `src/config.ts`),
+  o checkout abre sem retorno e o cliente vê o comprovante na própria InfinitePay.
+- **API Key (`inchk_...`):** só no servidor, nunca no app nem no repositório. Ela habilita
+  `options` como `single_payment` e `valid_until`.

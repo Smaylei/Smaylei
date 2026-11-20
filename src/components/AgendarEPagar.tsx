@@ -2,10 +2,10 @@ import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { URL_RETORNO_PAGAMENTO } from '../config';
 import type { Mercado } from '../data/mercados';
 import {
   criarLinkPagamento,
-  ErroPagamento,
   lerRetorno,
   novoOrderNsu,
   verificarPagamento,
@@ -73,18 +73,17 @@ export default function AgendarEPagar({ mercado, sugerido, urgencia, nomeCliente
   async function pagar() {
     setEstado({ fase: 'gerando' });
     const orderNsu = novoOrderNsu();
-    const redirectUrl = Linking.createURL('pagamento');
     const descricao = `Frete ${mercado.nome} ida e volta - ${agendado ? `agendado ${janela}` : 'urgente'}`;
     const cliente = { name: nomeCliente !== 'Minha casa' ? nomeCliente : undefined };
     let checkoutUrl: string;
     try {
-      try {
-        checkoutUrl = await criarLinkPagamento({ orderNsu, valor, descricao, redirectUrl, cliente });
-      } catch (e) {
-        // Se a InfinitePay recusar o endereço de retorno do app, gera o link sem ele.
-        if (e instanceof ErroPagamento && /ativado/.test(e.message)) throw e;
-        checkoutUrl = await criarLinkPagamento({ orderNsu, valor, descricao, cliente });
-      }
+      checkoutUrl = await criarLinkPagamento({
+        orderNsu,
+        valor,
+        descricao,
+        redirectUrl: URL_RETORNO_PAGAMENTO ?? undefined,
+        cliente,
+      });
     } catch (e) {
       setEstado({ fase: 'erro', mensagem: (e as Error).message });
       return;
@@ -102,11 +101,16 @@ export default function AgendarEPagar({ mercado, sugerido, urgencia, nomeCliente
     };
     await salvarPedido(pedido).catch(() => {});
     setEstado({ fase: 'aguardando', pedido });
-    await abrirCheckout(pedido, redirectUrl);
+    await abrirCheckout(pedido);
   }
 
-  async function abrirCheckout(pedido: Pedido, redirectUrl = Linking.createURL('pagamento')) {
-    const r = await WebBrowser.openAuthSessionAsync(pedido.checkoutUrl, redirectUrl);
+  async function abrirCheckout(pedido: Pedido) {
+    if (!URL_RETORNO_PAGAMENTO) {
+      // Sem página de retorno https: abre o checkout; a InfinitePay mostra o comprovante ao final.
+      await WebBrowser.openBrowserAsync(pedido.checkoutUrl);
+      return;
+    }
+    const r = await WebBrowser.openAuthSessionAsync(pedido.checkoutUrl, Linking.createURL('pagamento'));
     if (r.type !== 'success') return;
     const ret = lerRetorno(r.url);
     if (!ret.slug || !ret.transactionNsu) return;
@@ -192,7 +196,11 @@ export default function AgendarEPagar({ mercado, sugerido, urgencia, nomeCliente
 
       {estado.fase === 'aguardando' ? (
         <View style={{ marginTop: 12, gap: 6 }}>
-          <Text style={s.texto}>Pagamento aberto. Assim que for aprovado, a confirmação aparece aqui.</Text>
+          <Text style={s.texto}>
+            {URL_RETORNO_PAGAMENTO
+              ? 'Pagamento aberto. Assim que for aprovado, a confirmação aparece aqui.'
+              : 'Pagamento aberto. Ao concluir, a InfinitePay mostra o comprovante na tela.'}
+          </Text>
           <Pressable style={s.botao} onPress={() => abrirCheckout(estado.pedido)}>
             <Text style={s.botaoTexto}>Continuar pagamento</Text>
           </Pressable>
