@@ -1,0 +1,317 @@
+<title>Mercado Frete</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap">
+<style>
+  /* Layout: coluna única no celular; no PC, entrada à esquerda e resultado fixo à direita, como um cupom de caixa. */
+  :root {
+    --bg: #F2F5F3;
+    --surface: #FFFFFF;
+    --fg: #15201A;
+    --muted: #5B6A62;
+    --line: #DAE2DD;
+    --accent: #1B8048;
+    --accent-soft: #E1F2E8;
+    --accent-fg: #FFFFFF;
+    --uber: #111111;
+    --uber-fg: #FFFFFF;
+    --nn: #FFC700;
+    --nn-fg: #111111;
+    --warn-bg: #FFF4D6;
+    --warn-fg: #8A5A00;
+    --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+    --font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0F1512; --surface: #18211C; --fg: #E6EEE9; --muted: #98A89F; --line: #2A362F;
+      --accent: #4CC783; --accent-soft: #1C3326; --accent-fg: #0B1A12;
+      --uber: #F2F2F2; --uber-fg: #111111; --nn: #FFC700; --nn-fg: #111111;
+      --warn-bg: #3A2E10; --warn-fg: #F3C866; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F1512; --surface: #18211C; --fg: #E6EEE9; --muted: #98A89F; --line: #2A362F;
+    --accent: #4CC783; --accent-soft: #1C3326; --accent-fg: #0B1A12;
+    --uber: #F2F2F2; --uber-fg: #111111; --nn: #FFC700; --nn-fg: #111111;
+    --warn-bg: #3A2E10; --warn-fg: #F3C866; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.45; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding-block: 20px 48px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 20px; }
+  h1 { font-family: var(--font-display); font-size: 28px; margin: 0; letter-spacing: -0.01em; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 14px; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  @media (min-width: 860px) { .grid { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); align-items: start; } .receipt { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); } }
+  section { display: flex; flex-direction: column; gap: 10px; }
+  .steps { display: flex; flex-direction: column; gap: 24px; }
+  h2 { font-family: var(--font-display); font-size: 17px; margin: 0; display: flex; gap: 10px; align-items: center; text-wrap: balance; }
+  .n { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); font-size: 13px; display: inline-grid; place-items: center; flex: none; }
+  .markets { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+  .market { text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; cursor: pointer; color: var(--fg); font: inherit; }
+  .market:hover { border-color: var(--accent); }
+  .market[aria-checked="true"] { border: 2px solid var(--accent); background: var(--accent-soft); padding: 9px 11px; }
+  .market b { display: block; font-weight: 600; font-size: 14px; }
+  .market[aria-checked="true"] b { color: var(--accent); }
+  .market small { color: var(--muted); font-size: 12px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  label { font-size: 13px; color: var(--muted); font-weight: 500; }
+  input[type="text"], input[type="number"] { width: 100%; font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; }
+  input:focus-visible, .market:focus-visible, .btn:focus-visible, summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--accent); color: var(--accent-fg); text-decoration: none; font-weight: 600; border-radius: 10px; padding: 12px 16px; border: 0; cursor: pointer; font: inherit; font-weight: 600; }
+  .btn[aria-disabled="true"] { opacity: 0.5; pointer-events: none; }
+  .btn.ghost { background: transparent; color: var(--accent); padding: 8px 0; }
+  .hint { font-size: 13px; color: var(--muted); margin: 0; }
+  .row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 480px) { .row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .row .full-sm { grid-column: 1 / -1; } }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .receipt { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+  .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+  .route { font-size: 14px; margin: 0; }
+  .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .metric { background: var(--bg); border-radius: 10px; padding: 8px 4px; text-align: center; }
+  .metric span { display: block; font-size: 11px; color: var(--muted); }
+  .metric strong { font-size: 15px; font-variant-numeric: tabular-nums; }
+  .metric.total strong { color: var(--accent); }
+  .quote { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px dashed var(--line); }
+  .logo { width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; font-size: 13px; flex: none; }
+  .logo.uber { background: var(--uber); color: var(--uber-fg); }
+  .logo.nn { background: var(--nn); color: var(--nn-fg); }
+  .quote .info { flex: 1; min-width: 0; }
+  .quote .info b { display: block; }
+  .quote .info small { color: var(--muted); font-size: 12px; }
+  .price { font-family: var(--font-display); font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .total-box { background: var(--accent-soft); border-radius: 12px; padding: 14px; }
+  .total-box p { margin: 0; color: var(--accent); font-weight: 600; font-size: 13px; }
+  .total-box .big { font-family: var(--font-display); font-size: 34px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .total-box small { color: var(--muted); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; background: var(--warn-bg); color: var(--warn-fg); border-radius: 999px; padding: 2px 8px; vertical-align: middle; }
+  .fine { font-size: 12px; color: var(--muted); margin: 0; }
+  details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  summary { cursor: pointer; font-weight: 600; }
+  .fares { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 12px; }
+  .fare h3 { font-size: 14px; margin: 0 0 8px; }
+  .fare .row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-top: 10px; }
+  .saved { font-size: 13px; color: var(--accent); }
+  @media (prefers-reduced-motion: no-preference) { .market, .btn { transition: border-color .15s, background-color .15s, opacity .15s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Mercado <span>Frete</span></h1>
+    <span class="sub">Entrega de compras · Guaramirim/SC · preço por km rodado, ida e volta</span>
+  </header>
+
+  <div class="grid">
+    <div class="steps">
+      <section aria-labelledby="h-mercado">
+        <h2 id="h-mercado"><span class="n">1</span>Mercado de partida</h2>
+        <div class="markets" id="markets" role="radiogroup" aria-labelledby="h-mercado"></div>
+      </section>
+
+      <section aria-labelledby="h-cliente">
+        <h2 id="h-cliente"><span class="n">2</span>Endereço de entrega</h2>
+        <label for="endereco">Rua, número e bairro do cliente</label>
+        <input type="text" id="endereco" placeholder="Ex.: Rua Exemplo, 100, Corticeira" autocomplete="street-address">
+        <div><a class="btn" id="maps" target="_blank" rel="noopener" aria-disabled="true">Ver rota ida e volta no Google Maps ↗</a></div>
+        <p class="hint">O Google Maps abre com o trajeto mercado → cliente → mercado. Copie os km de cada trecho no passo 3.</p>
+      </section>
+
+      <section aria-labelledby="h-km">
+        <h2 id="h-km"><span class="n">3</span>Quilômetros rodados</h2>
+        <div class="row">
+          <div class="field"><label for="kmIda">Ida (km)</label><input type="number" id="kmIda" min="0" step="0.1" inputmode="decimal"></div>
+          <div class="field"><label for="kmVolta">Volta (km)</label><input type="number" id="kmVolta" min="0" step="0.1" inputmode="decimal" placeholder="igual à ida"></div>
+          <div class="field full-sm"><label for="minutos">Tempo total (min)</label><input type="number" id="minutos" min="0" step="1" inputmode="numeric" placeholder="automático"></div>
+        </div>
+        <p class="hint">Sem tempo informado, o cálculo usa velocidade média urbana de 35 km/h.</p>
+      </section>
+
+      <details id="tarifasBox">
+        <summary>Tarifas Uber e 99 (editáveis)</summary>
+        <p class="hint" style="margin-top:8px">Uber e 99 não publicam tabela oficial nem API de preços. Para calibrar, simule a mesma corrida em cada app e ajuste os valores até bater.</p>
+        <div class="fares" id="fares"></div>
+        <div class="field" style="max-width:240px;margin-top:12px"><label for="margem">Margem do app sobre a média (%)</label><input type="number" id="margem" min="0" step="1"></div>
+        <div class="actions">
+          <button class="btn" id="salvar" type="button">Salvar tarifas</button>
+          <button class="btn ghost" id="restaurar" type="button">Restaurar padrão</button>
+          <span class="saved" id="salvo" hidden>Tarifas salvas neste navegador.</span>
+        </div>
+      </details>
+    </div>
+
+    <aside class="receipt" aria-live="polite">
+      <div>
+        <p class="eyebrow">Percurso <span class="tag" id="exemplo">exemplo</span></p>
+        <p class="route" id="rota"></p>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span>Ida</span><strong id="mIda"></strong></div>
+        <div class="metric"><span>Volta</span><strong id="mVolta"></strong></div>
+        <div class="metric total"><span>Total</span><strong id="mTotal"></strong></div>
+        <div class="metric"><span>Tempo</span><strong id="mTempo"></strong></div>
+      </div>
+      <div>
+        <p class="eyebrow">Preço estimado · ida + volta</p>
+        <div id="quotes"></div>
+      </div>
+      <div class="total-box">
+        <p id="sugLabel">Valor sugerido para o frete (média)</p>
+        <div class="big" id="sug"></div>
+        <small id="sugKm"></small>
+      </div>
+      <p class="fine">Estimativa com as tarifas configuradas. Uber e 99 usam preço dinâmico, então o valor real pode variar com horário e demanda.</p>
+    </aside>
+  </div>
+</div>
+
+<script>
+(() => {
+  const CIDADE = 'Guaramirim - SC';
+  const MERCADOS = [
+    ['Hipermercado Breithaupt', 'Rua 28 de Agosto, 1665, Avaí'],
+    ['Rancho Bom Supermercados', 'Rua Geronimo Correa, 444, Centro'],
+    ['Supermercado Martini', 'Rua 28 de Agosto, 3035'],
+    ['Super Três', 'Rua 28 de Agosto, 4014, Centro'],
+    ['Supermercado Pimentel', 'Rua 28 de Agosto, 862, Avaí'],
+    ['Burei Supermercado', 'Rua 28 de Agosto, 502, Centro'],
+    ['Supermercado Silva', 'Rua Norberto Silveira Júnior, 233, Centro'],
+    ['Supermercado Cantelli', 'Rodovia SC-413, 753, Centro'],
+    ['Supermercado Klein', 'Rua Lauro Zimmermann, 6380, Guamiranga'],
+    ['Super Preço', 'Rua Hermínio Stringari, 1500, Corticeira'],
+  ];
+  const PADRAO = [
+    { id: 'uberx', plataforma: 'Uber', categoria: 'UberX', tarifaBase: 2.0, porKm: 1.35, porMinuto: 0.26, tarifaMinima: 7.0 },
+    { id: '99pop', plataforma: '99', categoria: '99Pop', tarifaBase: 2.3, porKm: 1.3, porMinuto: 0.22, tarifaMinima: 6.5 },
+  ];
+  const CAMPOS = [['tarifaBase', 'Base (R$)'], ['porKm', 'Por km (R$)'], ['porMinuto', 'Por minuto (R$)'], ['tarifaMinima', 'Mínima (R$)']];
+  const EXEMPLO = { ida: 4.3, volta: 4.5 };
+  const VEL = 35;
+
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
+  };
+
+  let tarifas = store.get('mf:tarifas', PADRAO);
+  let margem = store.get('mf:margem', 0);
+  let mercado = store.get('mf:mercado', 0);
+  if (!MERCADOS[mercado]) mercado = 0;
+
+  const cent = (v) => Math.round(v * 100) / 100;
+  const reais = (v) => 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const km = (v) => v.toFixed(1).replace('.', ',') + ' km';
+  const num = (el) => { const v = parseFloat(String(el.value).replace(',', '.')); return Number.isFinite(v) && v >= 0 ? v : null; };
+
+  function estimar(t, kmTotal, minTotal) {
+    const valorKm = kmTotal * t.porKm, valorTempo = minTotal * t.porMinuto;
+    const bruto = t.tarifaBase + valorKm + valorTempo;
+    const minima = bruto < t.tarifaMinima;
+    return { t, valorKm: cent(valorKm), valorTempo: cent(valorTempo), valor: cent(minima ? t.tarifaMinima : bruto), minima };
+  }
+
+  // Mercados
+  const box = $('markets');
+  MERCADOS.forEach(([nome, end], i) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'market'; b.setAttribute('role', 'radio'); b.id = 'mercado-' + i;
+    const bn = document.createElement('b'); bn.textContent = nome;
+    const sm = document.createElement('small'); sm.textContent = end;
+    b.append(bn, sm);
+    b.addEventListener('click', () => { mercado = i; store.set('mf:mercado', i); render(); });
+    box.append(b);
+  });
+
+  // Tarifas
+  function montarTarifas() {
+    const f = $('fares'); f.textContent = '';
+    tarifas.forEach((t) => {
+      const d = document.createElement('div'); d.className = 'fare';
+      const h = document.createElement('h3'); h.textContent = t.plataforma + ' · ' + t.categoria; d.append(h);
+      const r = document.createElement('div'); r.className = 'row';
+      CAMPOS.forEach(([k, rot]) => {
+        const fd = document.createElement('div'); fd.className = 'field';
+        const id = 'f-' + t.id + '-' + k;
+        const l = document.createElement('label'); l.htmlFor = id; l.textContent = rot;
+        const inp = document.createElement('input'); inp.type = 'number'; inp.step = '0.01'; inp.min = '0'; inp.id = id; inp.value = t[k];
+        inp.dataset.t = t.id; inp.dataset.k = k;
+        inp.addEventListener('input', () => { const v = num(inp); if (v !== null) { t[k] = v; render(); } });
+        fd.append(l, inp); r.append(fd);
+      });
+      d.append(r); f.append(d);
+    });
+    $('margem').value = margem;
+  }
+  $('margem').addEventListener('input', () => { const v = num($('margem')); if (v !== null) { margem = v; render(); } });
+  $('salvar').addEventListener('click', () => {
+    const ok = store.set('mf:tarifas', tarifas) && store.set('mf:margem', margem);
+    const s = $('salvo'); s.textContent = ok ? 'Tarifas salvas neste navegador.' : 'Não foi possível salvar neste navegador; os valores valem até fechar a página.';
+    s.hidden = false; setTimeout(() => { s.hidden = true; }, 3500);
+  });
+  $('restaurar').addEventListener('click', () => {
+    tarifas = JSON.parse(JSON.stringify(PADRAO)); margem = 0;
+    store.set('mf:tarifas', tarifas); store.set('mf:margem', margem);
+    montarTarifas(); render();
+  });
+
+  ['endereco', 'kmIda', 'kmVolta', 'minutos'].forEach((id) => $(id).addEventListener('input', render));
+
+  function render() {
+    const [nome, end] = MERCADOS[mercado];
+    box.querySelectorAll('.market').forEach((b, i) => b.setAttribute('aria-checked', String(i === mercado)));
+
+    const cliente = $('endereco').value.trim();
+    const maps = $('maps');
+    if (cliente.length >= 5) {
+      const origem = `${nome}, ${end}, ${CIDADE}`;
+      const destinoCliente = /guaramirim|jaragu|schroeder|massaranduba|joinville|\bsc\b/i.test(cliente) ? cliente : `${cliente}, ${CIDADE}`;
+      const u = new URL('https://www.google.com/maps/dir/');
+      u.searchParams.set('api', '1');
+      u.searchParams.set('origin', origem);
+      u.searchParams.set('destination', origem);
+      u.searchParams.set('waypoints', destinoCliente);
+      u.searchParams.set('travelmode', 'driving');
+      maps.href = u.toString(); maps.setAttribute('aria-disabled', 'false');
+    } else { maps.removeAttribute('href'); maps.setAttribute('aria-disabled', 'true'); }
+
+    let ida = num($('kmIda')), volta = num($('kmVolta'));
+    const exemplo = ida === null;
+    if (exemplo) { ida = EXEMPLO.ida; volta = EXEMPLO.volta; }
+    if (volta === null) volta = ida;
+    const kmTotal = ida + volta;
+    const minInf = num($('minutos'));
+    const minTotal = minInf !== null ? minInf : (kmTotal / VEL) * 60;
+
+    $('exemplo').hidden = !exemplo;
+    $('rota').textContent = `${nome} → ${cliente || 'cliente'} → ${nome}`;
+    $('mIda').textContent = km(ida); $('mVolta').textContent = km(volta);
+    $('mTotal').textContent = km(kmTotal); $('mTempo').textContent = Math.round(minTotal) + ' min';
+
+    const est = tarifas.map((t) => estimar(t, kmTotal, minTotal));
+    const q = $('quotes'); q.textContent = '';
+    est.forEach((e) => {
+      const row = document.createElement('div'); row.className = 'quote';
+      const lg = document.createElement('div'); lg.className = 'logo ' + (e.t.plataforma === 'Uber' ? 'uber' : 'nn'); lg.textContent = e.t.plataforma;
+      const info = document.createElement('div'); info.className = 'info';
+      const b = document.createElement('b'); b.textContent = e.t.categoria;
+      const sm = document.createElement('small');
+      sm.textContent = e.minima ? 'Tarifa mínima aplicada' : `Base ${reais(e.t.tarifaBase)} + km ${reais(e.valorKm)} + tempo ${reais(e.valorTempo)}`;
+      info.append(b, sm);
+      const p = document.createElement('div'); p.className = 'price'; p.textContent = reais(e.valor);
+      row.append(lg, info, p); q.append(row);
+    });
+    const media = est.reduce((s, e) => s + e.valor, 0) / (est.length || 1);
+    const sug = cent(media * (1 + margem / 100));
+    $('sugLabel').textContent = margem ? `Valor sugerido para o frete (média + ${String(margem).replace('.', ',')}%)` : 'Valor sugerido para o frete (média)';
+    $('sug').textContent = reais(sug);
+    $('sugKm').textContent = (kmTotal > 0 ? reais(sug / kmTotal) : reais(0)) + ' por km rodado';
+  }
+
+  montarTarifas();
+  render();
+})();
+</script>
