@@ -1,68 +1,103 @@
 import { Redirect, router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { cores, raio } from '../components/tema';
 import { API_PAGAMENTOS } from '../config';
 import { useApp } from '../estado/AppContext';
-import { consultarPedidoServidor } from '../services/pagamento';
+import { cancelarPedidoServidor, consultarPedidoServidor } from '../services/pagamento';
 import { listarPedidos, salvarPedido, type Pedido } from '../services/pedidos';
 import { formatarReais } from '../services/preco';
+import { EH_ADMIN } from '../variante';
 
 const HORAS_RECENTE = 24;
 
 /** Último frete do cliente, atualizando no servidor se ainda estiver aguardando pagamento. */
 function useUltimoPedido() {
   const [pedido, setPedido] = useState<Pedido | null>(null);
+  const [podeCancelar, setPodeCancelar] = useState(false);
+
+  const carregar = useCallback(async () => {
+    const [p] = await listarPedidos();
+    // Mostra o último frete: o recente ou um agendamento que ainda vai acontecer.
+    const futuro = p?.inicio && Date.parse(p.inicio) > Date.now();
+    if (!p || (!futuro && Date.now() - new Date(p.criadoEm).getTime() > HORAS_RECENTE * 3600e3)) {
+      setPedido(null);
+      return;
+    }
+    let atual = p;
+    let cancelavel = false;
+    if (API_PAGAMENTOS && p.status !== 'cancelado') {
+      const st = await consultarPedidoServidor(API_PAGAMENTOS, p.orderNsu).catch(() => null);
+      if (st) {
+        const status = st.status === 'reservado' ? 'aguardando' : st.status;
+        atual = { ...p, status, receiptUrl: st.receiptUrl ?? p.receiptUrl, metodo: st.metodo ?? p.metodo };
+        cancelavel = st.podeCancelar && !!p.cancelToken;
+        if (status !== p.status) await salvarPedido(atual).catch(() => {});
+      }
+    }
+    setPedido(atual);
+    setPodeCancelar(cancelavel);
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
-      let ativo = true;
-      (async () => {
-        const [p] = await listarPedidos();
-        if (!p || Date.now() - new Date(p.criadoEm).getTime() > HORAS_RECENTE * 3600e3) return;
-        let atual = p;
-        if (p.status !== 'pago' && API_PAGAMENTOS) {
-          const st = await consultarPedidoServidor(API_PAGAMENTOS, p.orderNsu).catch(() => null);
-          if (st?.pago) {
-            atual = { ...p, status: 'pago', receiptUrl: st.receiptUrl, metodo: st.metodo };
-            await salvarPedido(atual).catch(() => {});
-          }
-        }
-        if (ativo) setPedido(atual);
-      })();
-      return () => {
-        ativo = false;
-      };
-    }, []),
+      carregar();
+    }, [carregar]),
   );
-  return pedido;
+  return { pedido, podeCancelar, recarregar: carregar };
 }
 
 export default function Inicio() {
   const { carregado, casa } = useApp();
-  const ultimo = useUltimoPedido();
+  const { pedido: ultimo, podeCancelar, recarregar } = useUltimoPedido();
 
+  if (EH_ADMIN) return <Redirect href="/painel" />;
   if (!carregado) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   if (!casa) return <Redirect href="/cadastro" />;
 
   return (
     <ScrollView contentContainerStyle={s.conteudo}>
-      {/* Toque longo no título abre a administração das tarifas */}
-      <Pressable onLongPress={() => router.push('/admin')} delayLongPress={1500}>
-        <Text style={s.ola}>Olá{casa.nome && casa.nome !== 'Minha casa' ? `, ${casa.nome}` : ''}!</Text>
-      </Pressable>
+      <Text style={s.ola}>Olá{casa.nome && casa.nome !== 'Minha casa' ? `, ${casa.nome}` : ''}!</Text>
       <Text style={s.sub}>Suas compras do mercado entregues em casa.</Text>
 
       {ultimo && (
         <Pressable
-          style={[s.status, ultimo.status === 'pago' ? s.statusOk : s.statusAguardando]}
+          style={[s.status, ultimo.status === 'cancelado' ? s.statusCancelado : ultimo.status === 'aguardando' ? s.statusAguardando : s.statusOk]}
           onPress={() => router.push({ pathname: '/pagamento', params: { order_nsu: ultimo.orderNsu } })}
         >
-          <Text style={[s.statusTitulo, { color: ultimo.status === 'pago' ? cores.primaria : cores.alerta }]}>
-            {ultimo.status === 'pago' ? '✓ Frete confirmado' : 'Aguardando pagamento'}
+          <Text
+            style={[s.statusTitulo, { color: ultimo.status === 'cancelado' ? cores.erro : ultimo.status === 'aguardando' ? cores.alerta : cores.primaria }]}
+          >
+            {{ pago: '✓ Frete confirmado', concluido: '✓ Frete concluído', aguardando: 'Aguardando pagamento', cancelado: '✕ Frete cancelado' }[ultimo.status]}
           </Text>
           <Text style={s.statusTexto}>
             {ultimo.mercadoNome} · {ultimo.agendado ? ultimo.janela : 'entrega agora'} · {formatarReais(ultimo.valor)}
           </Text>
+          {podeCancelar && (
+            <Pressable
+              hitSlop={8}
+              onPress={() =>
+                Alert.alert('Cancelar frete?', 'O horário fica livre para outra pessoa. Se você já pagou, o valor é devolvido pela loja.', [
+                  { text: 'Voltar', style: 'cancel' },
+                  {
+                    text: 'Cancelar frete',
+                    style: 'destructive',
+                    onPress: async () => {
+                      try {
+                        await cancelarPedidoServidor(API_PAGAMENTOS!, ultimo.orderNsu, ultimo.cancelToken!);
+                        await salvarPedido({ ...ultimo, status: 'cancelado' });
+                        recarregar();
+                      } catch (e) {
+                        Alert.alert('Não foi possível cancelar', (e as Error).message);
+                      }
+                    },
+                  },
+                ])
+              }
+            >
+              <Text style={s.cancelar}>Cancelar este frete</Text>
+            </Pressable>
+          )}
         </Pressable>
       )}
 
@@ -117,6 +152,8 @@ const s = StyleSheet.create({
   status: { borderRadius: raio, padding: 14, borderWidth: 1 },
   statusOk: { backgroundColor: cores.primariaClara, borderColor: cores.primaria },
   statusAguardando: { backgroundColor: cores.alertaFundo, borderColor: cores.alerta },
+  statusCancelado: { backgroundColor: cores.cartao, borderColor: cores.borda },
+  cancelar: { color: cores.erro, fontWeight: '700', fontSize: 14, marginTop: 8 },
   statusTitulo: { fontSize: 16, fontWeight: '800' },
   statusTexto: { fontSize: 14, color: cores.texto, marginTop: 2 },
   endereco: {

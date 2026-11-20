@@ -14,6 +14,7 @@ export default function Cadastro() {
   const { casa, salvarCasa } = useApp();
   const [nome, setNome] = useState(casa && casa.nome !== 'Minha casa' ? casa.nome : '');
   const [endereco, setEndereco] = useState(casa?.endereco ?? '');
+  const [telefone, setTelefone] = useState(casa?.telefone ?? '');
   const [pin, setPin] = useState<{ lat: number; lon: number } | null>(casa ? { lat: casa.lat, lon: casa.lon } : null);
   const [ocupado, setOcupado] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -52,6 +53,7 @@ export default function Cadastro() {
     await salvarCasa({
       nome: nome.trim() || 'Minha casa',
       endereco: endereco.trim() || 'Local marcado no mapa',
+      telefone: telefone.trim() || undefined,
       lat: pin.lat,
       lon: pin.lon,
     });
@@ -64,6 +66,17 @@ export default function Cadastro() {
 
       <Text style={s.rotulo}>Seu nome</Text>
       <TextInput style={s.input} value={nome} onChangeText={setNome} placeholder="Ex.: Ana" placeholderTextColor={cores.suave} />
+
+      <Text style={s.rotulo}>WhatsApp</Text>
+      <TextInput
+        style={s.input}
+        value={telefone}
+        onChangeText={setTelefone}
+        placeholder="(47) 99999-9999"
+        placeholderTextColor={cores.suave}
+        keyboardType="phone-pad"
+        autoComplete="tel"
+      />
 
       <Text style={s.rotulo}>Endereço (rua, número e bairro)</Text>
       <TextInput

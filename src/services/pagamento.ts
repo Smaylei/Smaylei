@@ -117,27 +117,62 @@ export function novoOrderNsu() {
   return `frete-${data}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-// ---------- Via servidor de pagamentos (server/) ----------
+// ---------- Via servidor (server/) ----------
 
-export type PedidoServidor = { orderNsu: string; valor: number; url: string };
+export type PedidoServidor = { orderNsu: string; valor: number; url: string; janela: string; inicio: string; cancelToken: string };
 
-export async function criarPedidoServidor(
-  api: string,
-  p: { mercadoId: string; agendado: boolean; janela?: string; cliente: { nome: string; endereco: string; lat: number; lon: number } },
-): Promise<PedidoServidor> {
+async function pedirJson<T>(url: string, init?: RequestInit): Promise<T> {
   let resp: Response;
   try {
-    resp = await fetch(`${api}/pedidos`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+    resp = await fetch(url, init);
   } catch {
     throw new ErroPagamento('Sem conexão. Verifique a internet e tente de novo.');
   }
-  const d = (await resp.json().catch(() => ({}))) as Partial<PedidoServidor> & { erro?: string };
-  if (!resp.ok || !d.url || !d.orderNsu || typeof d.valor !== 'number') throw new ErroPagamento(d.erro ?? 'Não foi possível gerar o pagamento.');
-  return { orderNsu: d.orderNsu, valor: d.valor, url: d.url };
+  const d = (await resp.json().catch(() => ({}))) as T & { erro?: string };
+  if (!resp.ok) throw new ErroPagamento(d.erro ?? 'Não foi possível concluir agora. Tente de novo.');
+  return d;
 }
 
-export async function consultarPedidoServidor(api: string, orderNsu: string) {
-  const resp = await fetch(`${api}/pedidos/${encodeURIComponent(orderNsu)}`);
-  const d = (await resp.json().catch(() => ({}))) as { status?: string; receiptUrl?: string; metodo?: string };
-  return { pago: d.status === 'pago', receiptUrl: d.receiptUrl, metodo: d.metodo };
+export function criarPedidoServidor(
+  api: string,
+  p: {
+    mercadoId: string;
+    agendado: boolean;
+    inicio?: string;
+    cliente: { nome: string; endereco: string; telefone?: string; lat: number; lon: number };
+  },
+) {
+  return pedirJson<PedidoServidor>(`${api}/pedidos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(p),
+  });
 }
+
+export type StatusServidor = {
+  status: 'reservado' | 'pago' | 'cancelado' | 'concluido';
+  receiptUrl?: string;
+  metodo?: string;
+  podeCancelar: boolean;
+};
+
+export async function consultarPedidoServidor(api: string, orderNsu: string) {
+  const d = await pedirJson<StatusServidor>(`${api}/pedidos/${encodeURIComponent(orderNsu)}`);
+  return { ...d, pago: d.status === 'pago' || d.status === 'concluido' };
+}
+
+export function cancelarPedidoServidor(api: string, orderNsu: string, token: string) {
+  return pedirJson<StatusServidor>(`${api}/pedidos/${encodeURIComponent(orderNsu)}/cancelar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+}
+
+export type Disponibilidade = {
+  agora: { ok: boolean; motivo?: string };
+  dias: { data: string; rotulo: string; horarios: { inicio: string; hora: string }[] }[];
+  bloqueioMin: number;
+};
+
+export const obterDisponibilidade = (api: string) => pedirJson<Disponibilidade>(`${api}/disponibilidade`);

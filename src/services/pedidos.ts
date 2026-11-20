@@ -9,7 +9,9 @@ export type Pedido = {
   janela?: string; // ex.: "sex 21/11 · 10h–12h"
   criadoEm: string;
   checkoutUrl: string;
-  status: 'aguardando' | 'pago';
+  status: 'aguardando' | 'pago' | 'cancelado' | 'concluido';
+  inicio?: string; // ISO do horário (servidor)
+  cancelToken?: string; // permite ao cliente cancelar pelo app
   receiptUrl?: string;
   metodo?: string;
 };

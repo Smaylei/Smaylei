@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export type Endereco = { nome: string; endereco: string; lat: number; lon: number };
+export type Endereco = { nome: string; endereco: string; telefone?: string; lat: number; lon: number };
 
 const CHAVE = 'cadastro:casa:v1';
 

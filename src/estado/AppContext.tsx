@@ -1,14 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { MERCADOS } from '../data/mercados';
 import { TARIFAS_PADRAO } from '../data/tarifas';
-import {
-  carregarMargem,
-  carregarTarifas,
-  carregarUrgencia,
-  salvarMargem,
-  salvarTarifas,
-  salvarUrgencia,
-} from '../services/armazenamento';
+import { API_PAGAMENTOS } from '../config';
 import { carregarEndereco, salvarEndereco, type Endereco } from '../services/cadastro';
 import { rotasAteCasa, type RotaMercado } from '../services/grafo';
 import {
@@ -27,7 +20,6 @@ type Ctx = {
   casa: Endereco | null;
   salvarCasa: (e: Endereco) => Promise<void>;
   config: Config;
-  salvarConfig: (c: Config) => Promise<void>;
   /** Rotas já calculadas por mercado (null = sem rota; ausente = calculando). */
   rotas: Record<string, RotaMercado | null> | null;
   /** Valor final do frete, calculado em segundo plano a partir da rota e das tarifas. */
@@ -49,14 +41,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    Promise.all([carregarEndereco(), carregarTarifas(), carregarMargem(), carregarUrgencia()]).then(
-      ([e, tarifas, margem, urgencia]) => {
-        setConfig({ tarifas, margem, urgencia });
-        setCasa(e);
-        setCarregado(true);
-        if (e) calcular(e);
-      },
-    );
+    carregarEndereco().then((e) => {
+      setCasa(e);
+      setCarregado(true);
+      if (e) calcular(e);
+    });
+    // Tarifas, margem e urgência vêm do servidor (definidas no App Admin).
+    if (API_PAGAMENTOS)
+      fetch(`${API_PAGAMENTOS}/config`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((c: Partial<Config> | null) => {
+          if (c?.tarifas?.length) setConfig({ tarifas: c.tarifas, margem: c.margem ?? 0, urgencia: c.urgencia ?? URGENCIA_PADRAO });
+        })
+        .catch(() => {});
   }, [calcular]);
 
   const salvarCasa = useCallback(
@@ -67,11 +64,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [calcular],
   );
-
-  const salvarConfig = useCallback(async (c: Config) => {
-    setConfig(c);
-    await Promise.all([salvarTarifas(c.tarifas), salvarMargem(c.margem), salvarUrgencia(c.urgencia)]).catch(() => {});
-  }, []);
 
   const valorFrete = useCallback(
     (mercadoId: string, agendado: boolean) => {
@@ -84,7 +76,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <AppCtx.Provider value={{ carregado, casa, salvarCasa, config, salvarConfig, rotas, valorFrete }}>
+    <AppCtx.Provider value={{ carregado, casa, salvarCasa, config, rotas, valorFrete }}>
       {children}
     </AppCtx.Provider>
   );

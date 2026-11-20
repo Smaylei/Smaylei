@@ -1,48 +1,21 @@
 import * as Linking from 'expo-linking';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { cores, raio } from '../components/tema';
-import { API_PAGAMENTOS, URL_RETORNO_PAGAMENTO } from '../config';
+import { API_PAGAMENTOS } from '../config';
 import { MERCADOS } from '../data/mercados';
 import { useApp } from '../estado/AppContext';
 import {
   consultarPedidoServidor,
-  criarLinkPagamento,
   criarPedidoServidor,
-  lerRetorno,
-  novoOrderNsu,
-  verificarPagamento,
+  obterDisponibilidade,
+  type Disponibilidade,
 } from '../services/pagamento';
 import { salvarPedido, type Pedido } from '../services/pedidos';
 import { formatarReais } from '../services/preco';
-
-const FAIXAS = [
-  { inicio: 8, rotulo: '08h–10h' },
-  { inicio: 10, rotulo: '10h–12h' },
-  { inicio: 13, rotulo: '13h–15h' },
-  { inicio: 15, rotulo: '15h–17h' },
-  { inicio: 17, rotulo: '17h–19h' },
-];
-const ANTECEDENCIA_MIN = 60;
-const SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-
-function proximosDias() {
-  const agora = new Date();
-  const dias: { rotulo: string; faixas: typeof FAIXAS }[] = [];
-  for (let i = 0; dias.length < 6 && i < 8; i++) {
-    const d = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + i);
-    const faixas = FAIXAS.filter(
-      (f) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), f.inicio).getTime() - agora.getTime() >= ANTECEDENCIA_MIN * 60000,
-    );
-    if (!faixas.length) continue;
-    const dd = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
-    dias.push({ rotulo: i === 0 ? `Hoje ${dd}` : i === 1 ? `Amanhã ${dd}` : `${SEMANA[d.getDay()]} ${dd}`, faixas });
-  }
-  return dias;
-}
 
 type Fase = 'escolha' | 'gerando' | 'aguardando' | 'pago';
 
@@ -51,45 +24,44 @@ export default function PedidoTela() {
   const agendado = modo === 'agendar';
   const { casa, rotas, valorFrete } = useApp();
   const insets = useSafeAreaInsets();
-  const [dias] = useState(proximosDias);
+  const [disp, setDisp] = useState<Disponibilidade | null>(null);
+  const [erroDisp, setErroDisp] = useState<string | null>(null);
   const [mercadoId, setMercadoId] = useState<string | null>(null);
   const [diaIdx, setDiaIdx] = useState(0);
-  const [faixa, setFaixa] = useState<string | null>(null);
+  const [inicio, setInicio] = useState<string | null>(null);
   const [fase, setFase] = useState<Fase>('escolha');
   const [pedido, setPedido] = useState<Pedido | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
+  const carregar = useCallback(async () => {
+    if (!API_PAGAMENTOS) return;
+    try {
+      setDisp(await obterDisponibilidade(API_PAGAMENTOS));
+      setErroDisp(null);
+    } catch (e) {
+      setErroDisp((e as Error).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    // A primeira busca acontece fora do corpo do efeito (em um timer), como pede o lint.
+    const t = setTimeout(carregar, 0);
+    return () => clearTimeout(t);
+  }, [carregar]);
+
   const mercado = MERCADOS.find((m) => m.id === mercadoId) ?? null;
   const valor = mercado ? valorFrete(mercado.id, agendado) : null;
-  const janela = agendado && faixa ? `${dias[diaIdx].rotulo} · ${faixa}` : undefined;
-  const podePagar = !!mercado && valor !== null && (!agendado || !!janela) && fase === 'escolha';
+  const dia = disp?.dias[diaIdx];
+  const hora = dia?.horarios.find((h) => h.inicio === inicio)?.hora;
+  const agoraOk = !agendado ? (disp?.agora.ok ?? false) : true;
+  const podePagar = !!mercado && valor !== null && agoraOk && (!agendado || !!inicio) && fase === 'escolha';
 
   async function abrirCheckout(p: Pedido) {
-    if (API_PAGAMENTOS) {
-      // O servidor recebe o cliente de volta, confirma na InfinitePay e reabre o app.
-      await WebBrowser.openAuthSessionAsync(p.checkoutUrl, Linking.createURL('pagamento'));
-      const st = await consultarPedidoServidor(API_PAGAMENTOS, p.orderNsu).catch(() => null);
-      if (st?.pago) {
-        const pago: Pedido = { ...p, status: 'pago', receiptUrl: st.receiptUrl, metodo: st.metodo };
-        await salvarPedido(pago).catch(() => {});
-        setPedido(pago);
-        setFase('pago');
-      }
-      return;
-    }
-    if (!URL_RETORNO_PAGAMENTO) {
-      await WebBrowser.openBrowserAsync(p.checkoutUrl);
-      return;
-    }
-    const r = await WebBrowser.openAuthSessionAsync(p.checkoutUrl, Linking.createURL('pagamento'));
-    if (r.type !== 'success') return;
-    const ret = lerRetorno(r.url);
-    if (!ret.slug || !ret.transactionNsu) return;
-    const st = await verificarPagamento({ orderNsu: ret.orderNsu ?? p.orderNsu, slug: ret.slug, transactionNsu: ret.transactionNsu }).catch(
-      () => null,
-    );
+    if (!API_PAGAMENTOS) return;
+    await WebBrowser.openAuthSessionAsync(p.checkoutUrl, Linking.createURL('pagamento'));
+    const st = await consultarPedidoServidor(API_PAGAMENTOS, p.orderNsu).catch(() => null);
     if (st?.pago) {
-      const pago: Pedido = { ...p, status: 'pago', receiptUrl: ret.receiptUrl, metodo: st.metodo ?? ret.captureMethod };
+      const pago: Pedido = { ...p, status: 'pago', receiptUrl: st.receiptUrl, metodo: st.metodo };
       await salvarPedido(pago).catch(() => {});
       setPedido(pago);
       setFase('pago');
@@ -97,38 +69,27 @@ export default function PedidoTela() {
   }
 
   async function pagar() {
-    if (!mercado || valor === null || !casa) return;
+    if (!mercado || !casa || !API_PAGAMENTOS) return;
     setErro(null);
     setFase('gerando');
     try {
-      let orderNsu: string, checkoutUrl: string, valorCobrado = valor;
-      if (API_PAGAMENTOS) {
-        const r = await criarPedidoServidor(API_PAGAMENTOS, {
-          mercadoId: mercado.id,
-          agendado,
-          janela,
-          cliente: { nome: casa.nome, endereco: casa.endereco, lat: casa.lat, lon: casa.lon },
-        });
-        ({ orderNsu, url: checkoutUrl, valor: valorCobrado } = r);
-      } else {
-        orderNsu = novoOrderNsu();
-        checkoutUrl = await criarLinkPagamento({
-          orderNsu,
-          valor,
-          descricao: `Frete ${mercado.nome} - ${agendado ? `agendado ${janela}` : 'entrega agora'}`,
-          redirectUrl: URL_RETORNO_PAGAMENTO ?? undefined,
-          cliente: { name: casa.nome !== 'Minha casa' ? casa.nome : undefined },
-        });
-      }
+      const r = await criarPedidoServidor(API_PAGAMENTOS, {
+        mercadoId: mercado.id,
+        agendado,
+        inicio: agendado ? (inicio ?? undefined) : undefined,
+        cliente: { nome: casa.nome, endereco: casa.endereco, telefone: casa.telefone, lat: casa.lat, lon: casa.lon },
+      });
       const p: Pedido = {
-        orderNsu,
+        orderNsu: r.orderNsu,
         mercadoId: mercado.id,
         mercadoNome: mercado.nome,
-        valor: valorCobrado,
+        valor: r.valor,
         agendado,
-        janela,
+        janela: r.janela,
+        inicio: r.inicio,
+        cancelToken: r.cancelToken,
         criadoEm: new Date().toISOString(),
-        checkoutUrl,
+        checkoutUrl: r.url,
         status: 'aguardando',
       };
       await salvarPedido(p).catch(() => {});
@@ -138,6 +99,8 @@ export default function PedidoTela() {
     } catch (e) {
       setErro((e as Error).message);
       setFase('escolha');
+      setInicio(null);
+      carregar(); // o horário pode ter sido ocupado por outra pessoa
     }
   }
 
@@ -145,7 +108,7 @@ export default function PedidoTela() {
     return (
       <View style={s.fim}>
         <Text style={s.fimIcone}>✓</Text>
-        <Text style={s.fimTitulo}>Frete pago!</Text>
+        <Text style={s.fimTitulo}>Frete confirmado!</Text>
         <Text style={s.fimTexto}>
           {pedido.mercadoNome}
           {'\n'}
@@ -168,6 +131,19 @@ export default function PedidoTela() {
     <View style={{ flex: 1 }}>
       <Stack.Screen options={{ title: agendado ? 'Agendar frete' : 'Solicitar frete' }} />
       <ScrollView contentContainerStyle={s.conteudo}>
+        {!agendado && disp && !disp.agora.ok && (
+          <View style={s.aviso}>
+            <Text style={s.avisoTitulo}>Indisponível agora</Text>
+            <Text style={s.avisoTexto}>{disp.agora.motivo}</Text>
+            {disp.dias.length > 0 && (
+              <Pressable onPress={() => router.replace({ pathname: '/pedido', params: { modo: 'agendar' } })}>
+                <Text style={s.link}>Agendar um horário</Text>
+              </Pressable>
+            )}
+          </View>
+        )}
+        {erroDisp && <Text style={s.erro}>{erroDisp}</Text>}
+
         <Text style={s.secao}>De qual mercado?</Text>
         <View style={{ gap: 8 }}>
           {MERCADOS.map((m) => {
@@ -197,22 +173,38 @@ export default function PedidoTela() {
         {agendado && (
           <>
             <Text style={s.secao}>Quando?</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-              {dias.map((d, i) => (
-                <Chip key={d.rotulo} texto={d.rotulo} ativo={i === diaIdx} onPress={() => { setDiaIdx(i); setFaixa(null); }} />
-              ))}
-            </ScrollView>
-            <View style={s.faixas}>
-              {dias[diaIdx]?.faixas.map((f) => (
-                <Chip key={f.rotulo} texto={f.rotulo} ativo={faixa === f.rotulo} onPress={() => setFaixa(f.rotulo)} />
-              ))}
-            </View>
+            {!disp ? (
+              <ActivityIndicator color={cores.primaria} />
+            ) : disp.dias.length === 0 ? (
+              <Text style={s.avisoTexto}>Sem horários livres no momento.</Text>
+            ) : (
+              <>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                  {disp.dias.map((d, i) => (
+                    <Chip
+                      key={d.data}
+                      texto={d.rotulo}
+                      ativo={i === diaIdx}
+                      onPress={() => {
+                        setDiaIdx(i);
+                        setInicio(null);
+                      }}
+                    />
+                  ))}
+                </ScrollView>
+                <View style={s.faixas}>
+                  {dia?.horarios.map((h) => (
+                    <Chip key={h.inicio} texto={h.hora} ativo={inicio === h.inicio} onPress={() => setInicio(h.inicio)} />
+                  ))}
+                </View>
+              </>
+            )}
           </>
         )}
 
         {fase === 'aguardando' && pedido && (
           <View style={s.aviso}>
-            <Text style={s.avisoTexto}>Pagamento aberto. Ao concluir, a InfinitePay mostra o comprovante.</Text>
+            <Text style={s.avisoTexto}>Pagamento aberto. O horário fica reservado por 15 minutos.</Text>
             <Pressable onPress={() => abrirCheckout(pedido)}>
               <Text style={s.link}>Continuar pagamento</Text>
             </Pressable>
@@ -223,7 +215,7 @@ export default function PedidoTela() {
 
       <View style={[s.rodape, { paddingBottom: 12 + insets.bottom }]}>
         <View style={{ flex: 1 }}>
-          <Text style={s.rodapeRotulo}>Valor do frete</Text>
+          <Text style={s.rodapeRotulo}>{agendado && hora ? `${dia?.rotulo} · ${hora}` : 'Valor do frete'}</Text>
           <Text style={s.rodapeValor}>{valor === null ? '—' : formatarReais(valor)}</Text>
         </View>
         <Pressable style={[s.botao, s.botaoRodape, !podePagar && { opacity: 0.45 }]} disabled={!podePagar} onPress={pagar}>
@@ -263,7 +255,8 @@ const s = StyleSheet.create({
   chip: { borderWidth: 1, borderColor: cores.borda, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 14, backgroundColor: cores.cartao },
   chipAtivo: { backgroundColor: cores.primaria, borderColor: cores.primaria },
   chipTexto: { fontSize: 14, fontWeight: '600', color: cores.texto },
-  aviso: { marginTop: 16, backgroundColor: cores.alertaFundo, borderRadius: 12, padding: 12, gap: 4 },
+  aviso: { marginTop: 8, marginBottom: 4, backgroundColor: cores.alertaFundo, borderRadius: 12, padding: 12, gap: 4 },
+  avisoTitulo: { color: cores.alerta, fontSize: 15, fontWeight: '800' },
   avisoTexto: { color: cores.alerta, fontSize: 14 },
   erro: { color: cores.erro, marginTop: 12, fontSize: 14 },
   link: { color: cores.primaria, fontWeight: '700', fontSize: 15, paddingVertical: 6 },

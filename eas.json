@@ -18,6 +18,21 @@
       "android": {
         "buildType": "app-bundle"
       }
+    },
+    "admin-preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "APP_VARIANT": "admin"
+      }
+    },
+    "admin-production": {
+      "autoIncrement": true,
+      "env": {
+        "APP_VARIANT": "admin"
+      }
     }
   },
   "submit": {
