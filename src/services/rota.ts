@@ -1,20 +1,9 @@
 import * as Location from 'expo-location';
-import type { Mercado } from '../data/mercados';
-import { distanciaRetaKm, type Trajeto } from './preco';
 
 export type Ponto = { lat: number; lon: number };
-export type ResultadoRota = Trajeto & { fonte: 'rota' | 'estimada' };
 
 const USER_AGENT = 'MercadoFrete/1.0 (app de entregas de compras)';
-// Servidor público de demonstração do OSRM. Para produção, use um servidor
-// próprio ou a Google Directions API (com chave).
-const OSRM = 'https://router.project-osrm.org/route/v1/driving';
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
-
-// Plano B quando não houver internet/rota: linha reta × fator de sinuosidade
-// das ruas e velocidade média urbana.
-const FATOR_RUAS = 1.35;
-const VELOCIDADE_MEDIA_KMH = 35;
 
 async function geocodeNominatim(endereco: string): Promise<Ponto | null> {
   const url = `${NOMINATIM}?format=json&limit=1&countrycodes=br&q=${encodeURIComponent(endereco)}`;
@@ -39,38 +28,9 @@ export async function geocodificar(endereco: string): Promise<Ponto | null> {
   }
 }
 
-/** Coordenadas do mercado (já conhecidas, sem consulta à internet). */
-export async function pontoDoMercado(m: Mercado): Promise<Ponto> {
-  return { lat: m.lat, lon: m.lon };
-}
-
 export async function minhaLocalizacao(): Promise<Ponto> {
   const { status } = await Location.requestForegroundPermissionsAsync();
   if (status !== 'granted') throw new Error('Permissão de localização negada.');
   const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
   return { lat: pos.coords.latitude, lon: pos.coords.longitude };
-}
-
-/** Rota mercado → cliente → mercado, com km e minutos de cada trecho. */
-export async function calcularIdaEVolta(mercado: Ponto, cliente: Ponto): Promise<ResultadoRota> {
-  const coords = [mercado, cliente, mercado].map((p) => `${p.lon},${p.lat}`).join(';');
-  try {
-    const resp = await fetch(`${OSRM}/${coords}?overview=false`, { headers: { 'User-Agent': USER_AGENT } });
-    const dados = await resp.json();
-    if (dados.code === 'Ok' && dados.routes?.[0]?.legs?.length === 2) {
-      const [ida, volta] = dados.routes[0].legs as { distance: number; duration: number }[];
-      return {
-        kmIda: ida.distance / 1000,
-        kmVolta: volta.distance / 1000,
-        minIda: ida.duration / 60,
-        minVolta: volta.duration / 60,
-        fonte: 'rota',
-      };
-    }
-  } catch {
-    // sem internet ou servidor indisponível
-  }
-  const km = distanciaRetaKm(mercado.lat, mercado.lon, cliente.lat, cliente.lon) * FATOR_RUAS;
-  const min = (km / VELOCIDADE_MEDIA_KMH) * 60;
-  return { kmIda: km, kmVolta: km, minIda: min, minVolta: min, fonte: 'estimada' };
 }
