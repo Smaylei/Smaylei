@@ -38,3 +38,10 @@ test('distância em linha reta (Guaramirim → Jaraguá do Sul ≈ 7 km em linha
 test('formata reais no padrão brasileiro', () => {
   assert.equal(formatarReais(1234.5), 'R$ 1.234,50');
 });
+
+test('frete agendado mantém o preço; urgente recebe acréscimo', async () => {
+  const { precoFrete } = await import('../src/services/preco.ts');
+  assert.equal(precoFrete(20.2, true, { tipo: 'percentual', valor: 10 }), 20.2);
+  assert.equal(precoFrete(20.2, false, { tipo: 'percentual', valor: 10 }), 22.22);
+  assert.equal(precoFrete(20.2, false, { tipo: 'reais', valor: 10 }), 30.2);
+});

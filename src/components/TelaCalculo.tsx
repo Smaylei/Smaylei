@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -17,6 +17,7 @@ import {
   precoSugerido,
   type Estimativa,
   type Tarifa,
+  type Urgencia,
 } from '../services/preco';
 import {
   calcularIdaEVolta,
@@ -25,26 +26,19 @@ import {
   pontoDoMercado,
   type ResultadoRota,
 } from '../services/rota';
+import AgendarEPagar from './AgendarEPagar';
 import { cores, raio } from './tema';
 
-type Props = { tarifas: Tarifa[]; margem: number };
+type Props = { tarifas: Tarifa[]; margem: number; urgencia: Urgencia };
 type Cotacao = { rota: ResultadoRota; estimativas: Estimativa[]; sugerido: number };
 
-export default function TelaCalculo({ tarifas, margem }: Props) {
+export default function TelaCalculo({ tarifas, margem, urgencia }: Props) {
   const [casa, setCasa] = useState<Endereco | null>(null);
   const [carregado, setCarregado] = useState(false);
   const [editando, setEditando] = useState(false);
   const [rotas, setRotas] = useState<Record<string, ResultadoRota | null>>({});
   const [calculando, setCalculando] = useState(false);
   const [sel, setSel] = useState<string>(MERCADOS[0].id);
-
-  useEffect(() => {
-    carregarEndereco().then((e) => {
-      setCasa(e);
-      setEditando(!e);
-      setCarregado(true);
-    });
-  }, []);
 
   // Assim que houver endereço, calcula a rota ida e volta de todos os mercados.
   const calcularTodos = useCallback(async (c: Endereco) => {
@@ -64,8 +58,13 @@ export default function TelaCalculo({ tarifas, margem }: Props) {
   }, []);
 
   useEffect(() => {
-    if (casa) calcularTodos(casa);
-  }, [casa, calcularTodos]);
+    carregarEndereco().then((e) => {
+      setCasa(e);
+      setEditando(!e);
+      setCarregado(true);
+      if (e) calcularTodos(e);
+    });
+  }, [calcularTodos]);
 
   const cotar = (r: ResultadoRota): Cotacao => {
     const estimativas = tarifas.map((t) => estimarIdaEVolta(r, t));
@@ -87,6 +86,7 @@ export default function TelaCalculo({ tarifas, margem }: Props) {
             setCasa(e);
             setEditando(false);
             salvarEndereco(e).catch(() => {});
+            calcularTodos(e);
           }}
         />
       ) : (
@@ -141,7 +141,18 @@ export default function TelaCalculo({ tarifas, margem }: Props) {
               );
             })}
           </View>
-          {rotaSel && <CartaoResultado mercado={mercado} c={cotar(rotaSel)} margem={margem} />}
+          {rotaSel && (
+            <CartaoResultado mercado={mercado} c={cotar(rotaSel)} margem={margem}>
+              <AgendarEPagar
+                key={mercado.id}
+                mercado={mercado}
+                sugerido={cotar(rotaSel).sugerido}
+                urgencia={urgencia}
+                nomeCliente={casa.nome}
+                enderecoCliente={casa.endereco}
+              />
+            </CartaoResultado>
+          )}
         </>
       )}
     </ScrollView>
@@ -233,7 +244,17 @@ function FormCadastro({
   );
 }
 
-function CartaoResultado({ mercado, c, margem }: { mercado: Mercado; c: Cotacao; margem: number }) {
+function CartaoResultado({
+  mercado,
+  c,
+  margem,
+  children,
+}: {
+  mercado: Mercado;
+  c: Cotacao;
+  margem: number;
+  children?: ReactNode;
+}) {
   const { rota } = c;
   const kmTotal = rota.kmIda + rota.kmVolta;
   const minTotal = Math.round(rota.minIda + rota.minVolta);
@@ -278,6 +299,7 @@ function CartaoResultado({ mercado, c, margem }: { mercado: Mercado; c: Cotacao;
         <Text style={s.sugeridoValor}>{formatarReais(c.sugerido)}</Text>
         <Text style={s.detalhe}>{formatarReais(kmTotal > 0 ? c.sugerido / kmTotal : 0)} por km rodado</Text>
       </View>
+      {children}
       <Text style={s.notaRodape}>
         Estimativa com base nas tarifas configuradas. Uber e 99 aplicam preço dinâmico; o valor real pode variar.
       </Text>

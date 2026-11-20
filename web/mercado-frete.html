@@ -117,6 +117,13 @@
   .total-box p { margin: 0; color: var(--accent); font-weight: 600; font-size: 13px; }
   .total-box .big { font-family: var(--font-display); font-size: 34px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; line-height: 1.15; }
   .total-box small { color: var(--muted); }
+  .when { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .when button { text-align: left; font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; cursor: pointer; }
+  .when button b { display: block; font-size: 14px; }
+  .when button small { color: var(--muted); font-size: 12px; }
+  .when button[aria-checked="true"] { border: 2px solid var(--accent); background: var(--accent-soft); padding: 8px 10px; }
+  .when button[aria-checked="true"] b { color: var(--accent); }
+  select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
   .fine { font-size: 12px; color: var(--muted); margin: 0; }
   /* tarifas */
   .tar { grid-area: tar; }
@@ -203,11 +210,19 @@
         <p class="eyebrow">Preço estimado · ida + volta</p>
         <div id="quotes"></div>
       </div>
+      <div>
+        <p class="eyebrow" id="h-when">Quando entregar?</p>
+        <div class="when" role="radiogroup" aria-labelledby="h-when">
+          <button type="button" role="radio" id="wAgendar"><b>Agendar</b><small>preço calculado</small></button>
+          <button type="button" role="radio" id="wAgora"><b>Agora (urgente)</b><small id="wAgoraSub"></small></button>
+        </div>
+      </div>
       <div class="total-box">
         <p id="sugLabel">Valor do frete (média Uber e 99)</p>
         <div class="big" id="sug">—</div>
         <small id="sugKm"></small>
       </div>
+      <p class="fine">Pagamento do frete por Pix ou cartão (InfinitePay) no app Mercado Frete do celular.</p>
       <p class="fine">Rota calculada pelas ruas de Guaramirim (OpenStreetMap), respeitando mão única. Uber e 99 usam preço dinâmico, então o valor real pode variar com horário e demanda.</p>
     </section>
 
@@ -217,6 +232,9 @@
       <p class="hint" style="margin-top:8px">Uber e 99 não publicam tabela oficial nem API de preços. Para calibrar, simule a mesma corrida em cada app e ajuste até bater.</p>
       <div class="fares" id="fares"></div>
       <div class="field" style="max-width:240px;margin-top:12px"><label for="margem">Margem do app sobre a média (%)</label><input type="number" id="margem" min="0" step="1"></div>
+      <div class="field" style="margin-top:12px"><label for="urgValor">Acréscimo na entrega urgente (sem agendamento)</label>
+        <div style="display:flex;gap:8px;max-width:280px"><input type="number" id="urgValor" min="0" step="0.5"><select id="urgTipo" aria-label="Tipo do acréscimo"><option value="percentual">%</option><option value="reais">R$</option></select></div>
+      </div>
       <div class="row-actions" style="margin-top:10px">
         <button class="btn" id="salvarTar" type="button">Salvar tarifas</button>
         <button class="btn ghost" id="restaurarTar" type="button">Restaurar padrão</button>
@@ -243,6 +261,11 @@
   const CAMPOS = [['tarifaBase', 'Base (R$)'], ['porKm', 'Por km (R$)'], ['porMinuto', 'Por min (R$)'], ['tarifaMinima', 'Mínima (R$)']];
   let tarifas = ls.get('mf:tarifas', null) || JSON.parse(JSON.stringify(TARIFAS_PADRAO));
   let margem = ls.get('mf:margem', 0);
+  const URG_PADRAO = { tipo: 'percentual', valor: 10 };
+  let urgencia = ls.get('mf:urgencia', null) || { ...URG_PADRAO };
+  let agendado = true;
+  const descUrg = () => urgencia.tipo === 'percentual' ? '+' + String(urgencia.valor).replace('.', ',') + '%' : '+' + reais(urgencia.valor);
+  const precoFinal = (sug) => cent(agendado ? sug : sug + (urgencia.tipo === 'percentual' ? sug * urgencia.valor / 100 : urgencia.valor));
   const cent = (v) => Math.round(v * 100) / 100;
   const reais = (v) => 'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   const fmtKm = (v) => v.toFixed(1).replace('.', ',') + ' km';
@@ -604,9 +627,13 @@
       const p = document.createElement('div'); p.className = 'price'; p.textContent = reais(e.valor);
       row.append(lg, info, p); q.append(row);
     }
-    $('sugLabel').textContent = margem ? `Valor do frete (média Uber e 99 + ${String(margem).replace('.', ',')}%)` : 'Valor do frete (média Uber e 99)';
-    $('sug').textContent = reais(sugerido);
-    $('sugKm').textContent = reais(sugerido / r.kmTotal) + ' por km rodado';
+    $('wAgendar').setAttribute('aria-checked', String(agendado)); $('wAgora').setAttribute('aria-checked', String(!agendado));
+    $('wAgoraSub').textContent = descUrg() + ' no frete';
+    const final = precoFinal(sugerido);
+    const base = margem ? `média Uber e 99 + ${String(margem).replace('.', ',')}%` : 'média Uber e 99';
+    $('sugLabel').textContent = agendado ? `Frete agendado (${base})` : `Frete urgente (${base}, ${descUrg()})`;
+    $('sug').textContent = reais(final);
+    $('sugKm').textContent = agendado ? reais(final / r.kmTotal) + ' por km rodado' : `${reais(sugerido)} + urgência ${descUrg()}`;
   }
 
   function atualizarTudo(reenquadrar) {
@@ -643,10 +670,15 @@
       d.append(g); f.append(d);
     }
     $('margem').value = margem;
+    $('urgValor').value = urgencia.valor; $('urgTipo').value = urgencia.tipo;
   }
+  $('wAgendar').addEventListener('click', () => { agendado = true; renderDetalhe(); });
+  $('wAgora').addEventListener('click', () => { agendado = false; renderDetalhe(); });
+  $('urgValor').addEventListener('input', () => { const v = num($('urgValor')); if (v !== null) { urgencia.valor = v; renderDetalhe(); } });
+  $('urgTipo').addEventListener('change', () => { urgencia.tipo = $('urgTipo').value; renderDetalhe(); });
   $('margem').addEventListener('input', () => { const v = num($('margem')); if (v !== null) { margem = v; renderLista(); renderDetalhe(); } });
-  $('salvarTar').addEventListener('click', () => { const ok = ls.set('mf:tarifas', tarifas) && ls.set('mf:margem', margem); $('tarMsg').textContent = ok ? 'Tarifas salvas neste navegador.' : 'Não foi possível salvar neste navegador.'; });
-  $('restaurarTar').addEventListener('click', () => { tarifas = JSON.parse(JSON.stringify(TARIFAS_PADRAO)); margem = 0; ls.set('mf:tarifas', tarifas); ls.set('mf:margem', 0); montarTarifas(); renderLista(); renderDetalhe(); $('tarMsg').textContent = 'Valores padrão restaurados.'; });
+  $('salvarTar').addEventListener('click', () => { const ok = ls.set('mf:tarifas', tarifas) && ls.set('mf:margem', margem) && ls.set('mf:urgencia', urgencia); $('tarMsg').textContent = ok ? 'Tarifas salvas neste navegador.' : 'Não foi possível salvar neste navegador.'; });
+  $('restaurarTar').addEventListener('click', () => { tarifas = JSON.parse(JSON.stringify(TARIFAS_PADRAO)); margem = 0; urgencia = { ...URG_PADRAO }; ls.set('mf:tarifas', tarifas); ls.set('mf:margem', 0); ls.set('mf:urgencia', urgencia); montarTarifas(); renderLista(); renderDetalhe(); $('tarMsg').textContent = 'Valores padrão restaurados.'; });
 
   // ---------- início ----------
   const CURTO = { cooper: 'Cooper', komprao: 'Komprão', burei: 'Burei', 'super-tres': 'Super Três', martini: 'Martini' };

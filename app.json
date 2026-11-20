@@ -29,7 +29,9 @@
         {
           "locationWhenInUsePermission": "Usamos sua localização para calcular a distância do mercado até o endereço de entrega."
         }
-      ]
-    ]
+      ],
+      "expo-web-browser"
+    ],
+    "scheme": "mercadofrete"
   }
 }

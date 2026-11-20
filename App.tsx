@@ -6,8 +6,15 @@ import TelaCalculo from './src/components/TelaCalculo';
 import TelaTarifas from './src/components/TelaTarifas';
 import { cores } from './src/components/tema';
 import { TARIFAS_PADRAO } from './src/data/tarifas';
-import { carregarMargem, carregarTarifas, salvarMargem, salvarTarifas } from './src/services/armazenamento';
-import type { Tarifa } from './src/services/preco';
+import {
+  carregarMargem,
+  carregarTarifas,
+  carregarUrgencia,
+  salvarMargem,
+  salvarTarifas,
+  salvarUrgencia,
+} from './src/services/armazenamento';
+import { URGENCIA_PADRAO, type Tarifa, type Urgencia } from './src/services/preco';
 
 type Aba = 'calculo' | 'tarifas';
 
@@ -15,15 +22,19 @@ export default function App() {
   const [aba, setAba] = useState<Aba>('calculo');
   const [tarifas, setTarifas] = useState<Tarifa[]>(TARIFAS_PADRAO);
   const [margem, setMargem] = useState(0);
+  const [urgencia, setUrgencia] = useState<Urgencia>(URGENCIA_PADRAO);
 
   useEffect(() => {
     carregarTarifas().then(setTarifas);
     carregarMargem().then(setMargem);
+    carregarUrgencia().then(setUrgencia);
   }, []);
 
-  function salvar(t: Tarifa[], m: number) {
+  function salvar(t: Tarifa[], m: number, u: Urgencia) {
     setTarifas(t);
     setMargem(m);
+    setUrgencia(u);
+    salvarUrgencia(u).catch(() => {});
     salvarTarifas(t).catch(() => {});
     salvarMargem(m).catch(() => {});
   }
@@ -38,9 +49,15 @@ export default function App() {
         </View>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           {aba === 'calculo' ? (
-            <TelaCalculo tarifas={tarifas} margem={margem} />
+            <TelaCalculo tarifas={tarifas} margem={margem} urgencia={urgencia} />
           ) : (
-            <TelaTarifas tarifas={tarifas} margem={margem} onSalvar={salvar} />
+            <TelaTarifas
+              key={JSON.stringify([tarifas, margem, urgencia])}
+              tarifas={tarifas}
+              margem={margem}
+              urgencia={urgencia}
+              onSalvar={salvar}
+            />
           )}
         </KeyboardAvoidingView>
         <View style={s.abas}>

@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { TARIFAS_PADRAO } from '../data/tarifas';
-import type { Tarifa } from '../services/preco';
+import { URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../services/preco';
 import { cores, raio } from './tema';
 
 type Props = {
   tarifas: Tarifa[];
   margem: number;
-  onSalvar: (t: Tarifa[], margem: number) => void;
+  urgencia: Urgencia;
+  onSalvar: (t: Tarifa[], margem: number, urgencia: Urgencia) => void;
 };
 
 type CampoNum = 'tarifaBase' | 'porKm' | 'porMinuto' | 'tarifaMinima';
@@ -21,12 +22,9 @@ const CAMPOS: { chave: CampoNum; rotulo: string }[] = [
 const paraTexto = (n: number) => String(n).replace('.', ',');
 const paraNumero = (t: string) => Number(t.replace(',', '.'));
 
-export default function TelaTarifas({ tarifas, margem, onSalvar }: Props) {
-  const [rascunho, setRascunho] = useState<Record<string, Record<CampoNum, string>>>({});
-  const [margemTxt, setMargemTxt] = useState(paraTexto(margem));
-  const [msg, setMsg] = useState<string | null>(null);
-
-  useEffect(() => {
+export default function TelaTarifas({ tarifas, margem, urgencia, onSalvar }: Props) {
+  // Estado inicial vem das props; o App remonta esta tela (key) quando os valores salvos mudam.
+  const [rascunho, setRascunho] = useState<Record<string, Record<CampoNum, string>>>(() => {
     const r: Record<string, Record<CampoNum, string>> = {};
     for (const t of tarifas) {
       r[t.id] = {
@@ -36,9 +34,12 @@ export default function TelaTarifas({ tarifas, margem, onSalvar }: Props) {
         tarifaMinima: paraTexto(t.tarifaMinima),
       };
     }
-    setRascunho(r);
-    setMargemTxt(paraTexto(margem));
-  }, [tarifas, margem]);
+    return r;
+  });
+  const [margemTxt, setMargemTxt] = useState(paraTexto(margem));
+  const [urgTipo, setUrgTipo] = useState<Urgencia['tipo']>(urgencia.tipo);
+  const [urgTxt, setUrgTxt] = useState(paraTexto(urgencia.valor));
+  const [msg, setMsg] = useState<string | null>(null);
 
   function salvar() {
     const novas: Tarifa[] = [];
@@ -60,7 +61,12 @@ export default function TelaTarifas({ tarifas, margem, onSalvar }: Props) {
       setMsg('Margem inválida.');
       return;
     }
-    onSalvar(novas, m);
+    const u = paraNumero(urgTxt);
+    if (!Number.isFinite(u) || u < 0) {
+      setMsg('Acréscimo de urgência inválido.');
+      return;
+    }
+    onSalvar(novas, m, { tipo: urgTipo, valor: u });
     setMsg('Tarifas salvas.');
   }
 
@@ -100,10 +106,30 @@ export default function TelaTarifas({ tarifas, margem, onSalvar }: Props) {
         <TextInput style={s.input} keyboardType="decimal-pad" value={margemTxt} onChangeText={setMargemTxt} />
       </View>
 
+      <View style={s.cartao}>
+        <Text style={s.titulo}>Entrega urgente</Text>
+        <Text style={s.rotulo}>Acréscimo no frete quando o cliente não agenda (entrega agora)</Text>
+        <View style={s.tipos}>
+          {(['percentual', 'reais'] as const).map((t) => (
+            <Pressable
+              key={t}
+              onPress={() => setUrgTipo(t)}
+              style={[s.tipo, urgTipo === t && s.tipoAtivo]}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: urgTipo === t }}
+            >
+              <Text style={[s.tipoTexto, urgTipo === t && { color: '#fff' }]}>{t === 'percentual' ? 'Em %' : 'Em R$'}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <TextInput style={s.input} keyboardType="decimal-pad" value={urgTxt} onChangeText={setUrgTxt} />
+        <Text style={[s.rotulo, { marginTop: 6 }]}>Entrega agendada usa o preço calculado, sem acréscimo.</Text>
+      </View>
+
       <Pressable style={s.botao} onPress={salvar}>
         <Text style={s.botaoTexto}>Salvar tarifas</Text>
       </Pressable>
-      <Pressable style={s.botaoSec} onPress={() => onSalvar(TARIFAS_PADRAO, 0)}>
+      <Pressable style={s.botaoSec} onPress={() => onSalvar(TARIFAS_PADRAO, 0, URGENCIA_PADRAO)}>
         <Text style={s.botaoSecTexto}>Restaurar valores padrão</Text>
       </Pressable>
       {msg && <Text style={s.msg}>{msg}</Text>}
@@ -136,6 +162,10 @@ const s = StyleSheet.create({
     color: cores.texto,
     backgroundColor: cores.fundo,
   },
+  tipos: { flexDirection: 'row', gap: 8, marginVertical: 8 },
+  tipo: { borderWidth: 1, borderColor: cores.borda, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 14 },
+  tipoAtivo: { backgroundColor: cores.primaria, borderColor: cores.primaria },
+  tipoTexto: { fontWeight: '600', color: cores.texto },
   botao: { backgroundColor: cores.primaria, borderRadius: raio, paddingVertical: 15, alignItems: 'center' },
   botaoTexto: { color: '#fff', fontSize: 16, fontWeight: '700' },
   botaoSec: { paddingVertical: 12, alignItems: 'center' },

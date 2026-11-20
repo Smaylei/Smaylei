@@ -1,9 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { TARIFAS_PADRAO } from '../data/tarifas';
-import type { Tarifa } from './preco';
+import { URGENCIA_PADRAO, type Tarifa, type Urgencia } from './preco';
 
 const CHAVE_TARIFAS = 'tarifas:v1';
 const CHAVE_MARGEM = 'margem:v1';
+const CHAVE_URGENCIA = 'urgencia:v1';
 
 export async function carregarTarifas(): Promise<Tarifa[]> {
   try {
@@ -27,4 +28,16 @@ export async function carregarMargem(): Promise<number> {
 
 export async function salvarMargem(m: number) {
   await AsyncStorage.setItem(CHAVE_MARGEM, String(m));
+}
+
+export async function carregarUrgencia(): Promise<Urgencia> {
+  try {
+    const salvo = await AsyncStorage.getItem(CHAVE_URGENCIA);
+    if (salvo) return JSON.parse(salvo);
+  } catch {}
+  return URGENCIA_PADRAO;
+}
+
+export async function salvarUrgencia(u: Urgencia) {
+  await AsyncStorage.setItem(CHAVE_URGENCIA, JSON.stringify(u));
 }

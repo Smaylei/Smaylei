@@ -73,3 +73,18 @@ export const formatarReais = (v: number) =>
   'R$ ' + v.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
 export const formatarKm = (v: number) => v.toFixed(1).replace('.', ',') + ' km';
+
+// ---------- Entrega agendada x urgente ----------
+
+export type Urgencia = { tipo: 'percentual' | 'reais'; valor: number };
+export const URGENCIA_PADRAO: Urgencia = { tipo: 'percentual', valor: 10 };
+
+/** Frete agendado segue o preço calculado; sem agendamento (urgente) recebe o acréscimo. */
+export function precoFrete(sugerido: number, agendado: boolean, u: Urgencia): number {
+  if (agendado) return centavos(sugerido);
+  const acrescimo = u.tipo === 'percentual' ? sugerido * (u.valor / 100) : u.valor;
+  return centavos(sugerido + acrescimo);
+}
+
+export const descreverUrgencia = (u: Urgencia) =>
+  u.tipo === 'percentual' ? `+${String(u.valor).replace('.', ',')}%` : `+${formatarReais(u.valor)}`;

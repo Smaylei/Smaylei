@@ -76,3 +76,18 @@ tests/preco.test.ts             testes
 rotas. O mapa de ruas de Guaramirim (OpenStreetMap, ODbL) vai embutido no JSON e a rota ida e
 volta é calculada no próprio navegador (Dijkstra pelo menor tempo, respeitando mão única).
 A pessoa cadastra o endereço marcando a casa no mapa; depois cada mercado já mostra o frete.
+
+## Agendamento e pagamento (app)
+
+- **Agendar:** o cliente escolhe o dia e a faixa de horário (mínimo 1 h de antecedência) e paga o
+  frete calculado.
+- **Agora (urgente):** sem agendamento, o frete recebe o acréscimo de urgência (padrão +10%,
+  configurável em % ou R$ na aba "Tarifas").
+- **Pagamento:** só o frete, por Pix ou cartão, pelo Checkout Integrado da InfinitePay
+  (`src/services/pagamento.ts`, InfiniteTag em `src/config.ts`). O app gera o link
+  (`POST https://api.checkout.infinitepay.io/links`), abre o checkout e, ao voltar, confirma em
+  `/payment_check`. Nenhuma chave secreta fica no app.
+- **Pré-requisito:** ativar "Checkout integrado" nas Configurações do Checkout da InfinitePay.
+  Sem isso a API responde `external_checkout_not_enabled`.
+- **Confirmação automática no servidor (webhook):** ainda não implementada; hoje a confirmação
+  acontece quando o cliente volta do checkout para o app.
