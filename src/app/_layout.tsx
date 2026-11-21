@@ -26,7 +26,7 @@ export default function Layout() {
             {/* cliente */}
             <Stack.Screen name="index" options={{ title: 'Mercado Frete' }} />
             <Stack.Screen name="cadastro" options={{ title: 'Meu cadastro' }} />
-            <Stack.Screen name="pedido" options={{ title: 'Frete' }} />
+            <Stack.Screen name="pedido" options={{ title: 'Pedido' }} />
             <Stack.Screen name="corrida/[id]" options={{ title: 'Seu frete' }} />
             <Stack.Screen name="chat/[id]" options={{ title: 'Chat' }} />
             <Stack.Screen name="pagamento" options={{ title: 'Pagamento' }} />
@@ -46,6 +46,7 @@ export default function Layout() {
             <Stack.Screen name="estornos-admin" options={{ title: 'Estornos' }} />
             <Stack.Screen name="avisos-admin" options={{ title: 'Avisos' }} />
             <Stack.Screen name="avaliacoes-admin" options={{ title: 'Avaliações e sugestões' }} />
+            <Stack.Screen name="locais-admin" options={{ title: 'Locais' }} />
             <Stack.Screen name="ajustes" options={{ title: 'Ajustes' }} />
             <Stack.Screen name="tarifas" options={{ title: 'Tarifas' }} />
           </Stack>

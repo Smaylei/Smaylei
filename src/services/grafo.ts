@@ -162,3 +162,15 @@ export function acharRua(texto: string): string | null {
   for (const [nn, nm] of nomes) if (t.includes(nn)) return nm;
   return null;
 }
+
+/** Distância (m) do ponto até a rua mais próxima do mapa: longe demais = fora da área atendida. */
+export function distanciaDoMapa(p: Ponto): number {
+  const G = grafo();
+  const [x, y] = proj(p.lat, p.lon);
+  return maisProximo(G, x, y).d;
+}
+
+/** Rota de um ponto a outro e de volta (coleta → entrega → coleta). */
+export function rotaEntre(coleta: Ponto, entrega: Ponto): RotaMercado | null {
+  return rotasAteCasa(entrega, [{ id: 'c', ...coleta }]).c ?? null;
+}

@@ -5,7 +5,6 @@ import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Tex
 import AvaliarFrete from '../../components/AvaliarFrete';
 import MapaRuas, { type EstadoMapa } from '../../components/MapaRuas';
 import { cores, raio, sombra } from '../../components/tema';
-import { MERCADOS } from '../../data/mercados';
 import { useApp } from '../../estado/AppContext';
 import { api, fonteImagem, ROTULO_STATUS, type CorridaCliente } from '../../services/api';
 import { rotaAte } from '../../services/eta';
@@ -47,11 +46,17 @@ export default function Corrida() {
     if (temMotorista) fonteImagem('cliente', `/v2/corridas/${id}/foto-motorista`).then(setFoto);
   }, [temMotorista, id]);
 
-  const mercado = MERCADOS.find((m) => m.id === c?.mercadoId);
+  // Coleta e destino da viagem (versões antigas do servidor: mercado → casa).
+  const coleta = c?.coleta ?? null;
+  const entregaServidor = c?.entrega;
+  const entrega = useMemo(
+    () => entregaServidor ?? (casa ? { nome: 'Casa', endereco: casa.endereco, lat: casa.lat, lon: casa.lon } : null),
+    [entregaServidor, casa],
+  );
   const mot = c?.motorista;
-  // Antes da confirmação o motorista vai até a coleta (mercado); depois, até a casa do cliente.
+  // Antes da coleta o motorista vai até lá; depois, até o destino.
   const indoParaCasa = c?.status === 'em_andamento';
-  const destino = indoParaCasa ? (casa ? { lat: casa.lat, lon: casa.lon } : null) : mercado ? { lat: mercado.lat, lon: mercado.lon } : null;
+  const destino = indoParaCasa ? entrega : coleta;
   const latMot = mot?.lat != null ? Math.round(mot.lat * 1e5) / 1e5 : null;
   const lonMot = mot?.lon != null ? Math.round(mot.lon * 1e5) / 1e5 : null;
   const latEta = latMot != null ? Math.round(latMot * 1e3) / 1e3 : null; // a rota só é recalculada a cada ~100 m
@@ -61,24 +66,35 @@ export default function Corrida() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [latEta, lonEta, destino?.lat, destino?.lon, c?.status],
   );
-  // Até a casa, depois da coleta, enquanto o motorista ainda vai ao mercado.
+  // Da coleta até o destino, enquanto o motorista ainda vai à coleta.
   const etaCasaDepois = useMemo(
-    () => (mercado && casa && c?.status === 'aceito' ? rotaAte({ lat: mercado.lat, lon: mercado.lon }, { lat: casa.lat, lon: casa.lon }) : null),
+    () => (coleta && entrega && c?.status === 'aceito' ? rotaAte(coleta, entrega) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mercado?.id, casa?.lat, casa?.lon, c?.status],
+    [coleta?.lat, coleta?.lon, entrega?.lat, entrega?.lon, c?.status],
   );
 
   const estadoMapa: EstadoMapa | null = useMemo(() => {
-    if (!c || !casa) return null;
+    if (!c || !entrega) return null;
     return {
       modo: 'rota',
-      casa: { lat: casa.lat, lon: casa.lon },
-      mercados: mercado ? [{ id: mercado.id, curto: 'Coleta', lat: mercado.lat, lon: mercado.lon }] : [],
-      sel: mercado?.id ?? null,
+      casa: { lat: entrega.lat, lon: entrega.lon },
+      mercados: coleta ? [{ id: 'coleta', curto: 'Coleta', lat: coleta.lat, lon: coleta.lon }] : [],
+      sel: coleta ? 'coleta' : null,
       motorista: latMot != null && lonMot != null ? { lat: latMot, lon: lonMot } : null,
       rota: eta ? { ida: eta.caminho, volta: [] } : null,
     };
-  }, [c, casa, mercado, latMot, lonMot, eta]);
+  }, [c, coleta, entrega, latMot, lonMot, eta]);
+
+  async function confirmarRecebimento() {
+    setOcupado(true);
+    try {
+      setC(await api<CorridaCliente>('cliente', `/v2/corridas/${id}/confirmar-recebimento`, { method: 'POST' }));
+    } catch (e) {
+      Alert.alert('Não foi possível', (e as Error).message);
+    } finally {
+      setOcupado(false);
+    }
+  }
 
   async function confirmar() {
     setOcupado(true);
@@ -118,25 +134,38 @@ export default function Corrida() {
   if (!c) return erro ? <Text style={[s.erro, { padding: 20 }]}>{erro}</Text> : <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
 
   const etapa = ETAPAS.indexOf(c.status);
+  const naColeta = c.clienteNaColeta !== false;
   const km = (v: number) => v.toFixed(1).replace('.', ',');
+
+  const nomeDestino = entrega?.nome === 'Casa' ? 'sua casa' : (entrega?.nome ?? 'o destino');
+  const titulo =
+    !naColeta && c.status === 'no_local'
+      ? 'Motorista retirando na coleta'
+      : !naColeta && c.status === 'em_andamento'
+        ? c.chegouDestinoEm
+          ? 'Chegou! Confirme o recebimento'
+          : 'A caminho da entrega'
+        : c.retorno && c.status === 'em_andamento'
+          ? 'Leva e traz em andamento'
+          : ROTULO_STATUS[c.status];
 
   return (
     <ScrollView contentContainerStyle={s.conteudo}>
-      <Stack.Screen options={{ title: c.agendado ? `Frete · ${c.janela}` : 'Seu frete' }} />
+      <Stack.Screen options={{ title: c.servicoTitulo ?? (c.agendado ? `Frete · ${c.janela}` : 'Seu frete') }} />
 
-      <View style={[s.topo, c.status === 'cancelado' && { backgroundColor: cores.cartao }, c.status === 'no_local' && { backgroundColor: cores.alertaFundo }]}>
+      <View style={[s.topo, c.status === 'cancelado' && { backgroundColor: cores.cartao }, naColeta && c.status === 'no_local' && { backgroundColor: cores.alertaFundo }]}>
         <Text style={[s.topoTitulo, c.status === 'cancelado' && { color: cores.erro }, c.status === 'no_local' && { color: cores.alerta }]}>
-          {ROTULO_STATUS[c.status]}
+          {titulo}
         </Text>
         {eta && c.status === 'aceito' && (
           <Text style={s.eta}>
             Chega à coleta em <Text style={s.etaForte}>~{eta.min} min</Text> ({km(eta.km)} km)
-            {etaCasaDepois ? `\nDepois, ~${etaCasaDepois.min} min até sua casa` : ''}
+            {etaCasaDepois ? `\nDepois, ~${etaCasaDepois.min} min até ${nomeDestino}` : ''}
           </Text>
         )}
         {eta && c.status === 'em_andamento' && (
           <Text style={s.eta}>
-            Chega na sua casa em <Text style={s.etaForte}>~{eta.min} min</Text> ({km(eta.km)} km)
+            Chega {entrega?.nome === 'Casa' ? 'na sua casa' : `a ${entrega?.nome}`} em <Text style={s.etaForte}>~{eta.min} min</Text> ({km(eta.km)} km)
           </Text>
         )}
         {c.status === 'pagamento_pendente' && <Text style={s.eta}>Finalize o pagamento para chamar o motorista.</Text>}
@@ -163,13 +192,23 @@ export default function Corrida() {
 
       {c.status === 'pagamento_pendente' && (
         <Pressable style={s.botao} onPress={() => router.push(`/checkout/${c.id}`)}>
-          <Text style={s.botaoTexto}>Pagar {formatarReais(c.valor)}</Text>
+          <Text style={s.botaoTexto}>Pagar {formatarReais(c.pacote?.valor ?? c.valor)}</Text>
         </Pressable>
       )}
 
-      {c.status === 'no_local' && (
+      {!naColeta && c.status === 'em_andamento' && (
         <View style={s.confirmar}>
-          <Text style={s.confirmarTitulo}>O motorista chegou ao {c.mercadoNome}?</Text>
+          <Text style={s.confirmarTitulo}>{c.chegouDestinoEm ? 'Seu pedido chegou!' : 'Já recebeu?'}</Text>
+          <Text style={s.confirmarTexto}>Confirme quando estiver com o pedido em mãos. Só então o pagamento é liberado para o motorista.</Text>
+          <Pressable style={[s.botao, { backgroundColor: cores.alerta }]} onPress={confirmarRecebimento} disabled={ocupado}>
+            {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Recebi, está tudo certo</Text>}
+          </Pressable>
+        </View>
+      )}
+
+      {naColeta && c.status === 'no_local' && (
+        <View style={s.confirmar}>
+          <Text style={s.confirmarTitulo}>O motorista chegou{c.coleta?.nome && c.coleta.nome !== 'Casa' ? ` ao ${c.coleta.nome}` : ''}?</Text>
           <Text style={s.confirmarTexto}>Confira a foto, o carro e a placa abaixo. Ao confirmar, o pagamento é liberado para ele e o frete começa.</Text>
           <Pressable style={[s.botao, { backgroundColor: cores.alerta }]} onPress={confirmar} disabled={ocupado}>
             {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Sim, o motorista está aqui</Text>}
@@ -205,9 +244,14 @@ export default function Corrida() {
       )}
 
       <View style={s.resumo}>
-        <Linha a="Coleta" b={c.mercadoNome} />
+        {c.servicoTitulo ? <Linha a="Serviço" b={c.servicoTitulo} /> : null}
+        <Linha a="Coleta" b={c.coleta ? `${c.coleta.nome}${c.coleta.nome !== c.coleta.endereco ? ` · ${c.coleta.endereco}` : ''}` : c.mercadoNome} />
+        <Linha a={c.retorno ? 'Vai até' : 'Destino'} b={entrega ? `${entrega.nome}${entrega.nome !== entrega.endereco ? ` · ${entrega.endereco}` : ''}` : '—'} />
+        {c.retorno ? <Linha a="Volta" b="Traz você de volta à coleta" /> : null}
+        {c.descricao ? <Linha a="O que" b={c.descricao} /> : null}
         <Linha a="Quando" b={c.agendado ? c.janela : 'Agora'} />
-        <Linha a="Frete" b={formatarReais(c.valor)} />
+        <Linha a="Valor" b={formatarReais(c.valor)} />
+        {c.pacote ? <Linha a="Pacote" b={`${c.pacote.viagens} viagens · ${formatarReais(c.pacote.valor)}`} /> : null}
         {c.gorjeta ? <Linha a="Gorjeta" b={formatarReais(c.gorjeta)} /> : null}
         {c.pagoEm ? (
           <Linha a="Pagamento" b={`${c.metodo === 'pix' ? 'Pix' : 'Cartão'} · ${c.liberadoEm ? 'liberado ao motorista' : c.status === 'cancelado' ? 'devolução' : 'retido'}`} />

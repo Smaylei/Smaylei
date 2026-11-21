@@ -81,8 +81,10 @@ export default function AgendaCorridas() {
                 <Text style={s.hora}>{hora(c.inicio)}</Text>
                 <Text style={s.ganho}>{formatarReais(c.ganho)}</Text>
               </View>
-              <Text style={s.texto}>🛒 Coleta: {c.mercado?.nome}</Text>
-              <Text style={s.texto}>📍 Entrega: {c.cliente?.endereco}</Text>
+              {c.servicoTitulo ? <Text style={s.detalhe}>{c.servicoTitulo}{c.retorno ? ' · leva e traz' : ''}{c.clienteNaColeta === false ? ' · só retirar e entregar' : ''}</Text> : null}
+              <Text style={s.texto}>📍 Coleta: {c.coleta?.nome ?? c.mercado?.nome}</Text>
+              <Text style={s.texto}>🏁 Destino: {c.entrega ? (c.entrega.nome === 'Casa' ? c.entrega.endereco : `${c.entrega.nome} · ${c.entrega.endereco}`) : c.cliente?.endereco}</Text>
+              {c.descricao ? <Text style={s.detalhe}>📝 {c.descricao}</Text> : null}
               <Text style={s.detalhe}>
                 Ida e volta {c.km.toFixed(1).replace('.', ',')} km · ~{c.minutos} min
               </Text>

@@ -29,7 +29,12 @@ export default function Checkout() {
         atual = { titulo: 'Gorjeta para o motorista', valor: g.valor, checkoutUrl: g.status === 'pendente' ? g.checkoutUrl : null, pendente: g.status === 'pendente' };
       } else {
         const cc = await api<CorridaCliente>('cliente', `/v2/corridas/${id}`);
-        atual = { titulo: cc.mercadoNome, valor: cc.valor, checkoutUrl: cc.checkoutUrl, pendente: cc.status === 'pagamento_pendente' };
+        atual = {
+          titulo: cc.pacote ? `${cc.servicoTitulo} · ${cc.pacote.viagens} viagens` : (cc.servicoTitulo ?? cc.mercadoNome),
+          valor: cc.pacote?.valor ?? cc.valor,
+          checkoutUrl: cc.checkoutUrl,
+          pendente: cc.status === 'pagamento_pendente',
+        };
       }
       setC(atual);
       if (!atual.pendente && !saiu.current) {
@@ -84,7 +89,7 @@ export default function Checkout() {
           <Text style={s.topoSub}>
             {ehGorjeta
               ? 'Pix ou cartão à vista, pela InfinitePay. 100% vai para o motorista.'
-              : 'Pix ou cartão à vista, pela InfinitePay. O valor fica retido até você confirmar que o motorista chegou.'}
+              : 'Pix ou cartão à vista, pela InfinitePay. O valor fica retido e só é liberado ao motorista quando você confirmar.'}
           </Text>
         </View>
       </View>

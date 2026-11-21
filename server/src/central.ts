@@ -1,11 +1,14 @@
 // Central do Mercado Frete: um Durable Object com banco SQLite (consistência forte: um pedido por
 // vez, então dois motoristas nunca aceitam a mesma corrida).
 //
-// Fluxo da corrida (pagamento antecipado e retido):
+// Serviços (src/data/servicos.ts): toda corrida vai de uma COLETA a um DESTINO (casa, local cadastrado
+// pelo Admin ou endereço livre). Fluxo (pagamento antecipado e retido):
 //   pagamento_pendente ──(cliente paga no app)──▶ buscando  [valor RETIDO]
-//   ──(motorista aceita)──▶ aceito ──(Cheguei: GPS no mercado)──▶ no_local
-//   ──(cliente confirma que o motorista está lá)──▶ em_andamento  [valor LIBERADO ao saldo do motorista]
-//   ──(Entregue)──▶ entregue
+//   ──(motorista aceita)──▶ aceito ──(Cheguei: GPS na coleta)──▶ no_local
+//   Cliente na coleta: ──(cliente confirma que o motorista está lá)──▶ em_andamento [LIBERADO] ──▶ entregue
+//   Cliente fora (buscar compras/encomenda): ──(Coletei)──▶ em_andamento ──(Cheguei no destino: GPS)──
+//     ──(cliente confirma o recebimento, ou o motorista conclui após a espera)──▶ entregue [LIBERADO]
+// Transporte de vários dias: as viagens formam um pacote pago de uma vez (order_nsu = id do pacote).
 // Cancelamentos antes da liberação geram ESTORNO (feito pelo dono no app da InfinitePay e marcado no
 // Admin). Se o cliente cancelar ou não aparecer com o motorista já no local, a taxa de deslocamento
 // vai para o motorista e o restante é estornado.
@@ -14,7 +17,9 @@
 // Pix na chave CPF do motorista: o dono faz o Pix e marca a ordem como paga no Admin.
 
 import { DurableObject } from 'cloudflare:workers';
+import { LOCAIS_INICIAIS } from '../../src/data/locais';
 import { MERCADOS } from '../../src/data/mercados';
+import { CATEGORIAS, servicoPorId, SERVICOS, precoServico, type ServicoId } from '../../src/data/servicos';
 import { TARIFAS_PADRAO } from '../../src/data/tarifas';
 import {
   AGENDA_PADRAO,
@@ -29,8 +34,8 @@ import {
   type ConfigAgenda,
 } from '../../src/services/agenda';
 import { cpfValido } from '../../src/services/cpf';
-import { rotasAteCasa } from '../../src/services/grafo';
-import { distanciaRetaKm, estimarIdaEVolta, precoFrete, precoSugerido, URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../../src/services/preco';
+import { distanciaDoMapa, rotaEntre } from '../../src/services/grafo';
+import { distanciaRetaKm, URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../../src/services/preco';
 
 export interface Env {
   CENTRAL: DurableObjectNamespace;
@@ -52,6 +57,7 @@ export type Config = ConfigAgenda & {
   raioChegadaM: number; // distância máxima do mercado para tocar "Cheguei"
   ofertaMin: number; // quanto tempo uma corrida "agora" procura motorista
   saqueDias: number; // intervalo entre saques
+  esperaBorrachariaMin: number; // espera do motorista na borracharia (entra no preço)
 };
 
 export const CONFIG_PADRAO: Config = {
@@ -66,7 +72,10 @@ export const CONFIG_PADRAO: Config = {
   raioChegadaM: 300,
   ofertaMin: 5,
   saqueDias: 7,
+  esperaBorrachariaMin: 20,
 };
+const AREA_M = 1500; // distância máxima de um endereço até as ruas do mapa (fora disso: fora da área)
+const MAX_VIAGENS = 20;
 
 const MIN = 60_000;
 const DIA = 24 * 60 * MIN;
@@ -77,6 +86,8 @@ const LOC_VALIDA_MIN = 3;
 const API_IP = 'https://api.checkout.infinitepay.io';
 
 type Linha = Record<string, string | number | null>;
+type Ponto = { lat: number; lon: number };
+type Ponta = Ponto & { nome: string; endereco: string; localId: string };
 type Quem = { tipo: 'cliente' | 'motorista' | 'admin'; id: string; linha?: Linha };
 
 const CORS = {
@@ -124,6 +135,11 @@ CREATE TABLE IF NOT EXISTS avisos (
 CREATE TABLE IF NOT EXISTS saques (
   id TEXT PRIMARY KEY, motorista_id TEXT NOT NULL, valor REAL NOT NULL, chave_pix TEXT NOT NULL, status TEXT NOT NULL,
   criado_em TEXT NOT NULL, pago_em TEXT, motivo TEXT);
+CREATE TABLE IF NOT EXISTS locais (
+  id TEXT PRIMARY KEY, categoria TEXT NOT NULL, nome TEXT NOT NULL, endereco TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL,
+  ativo INTEGER NOT NULL DEFAULT 1, criado_em TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS pacotes (
+  id TEXT PRIMARY KEY, cliente_id TEXT NOT NULL, valor REAL NOT NULL, viagens INTEGER NOT NULL, checkout_url TEXT, criado_em TEXT NOT NULL, pago_em TEXT);
 CREATE TABLE IF NOT EXISTS avaliacoes (
   corrida_id TEXT PRIMARY KEY, cliente_id TEXT NOT NULL, motorista_id TEXT, nota INTEGER NOT NULL, sugestao TEXT, criado_em TEXT NOT NULL, lida INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS gorjetas (
@@ -131,7 +147,10 @@ CREATE TABLE IF NOT EXISTS gorjetas (
   checkout_url TEXT, slug TEXT, transaction_nsu TEXT, metodo TEXT, receipt_url TEXT, criado_em TEXT NOT NULL, pago_em TEXT)
 `;
 // Colunas acrescentadas depois da primeira versão (o banco em produção já existe).
-const COLUNAS_NOVAS = [`ALTER TABLE corridas ADD COLUMN pagamento_ate TEXT`, `ALTER TABLE corridas ADD COLUMN liberado_em TEXT`, `ALTER TABLE corridas ADD COLUMN reembolso REAL NOT NULL DEFAULT 0`, `ALTER TABLE corridas ADD COLUMN reembolsado_em TEXT`];
+const COLUNAS_NOVAS = [`ALTER TABLE corridas ADD COLUMN pagamento_ate TEXT`, `ALTER TABLE corridas ADD COLUMN liberado_em TEXT`, `ALTER TABLE corridas ADD COLUMN reembolso REAL NOT NULL DEFAULT 0`, `ALTER TABLE corridas ADD COLUMN reembolsado_em TEXT`,
+  ...['servico TEXT', 'descricao TEXT', 'coleta_nome TEXT', 'coleta_endereco TEXT', 'coleta_lat REAL', 'coleta_lon REAL', 'entrega_nome TEXT', 'entrega_endereco TEXT',
+    'entrega_lat REAL', 'entrega_lon REAL', 'cliente_na_coleta INTEGER NOT NULL DEFAULT 1', 'retorno INTEGER NOT NULL DEFAULT 0', 'pacote_id TEXT', 'chegou_destino_em TEXT',
+  ].map((c) => `ALTER TABLE corridas ADD COLUMN ${c}`)];
 
 export const ROTULO: Record<string, string> = {
   pagamento_pendente: 'Aguardando pagamento',
@@ -159,6 +178,7 @@ export class Central extends DurableObject<Env> {
         }
       }
       this.migrarV3();
+      this.migrarV4();
     });
   }
 
@@ -172,6 +192,24 @@ export class Central extends DurableObject<Env> {
     this.sql.exec(`UPDATE corridas SET status='cancelado', motivo='migracao', cancelado_em=? WHERE status IN ('aguardando_pagamento','aceito','buscando')`, agora);
     this.sql.exec(`UPDATE clientes SET taxa_pendente=0`);
     this.sql.exec(`INSERT INTO config (chave, valor) VALUES ('migracao_v3', '1')`);
+  }
+
+  /** Serviços: coleta/entrega guardadas na corrida; lista de locais por categoria. */
+  private migrarV4() {
+    for (const c of this.q(`SELECT c.id, c.mercado_id, cl.nome, cl.endereco, cl.lat, cl.lon FROM corridas c JOIN clientes cl ON cl.id=c.cliente_id WHERE c.coleta_lat IS NULL`)) {
+      const m = MERCADOS.find((x) => x.id === c.mercado_id);
+      this.sql.exec(
+        `UPDATE corridas SET servico='comigo', coleta_nome=?, coleta_endereco=?, coleta_lat=?, coleta_lon=?, entrega_nome='Casa', entrega_endereco=?, entrega_lat=?, entrega_lon=? WHERE id=?`,
+        m?.nome ?? c.mercado_id, m?.endereco ?? '', m?.lat ?? c.lat, m?.lon ?? c.lon, c.endereco, c.lat, c.lon, c.id,
+      );
+    }
+    if (this.um(`SELECT valor FROM config WHERE chave='locais_v1'`)) return;
+    for (const l of LOCAIS_INICIAIS)
+      this.sql.exec(`INSERT OR IGNORE INTO locais (id, categoria, nome, endereco, lat, lon, criado_em) VALUES (?,?,?,?,?,?,?)`, l.id, l.categoria, l.nome, l.endereco, l.lat, l.lon, iso(Date.now()));
+    this.sql.exec(`INSERT INTO config (chave, valor) VALUES ('locais_v1', '1')`);
+  }
+  private locais(todos = false) {
+    return this.q(`SELECT id, categoria, nome, endereco, lat, lon, ativo FROM locais ${todos ? '' : 'WHERE ativo=1'} ORDER BY categoria, nome`).map((l) => ({ ...l, ativo: !!l.ativo }));
   }
 
   // ---------- utilidades de banco ----------
@@ -202,10 +240,12 @@ export class Central extends DurableObject<Env> {
     const mot = c.motorista_id ? this.um(`SELECT nome, placa FROM motoristas WHERE id=?`, c.motorista_id) : undefined;
     return [
       cab,
+      `Serviço: ${servicoPorId(c.servico).titulo}`,
       `Quando: ${c.agendado ? c.janela : `AGORA (${horaLocal(Date.parse(String(c.criado_em)))})`}`,
       `Cliente: ${cli?.nome ?? '-'}`,
-      `Coleta: ${c.mercado_nome}`,
-      `Entrega: ${cli?.endereco ?? '-'}`,
+      `Coleta: ${c.coleta_nome ?? c.mercado_nome}${c.coleta_endereco && c.coleta_nome !== 'Casa' ? ` (${c.coleta_endereco})` : ''}`,
+      `Destino: ${c.entrega_nome && c.entrega_nome !== 'Casa' ? `${c.entrega_nome} (${c.entrega_endereco})` : (c.entrega_endereco ?? cli?.endereco ?? '-')}`,
+      c.descricao ? `O que: ${c.descricao}` : '',
       `Frete: ${brl(Number(c.valor))}`,
       mot ? `Motorista: ${mot.nome} (${mot.placa})` : '',
       Number(c.reembolso) > 0 ? `⚠️ ESTORNAR ${brl(Number(c.reembolso))} ao cliente pelo app da InfinitePay` : '',
@@ -227,10 +267,17 @@ export class Central extends DurableObject<Env> {
     const g = this.um(`SELECT COALESCE(SUM(valor),0) AS v FROM gorjetas WHERE motorista_id=? AND status='paga'`, motoristaId);
     return { notaMedia: a?.n ? Math.round(Number(a.media) * 10) / 10 : null, avaliacoes: Number(a?.n ?? 0), gorjetasTotal: r2(Number(g?.v ?? 0)) };
   }
+  /** Libera o valor retido para o saldo do motorista (uma vez só). */
+  private liberar(c: Linha) {
+    if (this.corrida(c.id)?.liberado_em) return;
+    const ganho = this.ganho(Number(c.valor));
+    this.sql.exec(`UPDATE corridas SET liberado_em=?, ganho_motorista=? WHERE id=?`, iso(Date.now()), ganho, c.id);
+    this.creditar(c.motorista_id, c.id, 'corrida', ganho);
+  }
   saldo(motoristaId: unknown) {
     const creditos = Number(this.um(`SELECT COALESCE(SUM(valor),0) AS v FROM creditos WHERE motorista_id=?`, motoristaId)?.v ?? 0);
     const sacado = Number(this.um(`SELECT COALESCE(SUM(valor),0) AS v FROM saques WHERE motorista_id=? AND status IN ('solicitado','pago')`, motoristaId)?.v ?? 0);
-    const emLiberacao = this.q(`SELECT valor FROM corridas WHERE motorista_id=? AND status IN ('aceito','no_local')`, motoristaId).reduce((s, c) => s + this.ganho(Number(c.valor)), 0);
+    const emLiberacao = this.q(`SELECT valor FROM corridas WHERE motorista_id=? AND status IN ('aceito','no_local','em_andamento') AND liberado_em IS NULL`, motoristaId).reduce((s, c) => s + this.ganho(Number(c.valor)), 0);
     const ultimo = this.um<{ criado_em: string }>(`SELECT criado_em FROM saques WHERE motorista_id=? AND status IN ('solicitado','pago') ORDER BY criado_em DESC LIMIT 1`, motoristaId);
     const proximo = ultimo ? Date.parse(ultimo.criado_em) + this.config().saqueDias * DIA : 0;
     return { disponivel: r2(creditos - sacado), emLiberacao: r2(emLiberacao), totalGanho: r2(creditos), proximoSaqueEm: proximo > Date.now() ? iso(proximo) : null };
@@ -309,14 +356,26 @@ export class Central extends DurableObject<Env> {
   }
 
   // ---------- preço ----------
-  private cotar(mercadoId: string, lat: number, lon: number, agendado: boolean) {
-    const m = MERCADOS.find((x) => x.id === mercadoId);
-    if (!m) return null;
-    const r = rotasAteCasa({ lat, lon }, [m])[m.id];
+  private cotar(servico: ServicoId, coleta: Ponto, entrega: Ponto, agendado: boolean) {
+    const r = rotaEntre(coleta, entrega);
     if (!r) return null;
-    const cfg = this.config();
-    const sugerido = precoSugerido(cfg.tarifas.map((t) => estimarIdaEVolta(r, t)), cfg.margem);
-    return { mercado: m, valor: precoFrete(sugerido, agendado, cfg.urgencia), km: r2(r.kmIda + r.kmVolta), minutos: Math.round(r.minIda + r.minVolta) };
+    return { valor: precoServico(r, this.config(), servico, agendado), km: r2(r.kmIda + r.kmVolta), minutos: Math.round(r.minIda + r.minVolta) };
+  }
+
+  /** Uma ponta da viagem: a casa do cliente, um local cadastrado ou um endereço livre (dentro da área). */
+  private ponta(b: unknown, cli: Linha, rotulo: string): Ponta | string {
+    const o = (b ?? {}) as { casa?: boolean; localId?: string; nome?: string; endereco?: string; lat?: number; lon?: number };
+    if (o.casa) return { nome: 'Casa', endereco: String(cli.endereco), lat: Number(cli.lat), lon: Number(cli.lon), localId: 'casa' };
+    if (o.localId) {
+      const l = this.um(`SELECT * FROM locais WHERE id=? AND ativo=1`, o.localId) ?? (MERCADOS.find((m) => m.id === o.localId) as unknown as Linha | undefined);
+      if (!l) return `${rotulo}: local não encontrado.`;
+      return { nome: String(l.nome), endereco: String(l.endereco), lat: Number(l.lat), lon: Number(l.lon), localId: String(l.id) };
+    }
+    const endereco = String(o.endereco ?? '').trim();
+    if (endereco.length < 6) return `${rotulo}: informe o endereço completo (rua, número e bairro).`;
+    if (typeof o.lat !== 'number' || typeof o.lon !== 'number') return `${rotulo}: marque o ponto no mapa.`;
+    if (distanciaDoMapa({ lat: o.lat, lon: o.lon }) > AREA_M) return `${rotulo}: endereço fora da área atendida (Guaramirim).`;
+    return { nome: String(o.nome ?? '').trim().slice(0, 60) || endereco.split(',')[0], endereco: endereco.slice(0, 200), lat: o.lat, lon: o.lon, localId: 'outro' };
   }
 
   // ---------- autenticação ----------
@@ -347,19 +406,33 @@ export class Central extends DurableObject<Env> {
       criadoEm: c.criado_em, pagoEm: c.pago_em, chegouEm: c.chegou_em, liberadoEm: c.liberado_em, entregueEm: c.entregue_em,
       esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, taxaDeslocamento: cfg.taxaDeslocamento,
       motorista: comMotorista ? this.motoristaPublico(c.motorista_id) : null,
+      ...this.viagem(c),
+      pacote: c.pacote_id ? this.um(`SELECT id, valor, viagens FROM pacotes WHERE id=?`, c.pacote_id) ?? null : null,
       mensagens: Number(this.um(`SELECT COUNT(*) AS n FROM mensagens WHERE corrida_id=?`, c.id)?.n ?? 0),
       avaliacao: this.um(`SELECT nota FROM avaliacoes WHERE corrida_id=?`, c.id)?.nota ?? null,
       gorjeta: this.um(`SELECT valor FROM gorjetas WHERE corrida_id=? AND status='paga'`, c.id)?.valor ?? null,
     };
   }
+  /** Serviço, coleta e destino da viagem (iguais para cliente, motorista e admin). */
+  private viagem(c: Linha) {
+    const curto = (e: unknown) => String(e ?? '').split(/, Guaramirim/)[0];
+    return {
+      servico: (c.servico ?? 'comigo') as ServicoId, servicoTitulo: servicoPorId(c.servico).titulo, descricao: c.descricao,
+      clienteNaColeta: c.cliente_na_coleta !== 0, retorno: c.retorno === 1, chegouDestinoEm: c.chegou_destino_em,
+      coleta: { nome: c.coleta_nome, endereco: curto(c.coleta_endereco), lat: Number(c.coleta_lat), lon: Number(c.coleta_lon) },
+      entrega: { nome: c.entrega_nome, endereco: curto(c.entrega_endereco), lat: Number(c.entrega_lat), lon: Number(c.entrega_lon) },
+    };
+  }
   private corridaParaMotorista(c: Linha) {
-    const cli = this.um(`SELECT nome, telefone, endereco, lat, lon FROM clientes WHERE id=?`, c.cliente_id);
-    const m = MERCADOS.find((x) => x.id === c.mercado_id);
+    const cli = this.um(`SELECT nome FROM clientes WHERE id=?`, c.cliente_id);
     const cfg = this.config();
+    const v = this.viagem(c);
     return {
       id: c.id, status: c.status, agendado: !!c.agendado, janela: c.janela, inicio: c.inicio, fim: c.fim,
-      mercado: m ? { id: m.id, nome: m.nome, endereco: m.endereco.split(', Guaramirim')[0], lat: m.lat, lon: m.lon } : null,
-      cliente: cli ? { nome: String(cli.nome).split(' ')[0], telefone: null, endereco: cli.endereco, lat: cli.lat, lon: cli.lon } : null,
+      ...v,
+      // Campos antigos (versões anteriores do app do motorista): mercado = coleta, cliente = destino.
+      mercado: { id: c.mercado_id, nome: v.coleta.nome, endereco: v.coleta.endereco, lat: v.coleta.lat, lon: v.coleta.lon },
+      cliente: cli ? { nome: String(cli.nome).split(' ')[0], telefone: null, endereco: v.entrega.endereco, lat: v.entrega.lat, lon: v.entrega.lon } : null,
       km: c.km, minutos: c.minutos, valor: c.valor, ganho: c.ganho_motorista ?? this.ganho(Number(c.valor)),
       gorjeta: this.um(`SELECT valor FROM gorjetas WHERE corrida_id=? AND status='paga'`, c.id)?.valor ?? null,
       chegouEm: c.chegou_em, liberadoEm: c.liberado_em, esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, raioChegadaM: cfg.raioChegadaM, taxaDeslocamento: cfg.taxaDeslocamento,
@@ -370,7 +443,7 @@ export class Central extends DurableObject<Env> {
   private async criarLink(c: Linha, cli: Linha, origem: string) {
     const cfg = this.config();
     return this.linkInfinitePay({
-      orderNsu: String(c.id), valor: Number(c.valor), descricao: `Frete ${c.mercado_nome} - ${c.agendado ? c.janela : 'agora'}`,
+      orderNsu: String(c.id), valor: Number(c.valor), descricao: `${servicoPorId(c.servico).titulo}: ${c.coleta_nome ?? c.mercado_nome} → ${c.entrega_nome ?? 'casa'} - ${c.agendado ? c.janela : 'agora'}`,
       cli, origem, validoMin: cfg.esperaPagamentoMin + 5,
     });
   }
@@ -434,23 +507,42 @@ export class Central extends DurableObject<Env> {
   }
 
   private async confirmarPagamento(id: string, slug: string, tx: string, receiptUrl?: string | null) {
+    if (id.startsWith('pac-')) return this.confirmarPacote(id, slug, tx, receiptUrl);
     const c = this.corrida(id);
     if (!c) return null;
     if (c.pago_em) return c;
     const r = await this.checarPagamento(id, slug, tx);
     if (!r.pago) return c;
-    const d = { capture_method: r.metodo };
-    const atual = this.corrida(id)!; // pode ter mudado durante o await
-    if (atual.pago_em) return atual;
+    if (this.corrida(id)!.pago_em) return this.corrida(id)!; // pode ter mudado durante o await
+    return this.marcarPago(id, r.metodo, slug, tx, receiptUrl, true);
+  }
+
+  /** Várias viagens pagas de uma vez (transporte de vários dias). */
+  private async confirmarPacote(id: string, slug: string, tx: string, receiptUrl?: string | null) {
+    const primeira = () => this.um(`SELECT * FROM corridas WHERE pacote_id=? ORDER BY inicio LIMIT 1`, id) ?? null;
+    const pac = this.um(`SELECT * FROM pacotes WHERE id=?`, id);
+    if (!pac || pac.pago_em) return primeira();
+    const r = await this.checarPagamento(id, slug, tx);
+    if (!r.pago || this.um(`SELECT pago_em FROM pacotes WHERE id=?`, id)?.pago_em) return primeira();
+    this.sql.exec(`UPDATE pacotes SET pago_em=? WHERE id=?`, iso(Date.now()), id);
+    const lista = this.q(`SELECT id FROM corridas WHERE pacote_id=? ORDER BY inicio`, id);
+    for (const c of lista) this.marcarPago(String(c.id), r.metodo, slug, tx, receiptUrl, false);
+    const p = primeira()!;
+    this.avisar(this.textoCorrida(p, `💰 📅 PACOTE PAGO: ${lista.length} viagens, ${brl(Number(pac.valor))} (${r.metodo === 'pix' ? 'Pix' : 'cartão'}) — valor retido; cada viagem é liberada quando o motorista chega`), p.id);
+    return p;
+  }
+
+  private marcarPago(id: string, metodo: string | null, slug: string, tx: string, receiptUrl: string | null | undefined, avisar: boolean) {
+    const atual = this.corrida(id)!;
     const cfg = this.config();
     const agora = Date.now();
-    this.sql.exec(`UPDATE corridas SET pago_em=?, metodo=?, receipt_url=?, slug=?, transaction_nsu=?, valor_cobrado=valor WHERE id=?`, iso(agora), d.capture_method ?? null, receiptUrl ?? null, slug, tx, id);
+    this.sql.exec(`UPDATE corridas SET pago_em=?, metodo=?, receipt_url=?, slug=?, transaction_nsu=?, valor_cobrado=valor WHERE id=?`, iso(agora), metodo, receiptUrl ?? null, slug, tx, id);
     if (atual.status === 'pagamento_pendente') {
       const inicio = atual.agendado ? Date.parse(String(atual.inicio)) : agora;
       const ofertaAte = atual.agendado ? inicio - 30 * MIN : agora + cfg.ofertaMin * MIN;
       this.sql.exec(`UPDATE corridas SET status='buscando', inicio=?, fim=?, oferta_ate=? WHERE id=?`, iso(inicio), iso(inicio + cfg.bloqueioMin * MIN), iso(ofertaAte), id);
       const pago = this.corrida(id)!;
-      this.avisar(this.textoCorrida(pago, `💰 ${pago.agendado ? '📅 FRETE AGENDADO' : '🚨 FRETE AGORA'} PAGO ${brl(Number(pago.valor))} (${d.capture_method === 'pix' ? 'Pix' : 'cartão'}) — valor retido, procurando motorista`), id);
+      if (avisar) this.avisar(this.textoCorrida(pago, `💰 ${pago.agendado ? '📅 AGENDADO' : '🚨 AGORA'} PAGO ${brl(Number(pago.valor))} (${metodo === 'pix' ? 'Pix' : 'cartão'}) — valor retido, procurando motorista`), id);
       return pago;
     }
     // Pagou depois do prazo (pedido já cancelado): devolver.
@@ -473,8 +565,9 @@ export class Central extends DurableObject<Env> {
     const ev = linhas.map((c) =>
       [
         'BEGIN:VEVENT', `UID:${c.id}@mercadofrete`, `DTSTAMP:${f(c.criado_em)}`, `DTSTART:${f(c.inicio)}`, `DTEND:${f(c.fim)}`,
-        `SUMMARY:${esc(`${c.agendado ? '' : '🚨 '}Frete ${c.mercado_nome} → ${c.cliente_nome}`)}`, `LOCATION:${esc(c.endereco)}`,
-        `DESCRIPTION:${esc(`${brl(Number(c.valor))} · Tel: ${c.telefone ?? '-'} · Mapa: https://www.google.com/maps/search/?api=1&query=${c.lat},${c.lon}`)}`,
+        `SUMMARY:${esc(`${c.agendado ? '' : '🚨 '}${servicoPorId(c.servico).titulo}: ${c.coleta_nome ?? c.mercado_nome} → ${c.entrega_nome === 'Casa' ? c.cliente_nome : c.entrega_nome}`)}`,
+        `LOCATION:${esc(c.coleta_endereco ?? c.endereco)}`,
+        `DESCRIPTION:${esc(`${brl(Number(c.valor))}${c.descricao ? ` · ${c.descricao}` : ''} · Destino: ${c.entrega_endereco ?? c.endereco} · Mapa: https://www.google.com/maps/search/?api=1&query=${c.coleta_lat ?? c.lat},${c.coleta_lon ?? c.lon}`)}`,
         'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Frete em 15 minutos', 'TRIGGER:-PT15M', 'END:VALARM', 'END:VEVENT',
       ].join('\r\n'),
     );
@@ -511,6 +604,7 @@ export class Central extends DurableObject<Env> {
       return json({
         tarifas: cfg.tarifas, margem: cfg.margem, urgencia: cfg.urgencia, bloqueioMin: cfg.bloqueioMin, taxaDeslocamento: cfg.taxaDeslocamento,
         esperaPagamentoMin: cfg.esperaPagamentoMin, esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, comissaoMotoristaPct: cfg.comissaoMotoristaPct, aberto: cfg.aberto,
+        esperaBorrachariaMin: cfg.esperaBorrachariaMin, locais: this.locais(),
       });
     if (metodo === 'GET' && p === '/v2/disponibilidade') return json(this.disponibilidade());
 
@@ -558,7 +652,7 @@ export class Central extends DurableObject<Env> {
         return paginaRetorno(this.env.APP_SCHEME, g?.status === 'paga', String(g?.corrida_id ?? ''), true);
       }
       const c = slug && tx ? await this.confirmarPagamento(id, slug, tx, q.get('receipt_url')) : this.corrida(id);
-      return paginaRetorno(this.env.APP_SCHEME, !!c?.pago_em, id);
+      return paginaRetorno(this.env.APP_SCHEME, !!c?.pago_em, String(c?.id ?? id));
     }
     if (metodo === 'POST' && p === '/webhook') {
       const b = await this.corpo<{ order_nsu?: string; invoice_slug?: string; transaction_nsu?: string; receipt_url?: string }>(req);
@@ -616,36 +710,78 @@ export class Central extends DurableObject<Env> {
       if (cli.bloqueado) return erro('Cadastro bloqueado. Fale com o suporte.', 403);
       // Um pedido sem pagar por vez: o anterior é descartado.
       this.sql.exec(`UPDATE corridas SET status='cancelado', motivo='substituido', cancelado_em=? WHERE cliente_id=? AND status='pagamento_pendente'`, iso(agora), cli.id);
-      const b = await this.corpo<{ mercadoId?: string; agendado?: boolean; inicio?: string }>(req);
+      const b = await this.corpo<{
+        servico?: string; coleta?: unknown; entrega?: unknown; descricao?: string; mercadoId?: string;
+        agendado?: boolean; inicio?: string; inicios?: string[]; voltas?: string[];
+      }>(req);
+      const sv = servicoPorId(b.servico ?? 'comigo');
+      if (b.servico && !SERVICOS.some((x) => x.id === b.servico)) return erro('Serviço inválido.');
+      // Versões antigas do app mandam só o mercado: coleta no mercado, entrega em casa.
+      const coleta = this.ponta(b.coleta ?? (b.mercadoId ? { localId: b.mercadoId } : undefined), cli, 'Coleta');
+      if (typeof coleta === 'string') return erro(coleta);
+      const entrega = this.ponta(b.entrega ?? { casa: true }, cli, 'Destino');
+      if (typeof entrega === 'string') return erro(entrega);
+      if (distanciaRetaKm(coleta.lat, coleta.lon, entrega.lat, entrega.lon) < 0.05) return erro('A coleta e o destino são o mesmo lugar.');
+      const descricao = String(b.descricao ?? '').trim().slice(0, 300);
+      if (sv.descricao && descricao.length < 3) return erro(`Informe: ${sv.descricao.rotulo.toLowerCase()}.`);
       const agendado = !!b.agendado;
       if (!agendado && this.um(`SELECT id FROM corridas WHERE cliente_id=? AND agendado=0 AND status IN ${OCUPAM}`, cli.id)) return erro('Você já tem um frete em andamento.', 409);
-      const cot = this.cotar(String(b.mercadoId), Number(cli.lat), Number(cli.lon), agendado);
-      if (!cot) return erro('Não há rota até o seu endereço a partir desse mercado.');
-      let inicio = agora;
-      if (agendado) {
-        inicio = Date.parse(b.inicio ?? '');
-        if (!Number.isFinite(inicio) || !horarioValido(inicio, cfg, this.blocosAtivos(agora), agora, this.aprovados()))
-          return erro('Esse horário não está mais disponível. Escolha outro.', 409);
-      } else {
+      const cot = this.cotar(sv.id, coleta, entrega, agendado);
+      if (!cot) return erro('Não há rota entre esses endereços.');
+
+      // Viagens: uma agora, uma agendada ou (transporte) vários dias com ida e volta.
+      const viagens: { inicio: number; volta: boolean }[] = [];
+      if (!agendado) {
         const d = this.disponibilidade().agora;
         if (!d.ok) return erro(d.motivo ?? 'Indisponível agora.', 409);
+        viagens.push({ inicio: agora, volta: false });
+      } else {
+        const idas = (b.inicios?.length ? b.inicios : [b.inicio ?? '']).map((x) => ({ inicio: Date.parse(String(x)), volta: false }));
+        const voltas = (sv.variosDias ? (b.voltas ?? []) : []).map((x) => ({ inicio: Date.parse(String(x)), volta: true }));
+        if (!sv.variosDias && idas.length > 1) return erro('Este serviço é agendado um dia por vez.');
+        viagens.push(...idas, ...voltas);
+        if (viagens.length > MAX_VIAGENS) return erro(`Agende até ${MAX_VIAGENS} viagens por vez.`);
+        viagens.sort((x, y) => x.inicio - y.inicio);
+        const blocos = this.blocosAtivos(agora);
+        for (const v of viagens) {
+          if (!Number.isFinite(v.inicio) || !horarioValido(v.inicio, cfg, blocos, agora, this.aprovados()))
+            return erro(
+              Number.isFinite(v.inicio) ? `O horário de ${rotuloDia(dataLocal(v.inicio), dataLocal(agora))} às ${horaLocal(v.inicio)} não está mais disponível.` : 'Escolha o horário.',
+              409,
+            );
+          blocos.push({ inicio: v.inicio, fim: v.inicio + cfg.bloqueioMin * MIN });
+        }
       }
-      const id = novoId('frete');
-      const janela = agendado ? `${rotuloDia(dataLocal(inicio), dataLocal(agora))} · ${horaLocal(inicio)}` : 'Agora';
-      this.sql.exec(
-        `INSERT INTO corridas (id, cliente_id, mercado_id, mercado_nome, agendado, inicio, fim, janela, status, valor, km, minutos, criado_em, pagamento_ate)
-         VALUES (?,?,?,?,?,?,?,?, 'pagamento_pendente', ?,?,?,?,?)`,
-        id, cli.id, cot.mercado.id, cot.mercado.nome, agendado ? 1 : 0, iso(inicio), iso(inicio + cfg.bloqueioMin * MIN), janela,
-        cot.valor, cot.km, cot.minutos, iso(agora), iso(agora + cfg.esperaPagamentoMin * MIN),
-      );
+      const pacote = viagens.length > 1 ? novoId('pac') : null;
+      const ids: string[] = [];
+      for (const v of viagens) {
+        const [de, para] = v.volta ? [entrega, coleta] : [coleta, entrega];
+        const id = novoId('frete');
+        ids.push(id);
+        const janela = agendado ? `${rotuloDia(dataLocal(v.inicio), dataLocal(agora))} · ${horaLocal(v.inicio)}` : 'Agora';
+        this.sql.exec(
+          `INSERT INTO corridas (id, cliente_id, mercado_id, mercado_nome, agendado, inicio, fim, janela, status, valor, km, minutos, criado_em, pagamento_ate,
+             servico, descricao, coleta_nome, coleta_endereco, coleta_lat, coleta_lon, entrega_nome, entrega_endereco, entrega_lat, entrega_lon, cliente_na_coleta, retorno, pacote_id)
+           VALUES (?,?,?,?,?,?,?,?, 'pagamento_pendente', ?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          id, cli.id, de.localId, de.nome, agendado ? 1 : 0, iso(v.inicio), iso(v.inicio + cfg.bloqueioMin * MIN), janela,
+          cot.valor, cot.km, cot.minutos, iso(agora), iso(agora + cfg.esperaPagamentoMin * MIN),
+          sv.id, descricao || null, de.nome, de.endereco, de.lat, de.lon, para.nome, para.endereco, para.lat, para.lon, sv.clienteNaColeta ? 1 : 0, sv.retorno ? 1 : 0, pacote,
+        );
+      }
       try {
-        const urlPg = await this.criarLink(this.corrida(id)!, cli, url.origin);
-        this.sql.exec(`UPDATE corridas SET checkout_url=? WHERE id=?`, urlPg, id);
+        let urlPg: string;
+        if (pacote) {
+          const total = r2(cot.valor * ids.length);
+          this.sql.exec(`INSERT INTO pacotes (id, cliente_id, valor, viagens, criado_em) VALUES (?,?,?,?,?)`, pacote, cli.id, total, ids.length, iso(agora));
+          urlPg = await this.linkInfinitePay({ orderNsu: pacote, valor: total, descricao: `${sv.titulo} - ${ids.length} viagens`, cli, origem: url.origin, validoMin: cfg.esperaPagamentoMin + 5 });
+          this.sql.exec(`UPDATE pacotes SET checkout_url=? WHERE id=?`, urlPg, pacote);
+        } else urlPg = await this.criarLink(this.corrida(ids[0])!, cli, url.origin);
+        for (const id of ids) this.sql.exec(`UPDATE corridas SET checkout_url=? WHERE id=?`, urlPg, id);
       } catch (e) {
-        this.sql.exec(`UPDATE corridas SET status='cancelado', motivo='erro_pagamento', cancelado_em=? WHERE id=?`, iso(agora), id);
+        for (const id of ids) this.sql.exec(`UPDATE corridas SET status='cancelado', motivo='erro_pagamento', cancelado_em=? WHERE id=?`, iso(agora), id);
         return erro((e as Error).message, 502);
       }
-      return json(this.corridaParaCliente(this.corrida(id)!));
+      return json(this.corridaParaCliente(this.corrida(ids[0])!));
     }
     if (metodo === 'GET' && p === '/v2/corridas') {
       const lista = this.q(`SELECT * FROM corridas WHERE cliente_id=? AND status!='pagamento_pendente' ORDER BY criado_em DESC LIMIT 30`, cli.id);
@@ -670,15 +806,24 @@ export class Central extends DurableObject<Env> {
       const acao = m[2];
       if (metodo === 'GET' && !acao) return json(this.corridaParaCliente(c));
       if (metodo === 'POST' && acao === '/confirmar-motorista') {
+        if (c.cliente_na_coleta === 0) return erro('Neste serviço você confirma quando receber.', 409);
         if (c.status !== 'no_local') return erro('O motorista ainda não informou que chegou.', 409);
-        const ganho = this.ganho(Number(c.valor));
-        this.sql.exec(`UPDATE corridas SET status='em_andamento', liberado_em=?, ganho_motorista=?, fim=? WHERE id=?`, iso(agora), ganho, iso(agora + cfg.bloqueioMin * MIN), c.id);
-        this.creditar(c.motorista_id, c.id, 'corrida', ganho);
+        this.sql.exec(`UPDATE corridas SET status='em_andamento', fim=? WHERE id=?`, iso(agora + cfg.bloqueioMin * MIN), c.id);
+        this.liberar(c);
+        return json(this.corridaParaCliente(this.corrida(c.id)!));
+      }
+      if (metodo === 'POST' && acao === '/confirmar-recebimento') {
+        if (c.cliente_na_coleta !== 0 || c.status !== 'em_andamento') return erro('Ainda não há entrega para confirmar.', 409);
+        this.liberar(c);
+        this.sql.exec(`UPDATE corridas SET status='entregue', entregue_em=? WHERE id=?`, iso(agora), c.id);
         return json(this.corridaParaCliente(this.corrida(c.id)!));
       }
       if (metodo === 'POST' && acao === '/cancelar') {
         if (c.status === 'pagamento_pendente') {
-          this.sql.exec(`UPDATE corridas SET status='cancelado', motivo='cliente_cancelou', cancelado_por='cliente', cancelado_em=? WHERE id=?`, iso(agora), c.id);
+          this.sql.exec(
+            `UPDATE corridas SET status='cancelado', motivo='cliente_cancelou', cancelado_por='cliente', cancelado_em=? WHERE status='pagamento_pendente' AND (id=? OR (pacote_id IS NOT NULL AND pacote_id=?))`,
+            iso(agora), c.id, c.pacote_id,
+          );
         } else if (['buscando', 'aceito', 'no_local'].includes(String(c.status))) {
           this.cancelar(c, 'cliente_cancelou', 'cliente', '❌ CANCELADO pelo cliente — horário liberado');
         } else return erro('Este frete não pode mais ser cancelado pelo app.', 409);
@@ -834,21 +979,46 @@ export class Central extends DurableObject<Env> {
       if (metodo === 'POST' && acao === '/cheguei') {
         if (c.status !== 'aceito') return erro('Essa corrida não está indo para a coleta.', 409);
         const b = await this.corpo<{ lat?: number; lon?: number }>(req);
-        const merc = MERCADOS.find((x) => x.id === c.mercado_id);
-        if (typeof b.lat !== 'number' || typeof b.lon !== 'number' || !merc) return erro('Ative a localização para confirmar a chegada.');
-        const dist = distanciaRetaKm(b.lat, b.lon, merc.lat, merc.lon) * 1000;
+        if (typeof b.lat !== 'number' || typeof b.lon !== 'number') return erro('Ative a localização para confirmar a chegada.');
+        const dist = distanciaRetaKm(b.lat, b.lon, Number(c.coleta_lat), Number(c.coleta_lon)) * 1000;
         this.sql.exec(`UPDATE motoristas SET lat=?, lon=?, loc_em=? WHERE id=?`, b.lat, b.lon, iso(agora), mot.id);
-        if (dist > cfg.raioChegadaM) return erro(`Você está a ${Math.round(dist)} m do ${merc.nome}. Chegue ao local da coleta para confirmar.`, 409);
+        if (dist > cfg.raioChegadaM) return erro(`Você está a ${Math.round(dist)} m da coleta (${c.coleta_nome}). Chegue ao local para confirmar.`, 409);
         this.sql.exec(`UPDATE corridas SET status='no_local', chegou_em=? WHERE id=?`, iso(agora), c.id);
+        return json(this.corridaParaMotorista(this.corrida(c.id)!));
+      }
+      if (metodo === 'POST' && acao === '/coletei') {
+        // Cliente não está na coleta (buscar compras / encomenda): o motorista retira e segue.
+        if (c.cliente_na_coleta !== 0) return erro('Nesta corrida o cliente confirma a sua chegada.', 409);
+        if (c.status !== 'no_local') return erro('Toque em "Cheguei" quando estiver na coleta.', 409);
+        this.sql.exec(`UPDATE corridas SET status='em_andamento', fim=? WHERE id=?`, iso(agora + cfg.bloqueioMin * MIN), c.id);
+        return json(this.corridaParaMotorista(this.corrida(c.id)!));
+      }
+      if (metodo === 'POST' && acao === '/cheguei-destino') {
+        if (c.cliente_na_coleta !== 0 || c.status !== 'em_andamento') return erro('Ação indisponível agora.', 409);
+        const b = await this.corpo<{ lat?: number; lon?: number }>(req);
+        if (typeof b.lat !== 'number' || typeof b.lon !== 'number') return erro('Ative a localização para confirmar a chegada.');
+        const dist = distanciaRetaKm(b.lat, b.lon, Number(c.entrega_lat), Number(c.entrega_lon)) * 1000;
+        this.sql.exec(`UPDATE motoristas SET lat=?, lon=?, loc_em=? WHERE id=?`, b.lat, b.lon, iso(agora), mot.id);
+        if (dist > cfg.raioChegadaM) return erro(`Você está a ${Math.round(dist)} m do destino. Chegue ao endereço de entrega para confirmar.`, 409);
+        if (!c.chegou_destino_em) this.sql.exec(`UPDATE corridas SET chegou_destino_em=? WHERE id=?`, iso(agora), c.id);
         return json(this.corridaParaMotorista(this.corrida(c.id)!));
       }
       if (metodo === 'POST' && acao === '/entregue') {
         if (c.status !== 'em_andamento') return erro(c.status === 'no_local' ? 'Aguarde o cliente confirmar que você está no local.' : 'A corrida ainda não começou.', 409);
+        if (c.cliente_na_coleta === 0 && !c.liberado_em) {
+          // Sem a confirmação do cliente: só depois de chegar ao destino (GPS) e esperar o prazo.
+          if (!c.chegou_destino_em) return erro('Toque em "Cheguei no destino" ao chegar à entrega.', 409);
+          if (agora - Date.parse(String(c.chegou_destino_em)) < cfg.esperaConfirmacaoMin * MIN)
+            return erro(`Aguarde o cliente confirmar o recebimento (até ${cfg.esperaConfirmacaoMin} min após a chegada).`, 409);
+          this.liberar(c);
+          this.avisar(this.textoCorrida(c, `📦 ENTREGUE sem confirmação do cliente — ${mot.nome} chegou ao destino (GPS) e esperou ${cfg.esperaConfirmacaoMin} min; valor liberado`), c.id);
+        }
         this.sql.exec(`UPDATE corridas SET status='entregue', entregue_em=? WHERE id=?`, iso(agora), c.id);
         return json(this.corridaParaMotorista(this.corrida(c.id)!));
       }
       if (metodo === 'POST' && acao === '/cliente-ausente') {
         if (c.status !== 'no_local') return erro('Só depois de chegar ao local da coleta.', 409);
+        if (c.cliente_na_coleta === 0) return erro('Problema na retirada? Fale com o suporte pelo chat.', 409);
         if (agora - Date.parse(String(c.chegou_em)) < cfg.esperaConfirmacaoMin * MIN) return erro(`Aguarde ${cfg.esperaConfirmacaoMin} minutos pela confirmação do cliente.`, 409);
         this.cancelar(c, 'cliente_ausente', 'motorista', `❌ CLIENTE NÃO APARECEU — taxa de ${brl(Math.min(cfg.taxaDeslocamento, Number(c.valor)))} para ${mot.nome}`);
         return json({ ok: true });
@@ -876,7 +1046,7 @@ export class Central extends DurableObject<Env> {
       .filter((c) => this.livreDoMotorista(mot.id, { inicio: Date.parse(String(c.inicio)), fim: Date.parse(String(c.fim)) }))
       .map((c) => {
         const v = this.corridaParaMotorista(c);
-        const ate = mot.lat != null && v.mercado ? r2(distanciaRetaKm(Number(mot.lat), Number(mot.lon), v.mercado.lat, v.mercado.lon) * 1.35) : null;
+        const ate = mot.lat != null ? r2(distanciaRetaKm(Number(mot.lat), Number(mot.lon), v.coleta.lat, v.coleta.lon) * 1.35) : null;
         return { ...v, cliente: v.cliente ? { ...v.cliente, telefone: null } : null, kmAteMercado: ate, ofertaAte: c.oferta_ate };
       });
   }
@@ -893,7 +1063,7 @@ export class Central extends DurableObject<Env> {
         motoristasOnline: n(`SELECT COUNT(*) AS n FROM motoristas WHERE online=1 AND status='aprovado'`),
         motoristasPendentes: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='pendente'`),
         corridasAtivas: n(`SELECT COUNT(*) AS n FROM corridas WHERE status IN ${OCUPAM}`),
-        retido: n(`SELECT COALESCE(SUM(valor),0) AS n FROM corridas WHERE pago_em IS NOT NULL AND liberado_em IS NULL AND status IN ('buscando','aceito','no_local')`),
+        retido: n(`SELECT COALESCE(SUM(valor),0) AS n FROM corridas WHERE pago_em IS NOT NULL AND liberado_em IS NULL AND status IN ('buscando','aceito','no_local','em_andamento')`),
         saquesPendentes: n(`SELECT COALESCE(SUM(valor),0) AS n FROM saques WHERE status='solicitado'`),
         saquesPendentesQtd: n(`SELECT COUNT(*) AS n FROM saques WHERE status='solicitado'`),
         estornosPendentes: n(`SELECT COALESCE(SUM(reembolso),0) AS n FROM corridas WHERE reembolso > 0 AND reembolsado_em IS NULL`),
@@ -1016,6 +1186,34 @@ export class Central extends DurableObject<Env> {
         return erro('Valores inválidos.');
       this.salvarConfig(cfg);
       return json(cfg);
+    }
+    if (metodo === 'GET' && p === '/v2/admin/locais') return json(this.locais(true));
+    const lm = p.match(/^\/v2\/admin\/locais(?:\/([\w-]+))?$/);
+    if (lm && (metodo === 'POST' || metodo === 'PUT')) {
+      const b = await this.corpo<{ categoria?: string; nome?: string; endereco?: string; lat?: number; lon?: number; ativo?: boolean }>(req);
+      const atual = lm[1] ? this.um(`SELECT * FROM locais WHERE id=?`, lm[1]) : undefined;
+      if (lm[1] && !atual) return erro('Local não encontrado.', 404);
+      const l = {
+        categoria: String(b.categoria ?? atual?.categoria ?? ''), nome: String(b.nome ?? atual?.nome ?? '').trim(), endereco: String(b.endereco ?? atual?.endereco ?? '').trim(),
+        lat: typeof b.lat === 'number' ? b.lat : Number(atual?.lat), lon: typeof b.lon === 'number' ? b.lon : Number(atual?.lon),
+        ativo: b.ativo === undefined ? (atual ? Number(atual.ativo) : 1) : b.ativo ? 1 : 0,
+      };
+      if (!CATEGORIAS.some((c) => c.id === l.categoria)) return erro('Categoria inválida.');
+      if (l.nome.length < 2) return erro('Informe o nome.');
+      if (l.endereco.length < 6) return erro('Informe o endereço.');
+      if (!Number.isFinite(l.lat) || !Number.isFinite(l.lon)) return erro('Marque o local no mapa.');
+      if (distanciaDoMapa(l) > AREA_M) return erro('Local fora da área atendida.');
+      const id = lm[1] ?? novoId(l.categoria);
+      this.sql.exec(
+        `INSERT INTO locais (id, categoria, nome, endereco, lat, lon, ativo, criado_em) VALUES (?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET categoria=excluded.categoria, nome=excluded.nome, endereco=excluded.endereco, lat=excluded.lat, lon=excluded.lon, ativo=excluded.ativo`,
+        id, l.categoria, l.nome, l.endereco, l.lat, l.lon, l.ativo, iso(agora),
+      );
+      return json({ id, ...l, ativo: !!l.ativo });
+    }
+    if (lm?.[1] && metodo === 'DELETE') {
+      this.sql.exec(`DELETE FROM locais WHERE id=?`, lm[1]);
+      return json({ ok: true });
     }
     if (metodo === 'GET' && p === '/v2/admin/agenda-link') return json({ url: `${url.origin}/agenda.ics?k=${await this.chaveAgenda('')}` });
     return erro('Rota não encontrada.', 404);

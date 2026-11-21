@@ -287,3 +287,107 @@ test('admin: configuração reflete para clientes e motoristas; agenda .ics; sen
   const link = (await call('/v2/admin/agenda-link', { token: ADM })).d.url;
   assert.match((await call(link.replace(B, ''))).d, /TRIGGER:-PT15M/);
 });
+
+test('serviços: locais por categoria, só buscar (cliente confirma o recebimento), encomenda, borracharia, admin cadastra locais', async () => {
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { aberto: true, comissaoMotoristaPct: 80 } });
+  const cfg = (await call('/v2/config')).d;
+  assert.ok(cfg.locais.some((l) => l.categoria === 'farmacia'));
+  assert.ok(cfg.locais.some((l) => l.categoria === 'borracharia'));
+  const farm = cfg.locais.find((l) => l.categoria === 'farmacia');
+
+  const c2 = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Bia Lima', cpf: '111.444.777-35', endereco: 'Rua Y, 20, Centro', lat: -26.4740, lon: -49.0050 } });
+  const cli2 = c2.d.token;
+  await online(motorista, { lat: farm.lat, lon: farm.lon });
+
+  // só buscar: descrição obrigatória
+  assert.equal((await call('/v2/corridas', { metodo: 'POST', token: cli2, corpo: { servico: 'buscar', coleta: { localId: farm.id }, entrega: { casa: true }, agendado: false } })).s, 400);
+  const bu = await call('/v2/corridas', { metodo: 'POST', token: cli2, corpo: { servico: 'buscar', coleta: { localId: farm.id }, entrega: { casa: true }, descricao: 'Pedido 55 em nome de Bia', agendado: false } });
+  assert.equal(bu.s, 200, JSON.stringify(bu.d));
+  assert.equal(bu.d.servico, 'buscar');
+  assert.equal(bu.d.clienteNaColeta, false);
+  assert.equal(bu.d.coleta.nome, farm.nome);
+  await pagar(bu.d.id);
+  const of = (await call('/v2/ofertas', { token: motorista })).d.find((o) => o.id === bu.d.id);
+  assert.equal(of.descricao, 'Pedido 55 em nome de Bia');
+  assert.equal(of.coleta.nome, farm.nome);
+  await call(`/v2/ofertas/${bu.d.id}/aceitar`, { metodo: 'POST', token: motorista });
+  assert.equal((await call(`/v2/corridas/${bu.d.id}/cheguei`, { metodo: 'POST', token: motorista, corpo: { lat: farm.lat, lon: farm.lon } })).d.status, 'no_local');
+  assert.equal((await call(`/v2/corridas/${bu.d.id}/confirmar-motorista`, { metodo: 'POST', token: cli2 })).s, 409); // cliente não está lá
+  assert.equal((await call(`/v2/corridas/${bu.d.id}/cliente-ausente`, { metodo: 'POST', token: motorista })).s, 409);
+  assert.equal((await call(`/v2/corridas/${bu.d.id}/coletei`, { metodo: 'POST', token: motorista })).d.status, 'em_andamento');
+  const antes = (await call('/v2/saldo', { token: motorista })).d;
+  assert.ok(antes.emLiberacao > 0); // ainda retido
+  assert.equal((await call(`/v2/corridas/${bu.d.id}/entregue`, { metodo: 'POST', token: motorista })).s, 409);
+  assert.equal((await call(`/v2/corridas/${bu.d.id}/cheguei-destino`, { metodo: 'POST', token: motorista, corpo: LONGE })).s, 409);
+  assert.ok((await call(`/v2/corridas/${bu.d.id}/cheguei-destino`, { metodo: 'POST', token: motorista, corpo: { lat: -26.4740, lon: -49.0050 } })).d.chegouDestinoEm);
+  const rec = await call(`/v2/corridas/${bu.d.id}/confirmar-recebimento`, { metodo: 'POST', token: cli2 });
+  assert.equal(rec.d.status, 'entregue');
+  const depois = (await call('/v2/saldo', { token: motorista })).d;
+  assert.equal(depois.disponivel, Math.round((antes.disponivel + Math.round(bu.d.valor * 0.8 * 100) / 100) * 100) / 100);
+  await call('/v2/eu/livre', { metodo: 'POST', token: motorista });
+
+  // encomenda: endereço livre, fora da área é recusado
+  const fora = await call('/v2/corridas', { metodo: 'POST', token: cli2, corpo: { servico: 'encomenda', coleta: { endereco: 'Rua das Flores, 10, Joinville', lat: -26.30, lon: -48.85 }, descricao: 'Caixa', agendado: false } });
+  assert.equal(fora.s, 400);
+  assert.match(fora.d.erro, /fora da área/);
+  const enc = await call('/v2/corridas', { metodo: 'POST', token: cli2, corpo: { servico: 'encomenda', coleta: { endereco: 'Rua Roberto Ziemann, 100, Centro', lat: -26.4720, lon: -48.9960 }, descricao: 'Caixa média, falar com João', agendado: false } });
+  assert.equal(enc.s, 200, JSON.stringify(enc.d));
+  assert.equal(enc.d.coleta.endereco, 'Rua Roberto Ziemann, 100, Centro');
+  // cliente não confirma: o motorista conclui depois de chegar (GPS) e esperar o prazo
+  await pagar(enc.d.id);
+  await call(`/v2/ofertas/${enc.d.id}/aceitar`, { metodo: 'POST', token: motorista });
+  await call(`/v2/corridas/${enc.d.id}/cheguei`, { metodo: 'POST', token: motorista, corpo: { lat: -26.4720, lon: -48.9960 } });
+  await call(`/v2/corridas/${enc.d.id}/coletei`, { metodo: 'POST', token: motorista });
+  await call(`/v2/corridas/${enc.d.id}/cheguei-destino`, { metodo: 'POST', token: motorista, corpo: { lat: -26.4740, lon: -49.0050 } });
+  assert.equal((await call(`/v2/corridas/${enc.d.id}/entregue`, { metodo: 'POST', token: motorista })).s, 409);
+  avanca(11);
+  const s0 = (await call('/v2/saldo', { token: motorista })).d.disponivel;
+  assert.equal((await call(`/v2/corridas/${enc.d.id}/entregue`, { metodo: 'POST', token: motorista })).d.status, 'entregue');
+  assert.ok((await call('/v2/saldo', { token: motorista })).d.disponivel > s0);
+  assert.match(await ultimoAviso(), /sem confirmação do cliente/);
+  await call('/v2/eu/livre', { metodo: 'POST', token: motorista });
+  await online(motorista, { lat: farm.lat, lon: farm.lon });
+
+  // borracharia: leva e traz, preço inclui a espera
+  const borr = cfg.locais.find((l) => l.categoria === 'borracharia');
+  const b1 = await call('/v2/corridas', { metodo: 'POST', token: cli2, corpo: { servico: 'borracharia', coleta: { casa: true }, entrega: { localId: borr.id }, agendado: false } });
+  assert.equal(b1.s, 200, JSON.stringify(b1.d));
+  assert.equal(b1.d.retorno, true);
+  const b2 = await call('/v2/corridas', { metodo: 'POST', token: cli2, corpo: { servico: 'ir', coleta: { casa: true }, entrega: { localId: borr.id }, agendado: false } });
+  assert.ok(b1.d.valor > b2.d.valor);
+  await call(`/v2/corridas/${b2.d.id}/cancelar`, { metodo: 'POST', token: cli2 });
+
+  // admin cadastra uma distribuidora de gás e ela aparece para os clientes
+  const novo = await call('/v2/admin/locais', { metodo: 'POST', token: ADM, corpo: { categoria: 'gas_bebidas', nome: 'Gás do Zé', endereco: 'Rua 28 de Agosto, 900, Centro', lat: -26.4745, lon: -49.006 } });
+  assert.equal(novo.s, 200, JSON.stringify(novo.d));
+  assert.ok((await call('/v2/config')).d.locais.some((l) => l.nome === 'Gás do Zé'));
+  await call(`/v2/admin/locais/${novo.d.id}`, { metodo: 'PUT', token: ADM, corpo: { ativo: false } });
+  assert.ok(!(await call('/v2/config')).d.locais.some((l) => l.nome === 'Gás do Zé'));
+  assert.equal((await call('/v2/admin/locais', { metodo: 'POST', token: ADM, corpo: { categoria: 'x', nome: 'A', endereco: 'Rua 1, 2', lat: 0, lon: 0 } })).s, 400);
+});
+
+test('carro na oficina: vários dias com ida e volta num pagamento só; volta troca coleta e destino', async () => {
+  const c3 = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Caio Reis', cpf: '390.533.447-05', endereco: 'Rua Z, 5, Avaí', lat: -26.4690, lon: -48.9800 } });
+  const cli3 = c3.d.token;
+  const mec = (await call('/v2/config')).d.locais.find((l) => l.categoria === 'mecanico');
+  const dias = (await call('/v2/disponibilidade')).d.dias.slice(1, 4);
+  const idas = dias.map((d) => d.horarios[0].inicio);
+  const voltas = dias.map((d) => d.horarios[d.horarios.length - 1].inicio);
+  const trabalho = { nome: 'Trabalho', endereco: 'Rua 28 de Agosto, 2000, Centro', lat: -26.4735, lon: -48.9950 };
+  const r = await call('/v2/corridas', { metodo: 'POST', token: cli3, corpo: { servico: 'transporte', coleta: { casa: true }, entrega: trabalho, agendado: true, inicios: idas, voltas } });
+  assert.equal(r.s, 200, JSON.stringify(r.d));
+  assert.equal(r.d.pacote.viagens, 6);
+  assert.equal(r.d.pacote.valor, Math.round(r.d.valor * 6 * 100) / 100);
+  assert.equal(linkCriado.order_nsu, r.d.pacote.id);
+  assert.equal(linkCriado.items[0].price, Math.round(r.d.pacote.valor * 100));
+  await pagar(r.d.pacote.id);
+  const minhas = (await call('/v2/corridas', { token: cli3 })).d;
+  assert.equal(minhas.filter((c) => c.status === 'buscando').length, 6);
+  const volta = minhas.find((c) => c.coleta.nome === 'Trabalho');
+  assert.equal(volta.entrega.nome, 'Casa');
+  assert.match(await ultimoAviso(), /PACOTE PAGO: 6 viagens/);
+  // serviço de oficina também leva até o mecânico
+  const m1 = await call('/v2/corridas', { metodo: 'POST', token: cli3, corpo: { servico: 'transporte', coleta: { casa: true }, entrega: { localId: mec.id }, agendado: true, inicio: dias[0].horarios[2].inicio } });
+  assert.equal(m1.s, 200, JSON.stringify(m1.d));
+  assert.equal(m1.d.pacote, null);
+});

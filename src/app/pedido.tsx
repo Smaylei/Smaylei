@@ -1,22 +1,33 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import SeletorPonta, { escolhaCasa, type Escolha } from '../components/SeletorPonta';
 import { cores, raio, sombra } from '../components/tema';
-import { MERCADOS } from '../data/mercados';
+import { servicoPorId } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
 import { api, type CorridaCliente, type Disponibilidade } from '../services/api';
 import { formatarReais } from '../services/preco';
 
 export default function PedidoTela() {
-  const { modo } = useLocalSearchParams<{ modo?: string }>();
-  const agendado = modo === 'agendar';
-  const { rotas, valorFrete, recarregarConfig } = useApp();
+  const params = useLocalSearchParams<{ servico?: string; modo?: string }>();
+  const sv = servicoPorId(params.servico ?? 'comigo');
+  const { casa, cotar, recarregarConfig } = useApp();
   const insets = useSafeAreaInsets();
+  const [agendado, setAgendado] = useState(params.modo === 'agendar' || !!sv.variosDias);
   const [disp, setDisp] = useState<Disponibilidade | null>(null);
-  const [mercadoId, setMercadoId] = useState<string | null>(null);
+  // A casa já vem marcada no lado em que ela é o padrão.
+  const [coleta, setColeta] = useState<Escolha | null>(casa && sv.coleta.casa && !sv.entrega.casa ? escolhaCasa(casa) : casa && sv.coleta.casa && sv.variosDias ? escolhaCasa(casa) : null);
+  const [entrega, setEntrega] = useState<Escolha | null>(casa && sv.entrega.casa && !sv.coleta.casa ? escolhaCasa(casa) : null);
+  const [descricao, setDescricao] = useState('');
+  // agendamento de um dia
   const [diaIdx, setDiaIdx] = useState(0);
   const [inicio, setInicio] = useState<string | null>(null);
+  // vários dias (carro na oficina)
+  const [dias, setDias] = useState<string[]>([]);
+  const [horaIda, setHoraIda] = useState<string | null>(null);
+  const [comVolta, setComVolta] = useState(false);
+  const [horaVolta, setHoraVolta] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -34,20 +45,54 @@ export default function PedidoTela() {
     return () => clearTimeout(t);
   }, [carregar]);
 
-  const valor = mercadoId ? valorFrete(mercadoId, agendado) : null;
-  const dia = disp?.dias[diaIdx];
-  const hora = dia?.horarios.find((h) => h.inicio === inicio)?.hora;
+  // Preço de cada opção da lista, com o outro lado já escolhido.
+  const precoColeta = useMemo(() => (entrega ? (p: { lat: number; lon: number }) => cotar(sv.id, p, entrega, agendado) : undefined), [entrega, cotar, sv.id, agendado]);
+  const precoEntrega = useMemo(() => (coleta ? (p: { lat: number; lon: number }) => cotar(sv.id, coleta, p, agendado) : undefined), [coleta, cotar, sv.id, agendado]);
+  const valor = useMemo(() => (coleta && entrega ? cotar(sv.id, coleta, entrega, agendado) : null), [coleta, entrega, cotar, sv.id, agendado]);
+
+  // Viagens do pedido.
+  const horarioDe = (data: string, hora: string | null) => disp?.dias.find((d) => d.data === data)?.horarios.find((h) => h.hora === hora)?.inicio ?? null;
+  const viagens = useMemo(() => {
+    if (!agendado) return { idas: [] as string[], voltas: [] as string[], faltando: [] as string[] };
+    if (!sv.variosDias) return { idas: inicio ? [inicio] : [], voltas: [], faltando: [] };
+    const faltando: string[] = [];
+    const idas: string[] = [], voltas: string[] = [];
+    for (const d of dias) {
+      const rot = disp?.dias.find((x) => x.data === d)?.rotulo ?? d;
+      const i = horaIda ? horarioDe(d, horaIda) : null;
+      if (horaIda && !i) faltando.push(`${rot} ${horaIda}`);
+      if (i) idas.push(i);
+      if (comVolta) {
+        const v = horaVolta ? horarioDe(d, horaVolta) : null;
+        if (horaVolta && !v) faltando.push(`${rot} ${horaVolta}`);
+        if (v) voltas.push(v);
+      }
+    }
+    return { idas, voltas, faltando };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agendado, sv.variosDias, inicio, dias, horaIda, comVolta, horaVolta, disp]);
+  const qtd = agendado ? viagens.idas.length + viagens.voltas.length : 1;
+  const horasDisponiveis = useMemo(() => {
+    const todas = new Set<string>();
+    for (const d of disp?.dias ?? []) if (!dias.length || dias.includes(d.data)) d.horarios.forEach((h) => todas.add(h.hora));
+    return [...todas].sort();
+  }, [disp, dias]);
+
   const agoraOk = agendado || (disp?.agora.ok ?? false);
-  const pode = !!mercadoId && valor !== null && agoraOk && (!agendado || !!inicio) && !enviando;
+  const pronto =
+    !!coleta && !!entrega && valor !== null && agoraOk && (!sv.descricao || descricao.trim().length >= 3) && (!agendado || qtd > 0) && viagens.faltando.length === 0 && (!comVolta || !!horaVolta);
 
   async function chamar() {
-    if (!mercadoId) return;
+    if (!coleta || !entrega) return;
     setEnviando(true);
     setErro(null);
     try {
       const c = await api<CorridaCliente>('cliente', '/v2/corridas', {
         method: 'POST',
-        corpo: { mercadoId, agendado, inicio: agendado ? inicio : undefined },
+        corpo: {
+          servico: sv.id, coleta: coleta.corpo, entrega: entrega.corpo, descricao: descricao.trim() || undefined, agendado,
+          inicios: agendado ? viagens.idas : undefined, voltas: agendado && viagens.voltas.length ? viagens.voltas : undefined,
+        },
       });
       router.replace(`/checkout/${c.id}`);
     } catch (e) {
@@ -59,82 +104,115 @@ export default function PedidoTela() {
     }
   }
 
+  const dia = disp?.dias[diaIdx];
   return (
     <View style={{ flex: 1 }}>
-      <Stack.Screen options={{ title: agendado ? 'Agendar frete' : 'Solicitar frete' }} />
-      <ScrollView contentContainerStyle={s.conteudo}>
-        {!agendado && disp && !disp.agora.ok && (
-          <View style={s.aviso}>
-            <Text style={s.avisoTitulo}>Indisponível agora</Text>
-            <Text style={s.avisoTexto}>{disp.agora.motivo}</Text>
-            {disp.dias.length > 0 && (
-              <Pressable onPress={() => router.replace({ pathname: '/pedido', params: { modo: 'agendar' } })}>
-                <Text style={s.link}>Agendar um horário</Text>
-              </Pressable>
-            )}
-          </View>
+      <Stack.Screen options={{ title: sv.titulo }} />
+      <ScrollView contentContainerStyle={s.conteudo} keyboardShouldPersistTaps="handled">
+        <View style={s.cabeca}>
+          <Text style={s.cabecaIcone}>{sv.icone}</Text>
+          <Text style={s.cabecaTexto}>{sv.sub}</Text>
+        </View>
+        {sv.aviso && <Text style={s.aviso}>ℹ️ {sv.aviso}</Text>}
+
+        <SeletorPonta ponta={sv.coleta} valor={coleta} onChange={setColeta} preco={precoColeta} />
+        <SeletorPonta ponta={sv.entrega} valor={entrega} onChange={setEntrega} preco={precoEntrega} />
+
+        {sv.descricao && (
+          <>
+            <Text style={s.secao}>{sv.descricao.rotulo}</Text>
+            <TextInput
+              style={[s.input, { minHeight: 70 }]}
+              value={descricao}
+              onChangeText={setDescricao}
+              placeholder={sv.descricao.exemplo}
+              placeholderTextColor={cores.apagado}
+              multiline
+              maxLength={300}
+              textAlignVertical="top"
+            />
+          </>
         )}
 
-        <Text style={s.secao}>Onde você fez a compra?</Text>
-        <View style={{ gap: 8 }}>
-          {MERCADOS.map((m) => {
-            const v = valorFrete(m.id, agendado);
-            const ativo = m.id === mercadoId;
-            const semRota = rotas !== null && v === null;
-            return (
-              <Pressable
-                key={m.id}
-                disabled={semRota}
-                onPress={() => setMercadoId(m.id)}
-                style={[s.mercado, ativo && s.mercadoAtivo, semRota && { opacity: 0.4 }]}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: ativo }}
-              >
-                <Text style={[s.mercadoNome, ativo && { color: cores.primaria }]}>{m.nome}</Text>
-                {rotas === null ? (
-                  <ActivityIndicator color={cores.primaria} />
-                ) : (
-                  <Text style={[s.mercadoValor, ativo && { color: cores.primaria }]}>{v === null ? 'indisponível' : formatarReais(v)}</Text>
-                )}
-              </Pressable>
-            );
-          })}
-        </View>
+        <Text style={s.secao}>Quando?</Text>
+        {!sv.variosDias && (
+          <View style={s.segmento}>
+            <Pressable style={[s.segItem, !agendado && s.segAtivo]} onPress={() => setAgendado(false)}>
+              <Text style={[s.segTexto, !agendado && s.segTextoAtivo]}>Agora</Text>
+            </Pressable>
+            <Pressable style={[s.segItem, agendado && s.segAtivo]} onPress={() => setAgendado(true)}>
+              <Text style={[s.segTexto, agendado && s.segTextoAtivo]}>Agendar</Text>
+            </Pressable>
+          </View>
+        )}
+        {!agendado && disp && !disp.agora.ok && (
+          <View style={s.indisp}>
+            <Text style={s.indispTitulo}>Indisponível agora</Text>
+            <Text style={s.indispTexto}>{disp.agora.motivo}</Text>
+          </View>
+        )}
+        {agendado && !disp && <ActivityIndicator color={cores.primaria} />}
+        {agendado && disp && disp.dias.length === 0 && <Text style={s.indispTexto}>Sem horários livres no momento.</Text>}
 
-        {agendado && (
+        {agendado && disp && !sv.variosDias && disp.dias.length > 0 && (
           <>
-            <Text style={s.secao}>Quando?</Text>
-            {!disp ? (
-              <ActivityIndicator color={cores.primaria} />
-            ) : disp.dias.length === 0 ? (
-              <Text style={s.avisoTexto}>Sem horários livres no momento.</Text>
-            ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              {disp.dias.map((d, i) => (
+                <Chip
+                  key={d.data}
+                  texto={d.rotulo}
+                  ativo={i === diaIdx}
+                  onPress={() => {
+                    setDiaIdx(i);
+                    setInicio(null);
+                  }}
+                />
+              ))}
+            </ScrollView>
+            <View style={s.faixas}>
+              {dia?.horarios.map((h) => (
+                <Chip key={h.inicio} texto={h.hora} ativo={inicio === h.inicio} onPress={() => setInicio(h.inicio)} />
+              ))}
+            </View>
+          </>
+        )}
+
+        {agendado && disp && sv.variosDias && disp.dias.length > 0 && (
+          <>
+            <Text style={s.sub}>Dias (toque em todos que precisar)</Text>
+            <View style={s.faixas}>
+              {disp.dias.map((d) => (
+                <Chip key={d.data} texto={d.rotulo} ativo={dias.includes(d.data)} onPress={() => setDias((a) => (a.includes(d.data) ? a.filter((x) => x !== d.data) : [...a, d.data].sort()))} />
+              ))}
+            </View>
+            <Text style={s.sub}>Horário da ida</Text>
+            <View style={s.faixas}>
+              {horasDisponiveis.map((h) => (
+                <Chip key={h} texto={h} ativo={horaIda === h} onPress={() => setHoraIda(h)} />
+              ))}
+            </View>
+            <Pressable onPress={() => setComVolta(!comVolta)} style={s.volta}>
+              <Text style={s.voltaTexto}>{comVolta ? '☑' : '☐'} Também a volta (do destino para a coleta)</Text>
+            </Pressable>
+            {comVolta && (
               <>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                  {disp.dias.map((d, i) => (
-                    <Chip
-                      key={d.data}
-                      texto={d.rotulo}
-                      ativo={i === diaIdx}
-                      onPress={() => {
-                        setDiaIdx(i);
-                        setInicio(null);
-                      }}
-                    />
-                  ))}
-                </ScrollView>
+                <Text style={s.sub}>Horário da volta</Text>
                 <View style={s.faixas}>
-                  {dia?.horarios.map((h) => (
-                    <Chip key={h.inicio} texto={h.hora} ativo={inicio === h.inicio} onPress={() => setInicio(h.inicio)} />
+                  {horasDisponiveis.map((h) => (
+                    <Chip key={h} texto={h} ativo={horaVolta === h} onPress={() => setHoraVolta(h)} />
                   ))}
                 </View>
               </>
             )}
+            {viagens.faltando.length > 0 && <Text style={s.erro}>Sem vaga em: {viagens.faltando.join(', ')}. Escolha outro horário ou tire o dia.</Text>}
           </>
         )}
 
         <View style={s.info}>
-          <Text style={s.infoTexto}>🔒 Pagamento seguro dentro do app (Pix ou cartão). O valor fica retido e só é liberado ao motorista quando você confirmar que ele chegou ao mercado.</Text>
+          <Text style={s.infoTexto}>
+            🔒 Você paga agora, dentro do app (Pix ou cartão à vista). O valor fica retido e só é liberado ao motorista quando{' '}
+            {sv.clienteNaColeta ? 'você confirmar que ele chegou.' : 'você confirmar que recebeu.'}
+          </Text>
           <Text style={s.infoTexto}>Se nenhum motorista aceitar ou você cancelar antes da chegada, o valor é devolvido.</Text>
         </View>
         {erro && <Text style={s.erro}>{erro}</Text>}
@@ -142,10 +220,10 @@ export default function PedidoTela() {
 
       <View style={[s.rodape, { paddingBottom: 12 + insets.bottom }]}>
         <View style={{ flex: 1 }}>
-          <Text style={s.rodapeRotulo}>{agendado && hora ? `${dia?.rotulo} · ${hora}` : 'Valor do frete'}</Text>
-          <Text style={s.rodapeValor}>{valor === null ? '—' : formatarReais(valor)}</Text>
+          <Text style={s.rodapeRotulo}>{qtd > 1 ? `${qtd} viagens × ${valor != null ? formatarReais(valor) : '—'}` : agendado ? 'Agendado' : 'Agora'}</Text>
+          <Text style={s.rodapeValor}>{valor === null ? '—' : formatarReais(Math.round(valor * Math.max(qtd, 1) * 100) / 100)}</Text>
         </View>
-        <Pressable style={[s.botao, !pode && { opacity: 0.45 }]} disabled={!pode} onPress={chamar}>
+        <Pressable style={[s.botao, (!pronto || enviando) && { opacity: 0.45 }]} disabled={!pronto || enviando} onPress={chamar}>
           {enviando ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Pagar e {agendado ? 'agendar' : 'chamar'}</Text>}
         </Pressable>
       </View>
@@ -162,23 +240,31 @@ function Chip({ texto, ativo, onPress }: { texto: string; ativo: boolean; onPres
 }
 
 const s = StyleSheet.create({
-  conteudo: { padding: 16, paddingBottom: 30 },
-  secao: { fontSize: 17, fontWeight: '700', color: cores.texto, marginTop: 12, marginBottom: 10 },
-  mercado: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: cores.cartao, ...sombra, borderRadius: raio, borderWidth: 1.5, borderColor: 'transparent', paddingVertical: 16, paddingHorizontal: 16 },
-  mercadoAtivo: { borderColor: cores.primaria, borderWidth: 1.5, backgroundColor: cores.primariaClara },
-  mercadoNome: { fontSize: 16, fontWeight: '600', color: cores.texto, flexShrink: 1 },
-  mercadoValor: { fontSize: 18, fontWeight: '700', color: cores.texto, fontVariant: ['tabular-nums'] },
-  faixas: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  conteudo: { padding: 16, paddingBottom: 30, gap: 10 },
+  cabeca: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: cores.primariaClara, borderRadius: raio, padding: 14 },
+  cabecaIcone: { fontSize: 30 },
+  cabecaTexto: { flex: 1, fontSize: 14, color: cores.texto, lineHeight: 20 },
+  aviso: { fontSize: 13, color: cores.alerta, backgroundColor: cores.alertaFundo, borderRadius: 12, padding: 10, lineHeight: 18 },
+  secao: { fontSize: 16, fontWeight: '700', color: cores.texto, marginTop: 8 },
+  sub: { fontSize: 13, fontWeight: '600', color: cores.suave, marginTop: 4 },
+  input: { backgroundColor: cores.cartao, borderRadius: 12, padding: 12, fontSize: 15, color: cores.texto, ...sombra },
+  segmento: { flexDirection: 'row', backgroundColor: cores.cartao, borderRadius: 999, padding: 4, ...sombra },
+  segItem: { flex: 1, paddingVertical: 10, borderRadius: 999, alignItems: 'center' },
+  segAtivo: { backgroundColor: cores.primaria },
+  segTexto: { fontSize: 15, fontWeight: '600', color: cores.texto },
+  segTextoAtivo: { color: '#fff' },
+  faixas: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { ...sombra, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 14, backgroundColor: cores.cartao },
-  chipAtivo: { backgroundColor: cores.primaria, borderColor: cores.primaria },
+  chipAtivo: { backgroundColor: cores.primaria },
   chipTexto: { fontSize: 14, fontWeight: '600', color: cores.texto },
-  aviso: { marginTop: 8, marginBottom: 4, backgroundColor: cores.alertaFundo, borderRadius: 12, padding: 12, gap: 4 },
-  avisoTitulo: { color: cores.alerta, fontSize: 15, fontWeight: '700' },
-  avisoTexto: { color: cores.alerta, fontSize: 14 },
-  info: { marginTop: 16, gap: 4 },
-  infoTexto: { fontSize: 13, color: cores.suave },
-  erro: { color: cores.erro, marginTop: 12, fontSize: 14 },
-  link: { color: cores.primaria, fontWeight: '700', fontSize: 15, paddingVertical: 6 },
+  volta: { paddingVertical: 8 },
+  voltaTexto: { fontSize: 15, color: cores.texto, fontWeight: '600' },
+  indisp: { backgroundColor: cores.alertaFundo, borderRadius: 12, padding: 12, gap: 4 },
+  indispTitulo: { color: cores.alerta, fontSize: 15, fontWeight: '700' },
+  indispTexto: { color: cores.alerta, fontSize: 14 },
+  info: { marginTop: 10, gap: 4 },
+  infoTexto: { fontSize: 13, color: cores.suave, lineHeight: 18 },
+  erro: { color: cores.erro, marginTop: 6, fontSize: 14 },
   rodape: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingTop: 12, backgroundColor: cores.cartao, borderTopWidth: 1, borderTopColor: cores.borda },
   rodapeRotulo: { fontSize: 13, color: cores.suave },
   rodapeValor: { fontSize: 26, fontWeight: '700', color: cores.primaria, fontVariant: ['tabular-nums'] },

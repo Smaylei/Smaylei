@@ -47,6 +47,15 @@ export type CorridaAdmin = {
   fim: string;
   janela: string;
   mercado_nome: string;
+  servico: string | null;
+  descricao: string | null;
+  coleta_nome: string | null;
+  coleta_endereco: string | null;
+  entrega_nome: string | null;
+  entrega_endereco: string | null;
+  entrega_lat: number | null;
+  entrega_lon: number | null;
+  pacote_id: string | null;
   valor: number;
   valor_cobrado: number | null;
   taxa_incluida: number;
@@ -175,3 +184,9 @@ export type AvaliacaoAdmin = {
 export type Avaliacoes = { media: number | null; total: number; comSugestao: number; gorjetas: { total: number; quantidade: number }; avaliacoes: AvaliacaoAdmin[] };
 export const avaliacoes = () => api<Avaliacoes>('admin', '/v2/admin/avaliacoes');
 export const avaliacoesLidas = () => api('admin', '/v2/admin/avaliacoes/lidas', { method: 'POST' });
+
+export type LocalAdmin = { id: string; categoria: string; nome: string; endereco: string; lat: number; lon: number; ativo: boolean };
+export const locais = () => api<LocalAdmin[]>('admin', '/v2/admin/locais');
+export const salvarLocal = (l: Partial<LocalAdmin>) =>
+  api<LocalAdmin>('admin', l.id ? `/v2/admin/locais/${l.id}` : '/v2/admin/locais', { method: l.id ? 'PUT' : 'POST', corpo: l });
+export const apagarLocal = (id: string) => api('admin', `/v2/admin/locais/${id}`, { method: 'DELETE' });

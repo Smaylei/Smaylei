@@ -196,10 +196,12 @@ export default function Motorista() {
             <Text style={[s.selo, o.agendado ? s.seloAgendado : s.seloAgora]}>{o.agendado ? `AGENDADA · ${o.janela}` : 'AGORA'}</Text>
             <Text style={s.ganho}>{formatarReais(o.ganho)}</Text>
           </View>
-          <Text style={s.texto}>🛒 Coleta: {o.mercado?.nome}</Text>
-          <Text style={s.texto}>📍 Entrega: {o.cliente?.endereco}</Text>
+          {o.servicoTitulo ? <Text style={s.detalhe}>{o.servicoTitulo}{o.retorno ? ' · leva e traz' : ''}{o.clienteNaColeta === false ? ' · só retirar e entregar' : ''}</Text> : null}
+          <Text style={s.texto}>📍 Coleta: {o.coleta?.nome ?? o.mercado?.nome}</Text>
+          <Text style={s.texto}>🏁 Destino: {o.entrega ? (o.entrega.nome === 'Casa' ? o.entrega.endereco : `${o.entrega.nome} · ${o.entrega.endereco}`) : o.cliente?.endereco}</Text>
+          {o.descricao ? <Text style={s.detalhe}>📝 {o.descricao}</Text> : null}
           <Text style={s.detalhe}>
-            {o.kmAteMercado != null ? `${o.kmAteMercado.toFixed(1).replace('.', ',')} km até o mercado · ` : ''}
+            {o.kmAteMercado != null ? `${o.kmAteMercado.toFixed(1).replace('.', ',')} km até a coleta · ` : ''}
             Corrida ida e volta {o.km.toFixed(1).replace('.', ',')} km · ~{o.minutos} min
           </Text>
           <View style={[s.linha, { marginTop: 8 }]}>

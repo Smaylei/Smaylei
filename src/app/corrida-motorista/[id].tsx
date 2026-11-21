@@ -13,6 +13,10 @@ import { formatarReais } from '../../services/preco';
 const ATUALIZAR_MS = 4000;
 const ATIVA = ['aceito', 'no_local', 'em_andamento'];
 
+// Coleta e destino (servidores antigos mandavam só mercado e cliente).
+const coletaDe = (c: CorridaMotorista) => c.coleta ?? (c.mercado ? { ...c.mercado } : null);
+const entregaDe = (c: CorridaMotorista) => (c.entrega ? { ...c.entrega, nome: c.entrega.nome === 'Casa' ? `Casa de ${c.cliente?.nome ?? 'cliente'}` : c.entrega.nome } : c.cliente);
+
 /** Abre o Google Maps (ou o app de mapas do celular) já navegando até o destino. */
 function navegar(lat: number, lon: number) {
   Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=driving&dir_action=navigate`);
@@ -68,13 +72,15 @@ export default function CorridaMotoristaTela() {
     AsyncStorage.getItem(chave).then((ja) => {
       if (ja) return;
       AsyncStorage.setItem(chave, '1');
-      const alvo = fase === 'coleta' ? c.mercado : c.cliente;
+      const alvo = fase === 'coleta' ? coletaDe(c) : entregaDe(c);
       if (alvo) navegar(alvo.lat, alvo.lon);
     });
   }, [c, fase]);
 
   const indoAoCliente = c?.status === 'em_andamento';
-  const destino = c ? (indoAoCliente ? c.cliente : c.mercado) : null;
+  const coleta = c ? coletaDe(c) : null;
+  const entrega = c ? entregaDe(c) : null;
+  const destino = indoAoCliente ? entrega : coleta;
   const latEta = eu ? Math.round(eu.lat * 1e3) / 1e3 : null;
   const lonEta = eu ? Math.round(eu.lon * 1e3) / 1e3 : null;
   const eta = useMemo(
@@ -84,17 +90,17 @@ export default function CorridaMotoristaTela() {
   );
   const estadoMapa: EstadoMapa | null = useMemo(
     () =>
-      c?.cliente && c.mercado
+      entrega && coleta
         ? {
             modo: 'rota',
-            casa: { lat: c.cliente.lat, lon: c.cliente.lon },
-            mercados: [{ id: c.mercado.id, curto: 'Coleta', lat: c.mercado.lat, lon: c.mercado.lon }],
-            sel: c.mercado.id,
+            casa: { lat: entrega.lat, lon: entrega.lon },
+            mercados: [{ id: 'coleta', curto: 'Coleta', lat: coleta.lat, lon: coleta.lon }],
+            sel: 'coleta',
             motorista: eu,
             rota: eta ? { ida: eta.caminho, volta: [] } : null,
           }
         : null,
-    [c, eu, eta],
+    [entrega, coleta, eu, eta],
   );
 
   async function acao(caminho: string, opts: { confirmar?: string; corpo?: unknown } = {}) {
@@ -114,11 +120,11 @@ export default function CorridaMotoristaTela() {
     else executar();
   }
 
-  async function cheguei() {
+  async function cheguei(onde: 'cheguei' | 'cheguei-destino' = 'cheguei') {
     setOcupado(true);
     try {
       const p = await posicaoAtual();
-      await api('motorista', `/v2/corridas/${id}/cheguei`, { method: 'POST', corpo: p });
+      await api('motorista', `/v2/corridas/${id}/${onde}`, { method: 'POST', corpo: p });
       await carregar();
     } catch (e) {
       Alert.alert('Não foi possível', (e as Error).message);
@@ -129,20 +135,24 @@ export default function CorridaMotoristaTela() {
 
   if (!c) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   const esperando = c.status === 'no_local' && c.chegouEm ? Math.floor((agora - Date.parse(c.chegouEm)) / 60000) : 0;
+  const naColeta = c.clienteNaColeta !== false;
+  const esperandoDestino = c.chegouDestinoEm ? Math.floor((agora - Date.parse(c.chegouDestinoEm)) / 60000) : 0;
   const km = (v: number) => v.toFixed(1).replace('.', ',');
 
   return (
     <ScrollView contentContainerStyle={s.conteudo}>
       <Stack.Screen options={{ title: c.agendado ? `Corrida · ${c.janela}` : 'Corrida agora' }} />
       <View style={s.topo}>
-        <Text style={s.topoTitulo}>{ROTULO_STATUS[c.status]}</Text>
+        {c.servicoTitulo ? <Text style={s.servico}>{c.servicoTitulo}</Text> : null}
+        <Text style={s.topoTitulo}>{!naColeta && c.status === 'no_local' ? 'Retire o pedido' : ROTULO_STATUS[c.status]}</Text>
         {eta && ['aceito', 'em_andamento'].includes(c.status) && (
           <Text style={s.eta}>
             {indoAoCliente ? 'Até a entrega' : 'Até a coleta'}: <Text style={{ fontWeight: '700' }}>~{eta.min} min</Text> · {km(eta.km)} km
           </Text>
         )}
         <Text style={s.ganho}>
-          Ganho: {formatarReais(c.ganho)} {c.liberadoEm ? '· liberado no seu saldo' : '· liberado quando o cliente confirmar sua chegada'}
+          Ganho: {formatarReais(c.ganho)}{' '}
+          {c.liberadoEm ? '· liberado no seu saldo' : naColeta ? '· liberado quando o cliente confirmar sua chegada' : '· liberado quando o cliente confirmar o recebimento'}
         </Text>
       </View>
 
@@ -150,19 +160,31 @@ export default function CorridaMotoristaTela() {
 
       {destino && ATIVA.includes(c.status) && (
         <Pressable style={[s.botao, s.botaoNav]} onPress={() => navegar(destino.lat, destino.lon)}>
-          <Text style={s.botaoTexto}>🧭 Navegar até {indoAoCliente ? 'a entrega' : 'a coleta'}</Text>
+          <Text style={s.botaoTexto}>🧭 Navegar até {indoAoCliente ? (c.retorno ? destino.nome : 'o destino') : 'a coleta'}</Text>
+        </Pressable>
+      )}
+      {c.retorno && c.status === 'em_andamento' && coleta && (
+        <Pressable style={[s.botao, s.botaoSec]} onPress={() => navegar(coleta.lat, coleta.lon)}>
+          <Text style={[s.botaoTexto, { color: cores.primaria }]}>↩️ Navegar de volta à coleta</Text>
         </Pressable>
       )}
 
+      {c.descricao ? (
+        <View style={[s.bloco, { backgroundColor: cores.alertaFundo }]}>
+          <Text style={s.rotulo}>{naColeta ? 'OBSERVAÇÃO' : 'O QUE RETIRAR'}</Text>
+          <Text style={s.texto}>{c.descricao}</Text>
+        </View>
+      ) : null}
       <View style={s.bloco}>
-        <Text style={s.rotulo}>COLETA</Text>
-        <Text style={s.texto}>🛒 {c.mercado?.nome}</Text>
-        <Text style={s.detalhe}>{c.mercado?.endereco}</Text>
+        <Text style={s.rotulo}>COLETA {naColeta ? '· cliente embarca aqui' : '· cliente não está no local'}</Text>
+        <Text style={s.texto}>📍 {coleta?.nome}</Text>
+        <Text style={s.detalhe}>{coleta?.endereco}</Text>
       </View>
       <View style={s.bloco}>
-        <Text style={s.rotulo}>ENTREGA</Text>
-        <Text style={s.texto}>👤 {c.cliente?.nome}</Text>
-        <Text style={s.detalhe}>{c.cliente?.endereco}</Text>
+        <Text style={s.rotulo}>{c.retorno ? 'VAI ATÉ (e volta à coleta)' : 'DESTINO'}</Text>
+        <Text style={s.texto}>🏁 {entrega?.nome}</Text>
+        <Text style={s.detalhe}>{entrega?.endereco}</Text>
+        {c.retorno && <Text style={s.ajuda}>Leva e traz o cliente e o pneu. Você não precisa ajudar na troca.</Text>}
         <View style={{ flexDirection: 'row', gap: 16, flexWrap: 'wrap' }}>
           <Pressable onPress={() => router.push(`/chat/${c.id}`)}>
             <Text style={s.link}>💬 Chat com o cliente</Text>
@@ -172,16 +194,48 @@ export default function CorridaMotoristaTela() {
 
       {c.status === 'aceito' && (
         <>
-          <Pressable style={s.botao} onPress={cheguei} disabled={ocupado}>
+          <Pressable style={s.botao} onPress={() => cheguei()} disabled={ocupado}>
             {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Cheguei ao local da coleta</Text>}
           </Pressable>
-          <Text style={s.ajuda}>Funciona a até {c.raioChegadaM} m do mercado (confere pelo GPS). O cliente recebe o aviso para confirmar.</Text>
+          <Text style={s.ajuda}>
+            Funciona a até {c.raioChegadaM} m da coleta (confere pelo GPS).{naColeta ? ' O cliente recebe o aviso para confirmar.' : ''}
+          </Text>
           <Pressable onPress={() => acao('desistir', { confirmar: 'A corrida volta a procurar outro motorista.' })}>
             <Text style={[s.link, { color: cores.erro, textAlign: 'center' }]}>Desistir da corrida</Text>
           </Pressable>
         </>
       )}
-      {c.status === 'no_local' && (
+      {c.status === 'no_local' && !naColeta && (
+        <>
+          <Text style={s.ajuda}>Retire o pedido descrito acima. Algum problema (pedido não pronto, não encontrado)? Fale com o suporte pelo chat.</Text>
+          <Pressable style={s.botao} onPress={() => acao('coletei')} disabled={ocupado}>
+            {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Retirei, seguir para a entrega</Text>}
+          </Pressable>
+        </>
+      )}
+      {c.status === 'em_andamento' && !naColeta && !c.liberadoEm && (
+        <>
+          {!c.chegouDestinoEm ? (
+            <Pressable style={s.botao} onPress={() => cheguei('cheguei-destino')} disabled={ocupado}>
+              {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Cheguei no destino</Text>}
+            </Pressable>
+          ) : (
+            <View style={s.esperando}>
+              <Text style={s.esperandoTitulo}>Entregue o pedido e peça para o cliente confirmar no app.</Text>
+              <Text style={s.detalhe}>Esperando há {esperandoDestino} min. O valor é liberado assim que ele confirmar.</Text>
+              <Pressable
+                style={[s.botao, s.botaoSec, esperandoDestino < c.esperaConfirmacaoMin && { opacity: 0.4 }]}
+                disabled={esperandoDestino < c.esperaConfirmacaoMin || ocupado}
+                onPress={() => acao('entregue', { confirmar: 'Concluir sem a confirmação do cliente? A administração é avisada.' })}
+              >
+                <Text style={[s.botaoTexto, { color: cores.primaria }]}>Concluir sem confirmação</Text>
+              </Pressable>
+              {esperandoDestino < c.esperaConfirmacaoMin && <Text style={s.ajuda}>Disponível após {c.esperaConfirmacaoMin} min no destino.</Text>}
+            </View>
+          )}
+        </>
+      )}
+      {c.status === 'no_local' && naColeta && (
         <View style={s.esperando}>
           <Text style={s.esperandoTitulo}>Aguardando o cliente confirmar sua chegada…</Text>
           <Text style={s.detalhe}>Esperando há {esperando} min. O valor é liberado no seu saldo assim que ele confirmar.</Text>
@@ -195,9 +249,11 @@ export default function CorridaMotoristaTela() {
           {esperando < c.esperaConfirmacaoMin && <Text style={s.ajuda}>Disponível após {c.esperaConfirmacaoMin} min de espera.</Text>}
         </View>
       )}
-      {c.status === 'em_andamento' && (
+      {c.status === 'em_andamento' && (naColeta || !!c.liberadoEm) && (
         <>
-          <Text style={s.pago}>✓ Cliente confirmou. Valor liberado no seu saldo. Leve as compras até a entrega.</Text>
+          <Text style={s.pago}>
+            ✓ {naColeta ? 'Cliente confirmou. ' : ''}Valor liberado no seu saldo. {c.retorno ? 'Leve até lá, espere e traga de volta à coleta.' : 'Siga até o destino.'}
+          </Text>
           <Pressable style={s.botao} onPress={() => acao('entregue')} disabled={ocupado}>
             {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Concluir entrega</Text>}
           </Pressable>
@@ -213,6 +269,7 @@ export default function CorridaMotoristaTela() {
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 12 },
   topo: { backgroundColor: cores.primariaClara, borderRadius: raio, padding: 16, gap: 4 },
+  servico: { fontSize: 12, fontWeight: '700', color: cores.primaria, textTransform: 'uppercase', letterSpacing: 0.5 },
   topoTitulo: { fontSize: 19, fontWeight: '700', color: cores.primaria },
   eta: { fontSize: 15, color: cores.texto },
   ganho: { fontSize: 14, color: cores.texto },

@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { cores, raio, sombra } from '../components/tema';
 import { useAgenda, type EventoAgenda } from '../hooks/useAgendaCelular';
+import { servicoPorId } from '../data/servicos';
 import * as Admin from '../services/admin';
 import { ErroApi, ROTULO_STATUS } from '../services/api';
 import { formatarReais } from '../services/preco';
@@ -25,8 +26,8 @@ function eventos(lista: Admin.CorridaAdmin[]): EventoAgenda[] {
       cancelado: c.status === 'cancelado',
       inicio: c.inicio,
       fim: c.fim,
-      titulo: `${c.agendado ? '' : '🚨 '}Frete ${c.mercado_nome} → ${c.cliente_nome}`,
-      local: c.cliente_endereco,
+      titulo: `${c.agendado ? '' : '🚨 '}${servicoPorId(c.servico).titulo}: ${c.coleta_nome ?? c.mercado_nome} → ${!c.entrega_nome || c.entrega_nome === 'Casa' ? c.cliente_nome : c.entrega_nome}`,
+      local: c.coleta_endereco ?? c.cliente_endereco,
       notas: `${formatarReais(c.valor)} · Motorista: ${c.motorista_nome ?? 'a definir'}\nTel. cliente: ${c.cliente_telefone ?? '-'}`,
     }));
 }
@@ -153,6 +154,9 @@ export default function Painel() {
           <Text style={s.atalhoTexto}>👤 Clientes</Text>
         </Pressable>
       </View>
+      <Pressable style={[s.atalho, { flex: 0 }]} onPress={() => router.push('/locais-admin')}>
+        <Text style={s.atalhoTexto}>🏪 Locais: mercados, padarias, farmácias, gás, oficinas, borracharias</Text>
+      </Pressable>
       <Pressable style={[s.atalho, { flex: 0 }, res.avaliacoesNaoLidas > 0 && s.atalhoAlerta]} onPress={() => router.push('/avaliacoes-admin')}>
         <Text style={s.atalhoTexto}>
           ⭐ Avaliações e sugestões{res.notaMedia ? ` · média ${res.notaMedia.toFixed(1).replace('.', ',')}` : ''}
@@ -226,8 +230,18 @@ function Cartao({ c, onCancelar }: { c: Admin.CorridaAdmin; onCancelar: () => vo
       </View>
       <Text style={s.statusCorrida}>{ROTULO_STATUS[c.status]}</Text>
       <Text style={s.cliente}>👤 {c.cliente_nome}</Text>
-      <Text style={s.detalhe}>📍 {c.cliente_endereco}</Text>
-      <Text style={s.detalhe}>🛒 {c.mercado_nome}</Text>
+      <Text style={s.detalhe}>
+        {servicoPorId(c.servico).icone} {servicoPorId(c.servico).titulo}
+        {c.pacote_id ? ' · pacote' : ''}
+      </Text>
+      <Text style={s.detalhe}>
+        📍 {c.coleta_nome ?? c.mercado_nome}
+        {c.coleta_nome && c.coleta_nome !== 'Casa' && c.coleta_endereco ? ` · ${c.coleta_endereco.split(', Guaramirim')[0]}` : ''}
+      </Text>
+      <Text style={s.detalhe}>
+        🏁 {!c.entrega_nome || c.entrega_nome === 'Casa' ? c.cliente_endereco : `${c.entrega_nome} · ${(c.entrega_endereco ?? '').split(', Guaramirim')[0]}`}
+      </Text>
+      {c.descricao ? <Text style={s.detalhe}>📝 {c.descricao}</Text> : null}
       <Text style={s.detalhe}>🚗 {c.motorista_nome ? `${c.motorista_nome} (${c.motorista_placa})` : 'procurando motorista…'}</Text>
       <View style={s.linha}>
         <Text style={s.valor}>{formatarReais(c.valor)}</Text>
