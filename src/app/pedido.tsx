@@ -12,7 +12,7 @@ import { formatarReais } from '../services/preco';
 export default function PedidoTela() {
   const params = useLocalSearchParams<{ servico?: string; modo?: string }>();
   const sv = servicoPorId(params.servico ?? 'comigo');
-  const { casa, cotar, recarregarConfig } = useApp();
+  const { casa, cotar, recarregarConfig, config } = useApp();
   const insets = useSafeAreaInsets();
   const [agendado, setAgendado] = useState(params.modo === 'agendar' || !!sv.variosDias);
   const [disp, setDisp] = useState<Disponibilidade | null>(null);
@@ -105,6 +105,15 @@ export default function PedidoTela() {
   }
 
   const dia = disp?.dias[diaIdx];
+  if (!config.servicosAtivos.includes(sv.id))
+    return (
+      <View style={[s.conteudo, { alignItems: 'center', marginTop: 40 }]}>
+        <Stack.Screen options={{ title: sv.titulo }} />
+        <Text style={{ fontSize: 40 }}>{sv.icone}</Text>
+        <Text style={s.secao}>Em breve!</Text>
+        <Text style={s.infoTexto}>“{sv.titulo}” ainda não está disponível. Por enquanto atendemos os mercados.</Text>
+      </View>
+    );
   return (
     <View style={{ flex: 1 }}>
       <Stack.Screen options={{ title: sv.titulo }} />

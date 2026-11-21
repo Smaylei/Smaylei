@@ -1,4 +1,4 @@
-// Worker do Mercado Frete: encaminha tudo para a Central (Durable Object com SQLite).
+// Worker da MOVI: encaminha tudo para a Central (Durable Object com SQLite).
 // A lógica fica em central.ts.
 import { erro, type Env } from './central';
 

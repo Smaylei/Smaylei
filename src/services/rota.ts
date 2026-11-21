@@ -2,7 +2,7 @@ import * as Location from 'expo-location';
 
 export type Ponto = { lat: number; lon: number };
 
-const USER_AGENT = 'MercadoFrete/1.0 (app de entregas de compras)';
+const USER_AGENT = 'MOVI/1.0 (app de mobilidade urbana)';
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 
 async function geocodeNominatim(endereco: string): Promise<Ponto | null> {

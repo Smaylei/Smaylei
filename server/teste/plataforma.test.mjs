@@ -290,6 +290,23 @@ test('admin: configuração reflete para clientes e motoristas; agenda .ics; sen
 
 test('serviços: locais por categoria, só buscar (cliente confirma o recebimento), encomenda, borracharia, admin cadastra locais', async () => {
   await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { aberto: true, comissaoMotoristaPct: 80 } });
+  // Lançamento: só mercados. O resto fica pronto, esperando o Admin liberar.
+  const ini = (await call('/v2/config')).d;
+  assert.deepEqual(ini.servicosAtivos, ['comigo', 'ir', 'buscar']);
+  assert.deepEqual(ini.categoriasAtivas, ['mercado']);
+  assert.ok(ini.locais.every((l) => l.categoria === 'mercado'));
+  const c0 = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Davi Melo', cpf: '935.411.347-80', endereco: 'Rua W, 1, Centro', lat: -26.4750, lon: -49.0040 } });
+  assert.equal(c0.s, 200, JSON.stringify(c0.d));
+  const cli0 = c0.d.token;
+  const negado = await call('/v2/corridas', { metodo: 'POST', token: cli0, corpo: { servico: 'encomenda', coleta: { endereco: 'Rua Roberto Ziemann, 100, Centro', lat: -26.4720, lon: -48.9960 }, descricao: 'Caixa', agendado: false } });
+  assert.equal(negado.s, 403);
+  assert.match((await call('/v2/corridas', { metodo: 'POST', token: cli0, corpo: { servico: 'buscar', coleta: { localId: 'farm-sesi' }, descricao: 'Remédio', agendado: false } })).d.erro, /apenas os mercados/);
+  assert.match((await call('/v2/corridas', { metodo: 'POST', token: cli0, corpo: { servico: 'comigo', coleta: { endereco: 'Rua Roberto Ziemann, 100, Centro', lat: -26.4720, lon: -48.9960 }, agendado: false } })).d.erro, /apenas os mercados/);
+  assert.equal((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { servicosAtivos: ['voar'] } })).s, 400);
+  await call('/v2/admin/config', {
+    metodo: 'PUT', token: ADM,
+    corpo: { servicosAtivos: ['comigo', 'ir', 'buscar', 'encomenda', 'transporte', 'borracharia'], categoriasAtivas: ['mercado', 'padaria', 'farmacia', 'gas_bebidas', 'festa', 'mecanico', 'borracharia'], outroEnderecoLoja: true },
+  });
   const cfg = (await call('/v2/config')).d;
   assert.ok(cfg.locais.some((l) => l.categoria === 'farmacia'));
   assert.ok(cfg.locais.some((l) => l.categoria === 'borracharia'));

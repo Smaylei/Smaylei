@@ -1,13 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { LOCAIS_INICIAIS, type Local } from '../data/locais';
-import { precoServico, type ServicoId } from '../data/servicos';
+import { LIBERACAO_PADRAO, precoServico, type Liberacao, type ServicoId } from '../data/servicos';
 import { TARIFAS_PADRAO } from '../data/tarifas';
 import { API, lerToken } from '../services/api';
 import { carregarEndereco, salvarEndereco, type Endereco } from '../services/cadastro';
 import { rotaEntre, rotasAteCasa, type Ponto, type RotaMercado } from '../services/grafo';
 import { URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../services/preco';
 
-type Config = { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin: number };
+type Config = Liberacao & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin: number };
 
 type Ctx = {
   carregado: boolean;
@@ -35,8 +35,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [carregado, setCarregado] = useState(false);
   const [casa, setCasa] = useState<Endereco | null>(null);
   const [temConta, setTemConta] = useState(false);
-  const [config, setConfig] = useState<Config>({ tarifas: TARIFAS_PADRAO, margem: 0, urgencia: URGENCIA_PADRAO, esperaBorrachariaMin: 20 });
-  const [locais, setLocais] = useState<Local[]>(LOCAIS_INICIAIS);
+  const [config, setConfig] = useState<Config>({ tarifas: TARIFAS_PADRAO, margem: 0, urgencia: URGENCIA_PADRAO, esperaBorrachariaMin: 20, ...LIBERACAO_PADRAO });
+  const [locais, setLocais] = useState<Local[]>(LOCAIS_INICIAIS.filter((l) => l.categoria === 'mercado'));
   const [rotas, setRotas] = useState<Ctx['rotas']>(null);
 
   // Tarifas, margem, urgência e locais vêm do servidor: qualquer mudança no App Admin vale aqui também.
@@ -46,7 +46,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .then((r) => (r.ok ? r.json() : null))
       .then((c: (Partial<Config> & { locais?: Local[] }) | null) => {
         if (c?.tarifas?.length)
-          setConfig({ tarifas: c.tarifas, margem: c.margem ?? 0, urgencia: c.urgencia ?? URGENCIA_PADRAO, esperaBorrachariaMin: c.esperaBorrachariaMin ?? 20 });
+          setConfig({
+            tarifas: c.tarifas, margem: c.margem ?? 0, urgencia: c.urgencia ?? URGENCIA_PADRAO, esperaBorrachariaMin: c.esperaBorrachariaMin ?? 20,
+            servicosAtivos: c.servicosAtivos ?? LIBERACAO_PADRAO.servicosAtivos,
+            categoriasAtivas: c.categoriasAtivas ?? LIBERACAO_PADRAO.categoriasAtivas,
+            outroEnderecoLoja: c.outroEnderecoLoja ?? LIBERACAO_PADRAO.outroEnderecoLoja,
+          });
         if (c?.locais) setLocais((antes) => (JSON.stringify(antes) === JSON.stringify(c.locais) ? antes : c.locais!));
       })
       .catch(() => {});

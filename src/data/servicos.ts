@@ -1,18 +1,32 @@
 // Serviços oferecidos e categorias de locais. Compartilhado entre o app e o servidor.
 import { estimarIdaEVolta, precoFrete, precoSugerido, type Tarifa, type Trajeto, type Urgencia } from '../services/preco';
 
-export type CategoriaId = 'mercado' | 'padaria' | 'farmacia' | 'gas_bebidas' | 'mecanico' | 'borracharia';
+// MOVI — "Sua cidade em movimento." Três linhas de serviço (Documento Conceitual):
+//   MOVI GO    → transporte de passageiros (a pessoa vai)
+//   MOVI LEVA  → compras e encomendas (só as coisas vão; o cliente não está junto)
+//   MOVI COMBO → a pessoa e as compras juntas
+export const MARCA = { nome: 'MOVI', slogan: 'Sua cidade em movimento.' };
+
+export type ModalidadeId = 'go' | 'leva' | 'combo';
+export const MODALIDADES: { id: ModalidadeId; nome: string; descricao: string }[] = [
+  { id: 'combo', nome: 'MOVI COMBO', descricao: 'Você e suas compras' },
+  { id: 'go', nome: 'MOVI GO', descricao: 'Levamos você' },
+  { id: 'leva', nome: 'MOVI LEVA', descricao: 'Buscamos e entregamos para você' },
+];
+
+export type CategoriaId = 'mercado' | 'padaria' | 'farmacia' | 'gas_bebidas' | 'festa' | 'mecanico' | 'borracharia';
 
 export const CATEGORIAS: { id: CategoriaId; nome: string; icone: string }[] = [
   { id: 'mercado', nome: 'Mercados', icone: '🛒' },
   { id: 'padaria', nome: 'Padarias', icone: '🥖' },
   { id: 'farmacia', nome: 'Farmácias', icone: '💊' },
   { id: 'gas_bebidas', nome: 'Gás e bebidas', icone: '🔥' },
+  { id: 'festa', nome: 'Doces e festa', icone: '🎉' },
   { id: 'mecanico', nome: 'Mecânicos', icone: '🔧' },
   { id: 'borracharia', nome: 'Borracharias', icone: '🛞' },
 ];
 
-export const LOJAS: CategoriaId[] = ['mercado', 'padaria', 'farmacia', 'gas_bebidas'];
+export const LOJAS: CategoriaId[] = ['mercado', 'padaria', 'farmacia', 'gas_bebidas', 'festa'];
 
 export type ServicoId = 'comigo' | 'ir' | 'buscar' | 'encomenda' | 'transporte' | 'borracharia';
 
@@ -21,6 +35,7 @@ export type Ponta = { casa?: boolean; categorias?: CategoriaId[]; livre?: boolea
 
 export type Servico = {
   id: ServicoId;
+  modalidade: ModalidadeId;
   titulo: string;
   sub: string;
   icone: string;
@@ -40,8 +55,9 @@ export type Servico = {
 export const SERVICOS: Servico[] = [
   {
     id: 'comigo',
+    modalidade: 'combo',
     titulo: 'Estou com as compras',
-    sub: 'Estou no mercado, padaria ou farmácia e quero ir para casa',
+    sub: 'Já comprei e quero ir para casa com as compras',
     icone: '🛍️',
     clienteNaColeta: true,
     coleta: { categorias: LOJAS, livre: true, rotulo: 'Onde você está?' },
@@ -49,16 +65,18 @@ export const SERVICOS: Servico[] = [
   },
   {
     id: 'ir',
-    titulo: 'Quero ir até lá',
-    sub: 'Busco você em casa e levo ao mercado, padaria ou farmácia',
+    modalidade: 'go',
+    titulo: 'Quero ir ao mercado',
+    sub: 'Buscamos você em casa e levamos até a loja',
     icone: '🚗',
     clienteNaColeta: true,
     coleta: { casa: true, livre: true, gps: true, rotulo: 'Onde buscamos você?' },
     entrega: { categorias: LOJAS, livre: true, rotulo: 'Para onde?' },
-    aviso: 'Para voltar com as compras, peça “Estou com as compras” quando terminar.',
+    aviso: 'Para voltar com as compras, peça “Estou com as compras” (MOVI COMBO) quando terminar.',
   },
   {
     id: 'buscar',
+    modalidade: 'leva',
     titulo: 'Só buscar minhas compras',
     sub: 'O motorista retira e entrega na sua casa',
     icone: '📦',
@@ -70,16 +88,18 @@ export const SERVICOS: Servico[] = [
   },
   {
     id: 'encomenda',
+    modalidade: 'leva',
     titulo: 'Buscar uma encomenda',
-    sub: 'Diga o que é e o endereço completo; trazemos até você',
+    sub: 'Doces de festa, pedidos prontos e outras retiradas: diga o que é e onde está',
     icone: '📮',
     clienteNaColeta: false,
     coleta: { livre: true, rotulo: 'Endereço completo da retirada' },
     entrega: { casa: true, rotulo: 'Entregar em' },
-    descricao: { rotulo: 'O que é a encomenda', exemplo: 'Ex.: caixa média com documentos, falar com João' },
+    descricao: { rotulo: 'O que é a encomenda', exemplo: 'Ex.: doces da festa encomendados na Dona Maria, 3 caixas' },
   },
   {
     id: 'transporte',
+    modalidade: 'go',
     titulo: 'Carro na oficina',
     sub: 'Transporte para o trabalho todos os dias e para buscar o carro',
     icone: '🔧',
@@ -90,6 +110,7 @@ export const SERVICOS: Servico[] = [
   },
   {
     id: 'borracharia',
+    modalidade: 'go',
     titulo: 'Borracharia',
     sub: 'Buscamos você e o pneu, levamos à borracharia e trazemos de volta',
     icone: '🛞',
@@ -115,3 +136,14 @@ export function precoServico(r: Trajeto, cfg: ConfigPreco, servico: ServicoId, a
   const sugerido = precoSugerido(cfg.tarifas.map((x) => estimarIdaEVolta(t, x)), cfg.margem);
   return precoFrete(sugerido, agendado, cfg.urgencia);
 }
+
+/** O que está liberado para os clientes (Admin → Serviços). No lançamento: só mercados. */
+export type Liberacao = { servicosAtivos: ServicoId[]; categoriasAtivas: CategoriaId[]; outroEnderecoLoja: boolean };
+export const LIBERACAO_PADRAO: Liberacao = { servicosAtivos: ['comigo', 'ir', 'buscar'], categoriasAtivas: ['mercado'], outroEnderecoLoja: false };
+
+const ehLoja = (p: Ponta) => !!p.categorias?.some((c) => LOJAS.includes(c));
+/** Categorias que o cliente vê nesta ponta (só as liberadas no Admin). */
+export const categoriasVisiveis = (p: Ponta, lib: Liberacao) => (p.categorias ?? []).filter((c) => lib.categoriasAtivas.includes(c));
+/** "Outro endereço": livre na casa/trabalho/oficina; numa loja, só se o Admin permitir. */
+export const livrePermitido = (p: Ponta, lib: Liberacao) => !!p.livre && (!ehLoja(p) || lib.outroEnderecoLoja);
+export const servicosLiberados = (lib: Liberacao) => SERVICOS.filter((s) => lib.servicosAtivos.includes(s.id));

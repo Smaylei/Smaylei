@@ -1,4 +1,4 @@
-// Central do Mercado Frete: um Durable Object com banco SQLite (consistência forte: um pedido por
+// Central da MOVI (antigo Mercado Frete): um Durable Object com banco SQLite (consistência forte: um pedido por
 // vez, então dois motoristas nunca aceitam a mesma corrida).
 //
 // Serviços (src/data/servicos.ts): toda corrida vai de uma COLETA a um DESTINO (casa, local cadastrado
@@ -19,7 +19,18 @@
 import { DurableObject } from 'cloudflare:workers';
 import { LOCAIS_INICIAIS } from '../../src/data/locais';
 import { MERCADOS } from '../../src/data/mercados';
-import { CATEGORIAS, servicoPorId, SERVICOS, precoServico, type ServicoId } from '../../src/data/servicos';
+import {
+  CATEGORIAS,
+  LIBERACAO_PADRAO,
+  livrePermitido,
+  MARCA,
+  precoServico,
+  servicoPorId,
+  SERVICOS,
+  type Liberacao,
+  type Ponta as PontaServico,
+  type ServicoId,
+} from '../../src/data/servicos';
 import { TARIFAS_PADRAO } from '../../src/data/tarifas';
 import {
   AGENDA_PADRAO,
@@ -46,7 +57,7 @@ export interface Env {
   APP_SCHEME: string;
 }
 
-export type Config = ConfigAgenda & {
+export type Config = ConfigAgenda & Liberacao & {
   tarifas: Tarifa[];
   margem: number;
   urgencia: Urgencia;
@@ -73,6 +84,7 @@ export const CONFIG_PADRAO: Config = {
   ofertaMin: 5,
   saqueDias: 7,
   esperaBorrachariaMin: 20,
+  ...LIBERACAO_PADRAO,
 };
 const AREA_M = 1500; // distância máxima de um endereço até as ruas do mapa (fora disso: fora da área)
 const MAX_VIAGENS = 20;
@@ -209,7 +221,9 @@ export class Central extends DurableObject<Env> {
     this.sql.exec(`INSERT INTO config (chave, valor) VALUES ('locais_v1', '1')`);
   }
   private locais(todos = false) {
-    return this.q(`SELECT id, categoria, nome, endereco, lat, lon, ativo FROM locais ${todos ? '' : 'WHERE ativo=1'} ORDER BY categoria, nome`).map((l) => ({ ...l, ativo: !!l.ativo }));
+    return this.q<{ id: string; categoria: string; nome: string; endereco: string; lat: number; lon: number; ativo: number }>(
+      `SELECT id, categoria, nome, endereco, lat, lon, ativo FROM locais ${todos ? '' : 'WHERE ativo=1'} ORDER BY categoria, nome`,
+    ).map((l) => ({ ...l, ativo: !!l.ativo }));
   }
 
   // ---------- utilidades de banco ----------
@@ -363,8 +377,13 @@ export class Central extends DurableObject<Env> {
   }
 
   /** Uma ponta da viagem: a casa do cliente, um local cadastrado ou um endereço livre (dentro da área). */
-  private ponta(b: unknown, cli: Linha, rotulo: string): Ponta | string {
+  private ponta(b: unknown, cli: Linha, rotulo: string, def?: PontaServico): Ponta | string {
     const o = (b ?? {}) as { casa?: boolean; localId?: string; nome?: string; endereco?: string; lat?: number; lon?: number };
+    const cfg = this.config();
+    if (o.localId) {
+      const cat = this.um(`SELECT categoria FROM locais WHERE id=?`, o.localId)?.categoria ?? 'mercado';
+      if (!cfg.categoriasAtivas.includes(cat as never)) return `${rotulo}: por enquanto atendemos apenas ${cfg.categoriasAtivas.includes('mercado') ? 'os mercados' : 'os locais'} da lista.`;
+    } else if (!o.casa && def && !livrePermitido(def, cfg)) return `${rotulo}: por enquanto atendemos apenas os mercados da lista.`;
     if (o.casa) return { nome: 'Casa', endereco: String(cli.endereco), lat: Number(cli.lat), lon: Number(cli.lon), localId: 'casa' };
     if (o.localId) {
       const l = this.um(`SELECT * FROM locais WHERE id=? AND ativo=1`, o.localId) ?? (MERCADOS.find((m) => m.id === o.localId) as unknown as Linha | undefined);
@@ -571,7 +590,7 @@ export class Central extends DurableObject<Env> {
         'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Frete em 15 minutos', 'TRIGGER:-PT15M', 'END:VALARM', 'END:VEVENT',
       ].join('\r\n'),
     );
-    return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Mercado Frete//PT-BR', 'X-WR-CALNAME:Mercado Frete', 'X-PUBLISHED-TTL:PT5M', ...ev, 'END:VCALENDAR'].join('\r\n');
+    return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//MOVI//PT-BR', `X-WR-CALNAME:${MARCA.nome}`, 'X-PUBLISHED-TTL:PT5M', ...ev, 'END:VCALENDAR'].join('\r\n');
   }
   private async chaveAgenda(sufixo = '') {
     const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`agenda:${this.env.ADMIN_TOKEN}:${sufixo}`));
@@ -604,7 +623,9 @@ export class Central extends DurableObject<Env> {
       return json({
         tarifas: cfg.tarifas, margem: cfg.margem, urgencia: cfg.urgencia, bloqueioMin: cfg.bloqueioMin, taxaDeslocamento: cfg.taxaDeslocamento,
         esperaPagamentoMin: cfg.esperaPagamentoMin, esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, comissaoMotoristaPct: cfg.comissaoMotoristaPct, aberto: cfg.aberto,
-        esperaBorrachariaMin: cfg.esperaBorrachariaMin, locais: this.locais(),
+        esperaBorrachariaMin: cfg.esperaBorrachariaMin,
+        servicosAtivos: cfg.servicosAtivos, categoriasAtivas: cfg.categoriasAtivas, outroEnderecoLoja: cfg.outroEnderecoLoja,
+        locais: this.locais().filter((l) => cfg.categoriasAtivas.includes(l.categoria as never)),
       });
     if (metodo === 'GET' && p === '/v2/disponibilidade') return json(this.disponibilidade());
 
@@ -717,9 +738,10 @@ export class Central extends DurableObject<Env> {
       const sv = servicoPorId(b.servico ?? 'comigo');
       if (b.servico && !SERVICOS.some((x) => x.id === b.servico)) return erro('Serviço inválido.');
       // Versões antigas do app mandam só o mercado: coleta no mercado, entrega em casa.
-      const coleta = this.ponta(b.coleta ?? (b.mercadoId ? { localId: b.mercadoId } : undefined), cli, 'Coleta');
+      if (!cfg.servicosAtivos.includes(sv.id)) return erro(`“${sv.titulo}” ainda não está disponível. Em breve!`, 403);
+      const coleta = this.ponta(b.coleta ?? (b.mercadoId ? { localId: b.mercadoId } : undefined), cli, 'Coleta', sv.coleta);
       if (typeof coleta === 'string') return erro(coleta);
-      const entrega = this.ponta(b.entrega ?? { casa: true }, cli, 'Destino');
+      const entrega = this.ponta(b.entrega ?? { casa: true }, cli, 'Destino', sv.entrega);
       if (typeof entrega === 'string') return erro(entrega);
       if (distanciaRetaKm(coleta.lat, coleta.lon, entrega.lat, entrega.lon) < 0.05) return erro('A coleta e o destino são o mesmo lugar.');
       const descricao = String(b.descricao ?? '').trim().slice(0, 300);
@@ -1184,6 +1206,9 @@ export class Central extends DurableObject<Env> {
       const cfg = { ...this.config(), ...b };
       if (!(cfg.bloqueioMin >= 10 && cfg.bloqueioMin <= 240 && cfg.passoMin >= 5 && cfg.comissaoMotoristaPct >= 0 && cfg.comissaoMotoristaPct <= 100 && cfg.raioChegadaM >= 50))
         return erro('Valores inválidos.');
+      if (!Array.isArray(cfg.servicosAtivos) || cfg.servicosAtivos.some((x) => !SERVICOS.some((s) => s.id === x))) return erro('Serviços inválidos.');
+      if (!Array.isArray(cfg.categoriasAtivas) || cfg.categoriasAtivas.some((x) => !CATEGORIAS.some((c) => c.id === x))) return erro('Categorias inválidas.');
+      cfg.outroEnderecoLoja = !!cfg.outroEnderecoLoja;
       this.salvarConfig(cfg);
       return json(cfg);
     }
@@ -1228,7 +1253,7 @@ export function paginaRetorno(scheme: string, pago: boolean, id: string, gorjeta
 <title>${titulo}</title><style>body{font-family:system-ui,sans-serif;background:#F6F7F5;color:#1E2925;display:grid;place-items:center;min-height:100vh;margin:0;padding:24px;text-align:center}
 a{display:inline-block;margin-top:16px;background:#2E8A5E;color:#fff;padding:14px 24px;border-radius:14px;text-decoration:none;font-weight:700}</style></head>
 <body><div><h1>${titulo}</h1><p>${gorjeta ? 'O valor vai inteiro para o motorista.' : pago ? 'O valor fica retido até você confirmar que o motorista chegou.' : 'Assim que a InfinitePay confirmar, o app mostra o pagamento.'}</p>
-<a href="${link}">Voltar ao Mercado Frete</a></div></body></html>`,
+<a href="${link}">Voltar ao ${MARCA.nome}</a></div></body></html>`,
     { headers: { 'content-type': 'text/html; charset=utf-8' } },
   );
 }

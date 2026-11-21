@@ -3,7 +3,7 @@ import * as Location from 'expo-location';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Local } from '../data/locais';
-import { CATEGORIAS, type CategoriaId, type Ponta } from '../data/servicos';
+import { CATEGORIAS, categoriasVisiveis, livrePermitido, type CategoriaId, type Ponta } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
 import { acharRua } from '../services/grafo';
 import { formatarReais } from '../services/preco';
@@ -39,9 +39,11 @@ type Props = {
 };
 
 export default function SeletorPonta({ ponta, valor, onChange, preco }: Props) {
-  const { casa, locais } = useApp();
-  const categorias = ponta.categorias ?? [];
-  const [cat, setCat] = useState<CategoriaId | null>(categorias[0] ?? null);
+  const { casa, locais, config } = useApp();
+  const categorias = useMemo(() => categoriasVisiveis(ponta, config), [ponta, config]);
+  const livreOk = livrePermitido(ponta, config);
+  const [catEscolhida, setCat] = useState<CategoriaId | null>(null);
+  const cat = useMemo(() => (catEscolhida && categorias.includes(catEscolhida) ? catEscolhida : (categorias[0] ?? null)), [catEscolhida, categorias]);
   const [livre, setLivre] = useState(false);
   const [lugares, setLugares] = useState<Lugar[]>([]);
   const [gpsOcupado, setGpsOcupado] = useState(false);
@@ -98,7 +100,7 @@ export default function SeletorPonta({ ponta, valor, onChange, preco }: Props) {
               })}
             </View>
           )}
-          {lista.length === 0 && <Text style={s.vazio}>Nenhum local cadastrado nesta categoria ainda. Use “Outro endereço”.</Text>}
+          {lista.length === 0 && <Text style={s.vazio}>Nenhum local cadastrado nesta categoria ainda.</Text>}
           {lista.map((l) => (
             <Opcao
               key={l.id}
@@ -123,17 +125,17 @@ export default function SeletorPonta({ ponta, valor, onChange, preco }: Props) {
         />
       )}
 
-      {ponta.livre &&
+      {livreOk &&
         lugares.map((l) => (
           <Opcao key={l.nome} icone="⭐" titulo={l.nome} sub={l.endereco} ativo={valor?.chave === escolhaLivre(l).chave} onPress={() => onChange(escolhaLivre(l))} />
         ))}
 
-      {ponta.livre && !livre && (
+      {livreOk && !livre && (
         <Pressable onPress={() => setLivre(true)} style={s.outro}>
           <Text style={s.outroTexto}>✏️ Outro endereço</Text>
         </Pressable>
       )}
-      {ponta.livre && livre && (
+      {livreOk && livre && (
         <EnderecoLivre
           onCancelar={() => setLivre(false)}
           onUsar={async (l, salvar) => {

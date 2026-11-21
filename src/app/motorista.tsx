@@ -119,7 +119,7 @@ export default function Motorista() {
     <ScrollView contentContainerStyle={s.conteudo} refreshControl={<RefreshControl refreshing={false} onRefresh={atualizar} />}>
       <Stack.Screen
         options={{
-          title: 'Frete Motorista',
+          title: 'MOVI Motorista',
           headerRight: () => (
             <Pressable onPress={() => router.push('/agenda-motorista')} hitSlop={10}>
               <Text style={{ color: cores.primaria, fontWeight: '700', fontSize: 15 }}>Agenda</Text>

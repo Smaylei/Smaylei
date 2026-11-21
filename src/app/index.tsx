@@ -2,14 +2,14 @@ import { Redirect, router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { cores, raio, sombra } from '../components/tema';
-import { SERVICOS } from '../data/servicos';
+import { MARCA, MODALIDADES, servicosLiberados } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
 import { api, ROTULO_STATUS, type CorridaCliente } from '../services/api';
 import { formatarReais } from '../services/preco';
 import { VARIANTE } from '../variante';
 
 export default function Inicio() {
-  const { carregado, casa, temConta } = useApp();
+  const { carregado, casa, temConta, config } = useApp();
   const [ativas, setAtivas] = useState<CorridaCliente[]>([]);
 
   useFocusEffect(
@@ -34,6 +34,9 @@ export default function Inicio() {
 
   return (
     <ScrollView contentContainerStyle={s.conteudo}>
+      <Text style={s.marca}>
+        {MARCA.nome} <Text style={s.slogan}>· {MARCA.slogan}</Text>
+      </Text>
       <Text style={s.ola}>Olá{casa.nome ? `, ${casa.nome.split(' ')[0]}` : ''}!</Text>
       <Text style={s.sub}>Do que você precisa hoje?</Text>
 
@@ -68,24 +71,38 @@ export default function Inicio() {
           );
         })}
 
-      <View style={s.grade}>
-        {SERVICOS.map((sv, i) => (
-          <Pressable
-            key={sv.id}
-            style={[s.servico, i === 0 && s.servicoPrincipal]}
-            onPress={() => router.push({ pathname: '/pedido', params: { servico: sv.id } })}
-            accessibilityRole="button"
-          >
-            <View style={[s.icone, i === 0 && { backgroundColor: 'rgba(255,255,255,0.18)' }]}>
-              <Text style={s.iconeTexto}>{sv.icone}</Text>
-            </View>
-            <Text style={[s.servicoTitulo, i === 0 && { color: '#fff' }]}>{sv.titulo}</Text>
-            <Text style={[s.servicoSub, i === 0 && { color: cores.sobrePrimaria }]} numberOfLines={3}>
-              {sv.sub}
+      {MODALIDADES.map((m) => {
+        const lista = servicosLiberados(config).filter((sv) => sv.modalidade === m.id);
+        if (!lista.length) return null;
+        const destaque = m.id === 'combo';
+        return (
+          <View key={m.id} style={{ gap: 8 }}>
+            <Text style={s.modalidade}>
+              {m.nome} <Text style={s.modalidadeDesc}>· {m.descricao}</Text>
             </Text>
-          </Pressable>
-        ))}
-      </View>
+            <View style={s.grade}>
+              {lista.map((sv) => (
+                <Pressable
+                  key={sv.id}
+                  style={[s.servico, destaque && s.servicoPrincipal, lista.length === 1 && { width: '100%' }]}
+                  onPress={() => router.push({ pathname: '/pedido', params: { servico: sv.id } })}
+                  accessibilityRole="button"
+                >
+                  <View style={[s.icone, destaque && { backgroundColor: 'rgba(255,255,255,0.18)' }]}>
+                    <Text style={s.iconeTexto}>{sv.icone}</Text>
+                  </View>
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={[s.servicoTitulo, destaque && { color: '#fff' }]}>{sv.titulo}</Text>
+                    <Text style={[s.servicoSub, destaque && { color: cores.sobrePrimaria }]} numberOfLines={3}>
+                      {sv.sub}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        );
+      })}
 
       <View style={s.endereco}>
         <View style={{ flex: 1 }}>
@@ -97,8 +114,8 @@ export default function Inicio() {
         </Pressable>
       </View>
       <Text style={s.comoFunciona}>
-        Mercados, padarias, farmácias, gás e bebidas, oficinas e borracharias de Guaramirim. Você paga pelo app (Pix ou cartão à vista); o valor fica retido até o
-        motorista chegar e você confirmar. Acompanhe o carro em tempo real.
+        Você paga pelo app (Pix ou cartão à vista); o valor fica retido até o motorista chegar e você confirmar. Acompanhe o carro em tempo real. Em breve: padarias,
+        farmácias, gás e bebidas, doces e festas, oficinas e borracharias.
       </Text>
     </ScrollView>
   );
@@ -108,13 +125,17 @@ const s = StyleSheet.create({
   conteudo: { padding: 20, gap: 14 },
   ola: { fontSize: 26, fontWeight: '700', color: cores.texto, marginTop: 8 },
   sub: { fontSize: 15, color: cores.suave, marginBottom: 4 },
-  grade: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  servico: { width: '47%', flexGrow: 1, backgroundColor: cores.cartao, borderRadius: raio + 2, padding: 16, gap: 6, ...sombra },
+  marca: { fontSize: 15, fontWeight: '800', color: cores.primaria, letterSpacing: 2, marginTop: 4 },
+  slogan: { fontSize: 13, fontWeight: '500', color: cores.suave, letterSpacing: 0 },
+  modalidade: { fontSize: 13, fontWeight: '800', color: cores.primaria, letterSpacing: 1, marginTop: 6 },
+  modalidadeDesc: { fontWeight: '500', color: cores.suave, letterSpacing: 0 },
+  grade: { gap: 10 },
+  servico: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: cores.cartao, borderRadius: raio + 2, padding: 16, ...sombra },
   servicoPrincipal: { backgroundColor: cores.primaria },
-  icone: { width: 48, height: 48, borderRadius: 24, backgroundColor: cores.primariaClara, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  icone: { width: 52, height: 52, borderRadius: 26, backgroundColor: cores.primariaClara, alignItems: 'center', justifyContent: 'center' },
   iconeTexto: { fontSize: 24 },
-  servicoTitulo: { fontSize: 16, fontWeight: '700', color: cores.texto },
-  servicoSub: { fontSize: 12, color: cores.suave, lineHeight: 16 },
+  servicoTitulo: { fontSize: 18, fontWeight: '700', color: cores.texto },
+  servicoSub: { fontSize: 13, color: cores.suave, lineHeight: 18 },
   status: { borderRadius: raio, padding: 16, gap: 2 },
   statusOk: { backgroundColor: cores.primariaClara },
   statusAtencao: { backgroundColor: cores.alertaFundo },

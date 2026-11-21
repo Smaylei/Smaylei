@@ -1,3 +1,4 @@
+import type { CategoriaId, ServicoId } from '../data/servicos';
 // Chamadas do App Admin (rotas /v2/admin no servidor). A senha é o ADMIN_TOKEN da Cloudflare.
 import { api, apagarToken, guardarToken, type Disponibilidade, type Status } from './api';
 import type { Tarifa, Urgencia } from './preco';
@@ -19,6 +20,10 @@ export type ConfigServidor = {
   raioChegadaM: number;
   ofertaMin: number;
   saqueDias: number;
+  esperaBorrachariaMin: number;
+  servicosAtivos: ServicoId[];
+  categoriasAtivas: CategoriaId[];
+  outroEnderecoLoja: boolean;
 };
 
 export type Resumo = {

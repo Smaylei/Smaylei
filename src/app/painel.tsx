@@ -53,7 +53,7 @@ export default function Painel() {
       const novos = av.avisos.filter((a) => a.id > visto);
       if (visto > 0)
         for (const a of novos.slice(0, 3).reverse())
-          Notifications.scheduleNotificationAsync({ content: { title: 'Frete Admin', body: a.texto.split('\n')[0], sound: true }, trigger: null }).catch(() => {});
+          Notifications.scheduleNotificationAsync({ content: { title: 'MOVI Admin', body: a.texto.split('\n')[0], sound: true }, trigger: null }).catch(() => {});
       if (av.avisos[0]) AsyncStorage.setItem('avisos:visto', String(av.avisos[0].id)).catch(() => {});
       setLista(c);
       setAgora(Date.now());
@@ -99,7 +99,7 @@ export default function Painel() {
   if (logado === false)
     return (
       <View style={s.login}>
-        <Stack.Screen options={{ title: 'Frete Admin' }} />
+        <Stack.Screen options={{ title: 'MOVI Admin' }} />
         <Text style={s.titulo}>Entrar</Text>
         <Text style={s.sub}>Use a senha ADMIN_TOKEN cadastrada na Cloudflare.</Text>
         <TextInput style={s.input} value={senha} onChangeText={setSenha} secureTextEntry placeholder="Senha" autoCapitalize="none" />
@@ -115,7 +115,7 @@ export default function Painel() {
     <ScrollView contentContainerStyle={s.conteudo} refreshControl={<RefreshControl refreshing={false} onRefresh={atualizar} />}>
       <Stack.Screen
         options={{
-          title: 'Frete Admin',
+          title: 'MOVI Admin',
           headerRight: () => (
             <View style={{ flexDirection: 'row', gap: 18 }}>
               <Pressable onPress={() => router.push('/avisos-admin')} hitSlop={10}>
@@ -154,9 +154,14 @@ export default function Painel() {
           <Text style={s.atalhoTexto}>👤 Clientes</Text>
         </Pressable>
       </View>
-      <Pressable style={[s.atalho, { flex: 0 }]} onPress={() => router.push('/locais-admin')}>
-        <Text style={s.atalhoTexto}>🏪 Locais: mercados, padarias, farmácias, gás, oficinas, borracharias</Text>
-      </Pressable>
+      <View style={s.atalhos}>
+        <Pressable style={s.atalho} onPress={() => router.push('/servicos-admin')}>
+          <Text style={s.atalhoTexto}>🚦 Serviços liberados{res.config?.servicosAtivos ? ` · ${res.config.servicosAtivos.length} de 6` : ''}</Text>
+        </Pressable>
+        <Pressable style={s.atalho} onPress={() => router.push('/locais-admin')}>
+          <Text style={s.atalhoTexto}>🏪 Locais</Text>
+        </Pressable>
+      </View>
       <Pressable style={[s.atalho, { flex: 0 }, res.avaliacoesNaoLidas > 0 && s.atalhoAlerta]} onPress={() => router.push('/avaliacoes-admin')}>
         <Text style={s.atalhoTexto}>
           ⭐ Avaliações e sugestões{res.notaMedia ? ` · média ${res.notaMedia.toFixed(1).replace('.', ',')}` : ''}

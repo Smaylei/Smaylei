@@ -1,9 +1,10 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
 // Um projeto, três apps (APP_VARIANT):
-//   (padrão)   → "Mercado Frete"      app do cliente
-//   motorista  → "Frete Motorista"    app do motorista parceiro
-//   admin      → "Frete Admin"        app de gestão
+//   (padrão)   → "MOVI"             app do cliente
+//   motorista  → "MOVI Motorista"   app do motorista parceiro
+//   admin      → "MOVI Admin"       app de gestão
+// (Os identificadores br.com.mercadofrete.* continuam os mesmos: o app atualiza por cima, sem perder o cadastro.)
 type Variante = 'cliente' | 'motorista' | 'admin';
 
 const CAMERA = 'A câmera é usada para a sua foto de identificação.';
@@ -26,7 +27,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   if (v === 'motorista')
     return {
       ...base,
-      name: 'Frete Motorista',
+      name: 'MOVI Motorista',
       scheme: 'mercadofretemotorista',
       icon: './assets/motorista-icon.png',
       ios: {
@@ -60,7 +61,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 
   return {
     ...base,
-    name: 'Frete Admin',
+    name: 'MOVI Admin',
     scheme: 'mercadofreteadmin',
     icon: './assets/admin-icon.png',
     ios: { ...base.ios, bundleIdentifier: 'br.com.mercadofrete.admin' },

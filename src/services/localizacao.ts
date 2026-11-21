@@ -17,7 +17,7 @@ export async function enviarPosicao(lat: number, lon: number) {
   const r = await api<{ ofertas: number }>('motorista', '/v2/eu/local', { method: 'POST', corpo: { lat, lon } });
   if (r.ofertas > ultimasOfertas) {
     await Notifications.scheduleNotificationAsync({
-      content: { title: '🛒 Nova corrida disponível', body: 'Abra o Frete Motorista para aceitar.', sound: true },
+      content: { title: '🛒 Nova corrida disponível', body: 'Abra o MOVI Motorista para aceitar.', sound: true },
       trigger: null,
     }).catch(() => {});
   }
@@ -50,7 +50,7 @@ export async function iniciarRastreio(): Promise<{ segundoPlano: boolean }> {
       pausesUpdatesAutomatically: false,
       showsBackgroundLocationIndicator: true,
       foregroundService: {
-        notificationTitle: 'Frete Motorista: você está online',
+        notificationTitle: 'MOVI Motorista: você está online',
         notificationBody: 'Recebendo corridas e compartilhando sua posição com o cliente.',
         notificationColor: '#3D6FD1',
       },

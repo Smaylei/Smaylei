@@ -49,7 +49,7 @@ export default function MotoristasAdmin() {
 
   return (
     <ScrollView contentContainerStyle={s.conteudo} refreshControl={<RefreshControl refreshing={false} onRefresh={carregar} />}>
-      {lista.length === 0 && <Text style={s.vazio}>Nenhum motorista cadastrado. Peça para baixarem o app Frete Motorista.</Text>}
+      {lista.length === 0 && <Text style={s.vazio}>Nenhum motorista cadastrado. Peça para baixarem o app MOVI Motorista.</Text>}
       {lista.map((m) => (
         <View key={m.id} style={[s.cartao, m.status === 'pendente' && { borderColor: cores.alerta, borderWidth: 1.5 }]}>
           <Pressable onPress={() => abrir(m)}>

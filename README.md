@@ -1,4 +1,21 @@
-# 🛒 Mercado Frete
+# MOVI — Sua cidade em movimento.
+
+Plataforma local sob demanda para movimentar pessoas e transportar o que elas precisam (antigo "Mercado Frete").
+Três apps no mesmo projeto: **MOVI** (cliente), **MOVI Motorista** (parceiro) e **MOVI Admin**.
+
+### Linhas de serviço
+
+| Linha | Serviços |
+|---|---|
+| **MOVI COMBO** · você e suas compras | Estou com as compras |
+| **MOVI GO** · levamos você | Quero ir ao mercado · Carro na oficina (vários dias, ida e volta) · Borracharia (leva e traz) |
+| **MOVI LEVA** · buscamos e entregamos | Só buscar minhas compras · Buscar uma encomenda (doces de festa, pedidos prontos…) |
+
+**Lançamento: só mercados.** Os demais serviços e as categorias (padarias, farmácias, gás e bebidas, doces
+e festa, mecânicos, borracharias) já estão prontos e ficam desligados até o Admin liberar em
+*Serviços liberados*. O servidor recusa pedidos de serviços/categorias desligados.
+
+---
 
 App Android e iOS (Expo / React Native) que calcula o valor do frete de compras de
 supermercado em **Guaramirim/SC**, com base no **km rodado** e nas tarifas de **Uber** e **99**.
