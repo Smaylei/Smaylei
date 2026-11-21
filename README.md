@@ -163,3 +163,23 @@ Pix ou cartão à vista. Com a `INFINITEPAY_API_KEY` cadastrada como secret na C
 gera os links com `payment_methods_enabled: ['pix','credit_card']` e `assured_installments: 0`. A
 InfinitePay não permite desligar o parcelamento no checkout; com essa opção, se o cliente escolher
 parcelar, os juros ficam por conta dele e você recebe o valor cheio.
+
+## Serviços (app do cliente)
+
+| Serviço | Coleta → destino | Quem confirma (libera o pagamento) |
+|---|---|---|
+| 🛍️ Estou com as compras | mercado/padaria/farmácia/gás → casa | cliente, quando o motorista chega à coleta |
+| 🚗 Quero ir até lá | casa (ou GPS) → loja | cliente, quando o motorista chega |
+| 📦 Só buscar minhas compras | loja → casa (cliente informa o que retirar) | cliente, ao **receber** em casa |
+| 📮 Buscar uma encomenda | endereço completo → casa (o que é) | cliente, ao **receber** |
+| 🔧 Carro na oficina | casa ⇄ trabalho / mecânico, **vários dias com ida e volta num pagamento só** | cliente, a cada viagem |
+| 🛞 Borracharia | onde está o carro → borracharia → volta (leva e traz; não ajuda na troca) | cliente, quando o motorista chega |
+
+- Preço de todos: percurso coleta → destino → coleta (o motorista volta), com as tarifas Uber/99, margem
+  e urgência do Admin. Borracharia soma a espera (`esperaBorrachariaMin`, padrão 20 min).
+- **Locais** (mercados, padarias, farmácias, gás e bebidas, mecânicos, borracharias): App Admin → Locais.
+  A lista inicial veio do OpenStreetMap; confira. O cliente também pode digitar outro endereço e marcar no
+  mapa (fora de Guaramirim é recusado).
+- Só buscar / encomenda: o motorista toca "Cheguei" (GPS) na coleta, "Retirei", "Cheguei no destino"
+  (GPS) e o cliente confirma o recebimento. Se o cliente não confirmar em 10 min, o motorista conclui e o
+  Admin recebe um aviso.
