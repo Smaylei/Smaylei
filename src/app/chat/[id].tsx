@@ -2,7 +2,7 @@ import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { cores } from '../../components/tema';
+import { cores, sombra } from '../../components/tema';
 import { api, type Mensagem } from '../../services/api';
 import { VARIANTE } from '../../variante';
 
@@ -74,7 +74,7 @@ export default function Chat() {
             <View style={[s.balao, meu ? s.meu : item.autor === 'suporte' ? s.suporte : s.outro]}>
               {!meu && <Text style={s.autor}>{NOME[item.autor]}</Text>}
               <Text style={[s.texto, meu && { color: '#fff' }]}>{item.texto}</Text>
-              <Text style={[s.hora, meu && { color: '#D7F0E1' }]}>
+              <Text style={[s.hora, meu && { color: cores.sobrePrimaria }]}>
                 {new Date(item.criadoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
               </Text>
             </View>
@@ -96,9 +96,9 @@ const s = StyleSheet.create({
   vazio: { textAlign: 'center', color: cores.suave, marginTop: 30 },
   balao: { maxWidth: '80%', borderRadius: 14, paddingVertical: 8, paddingHorizontal: 12 },
   meu: { alignSelf: 'flex-end', backgroundColor: cores.primaria },
-  outro: { alignSelf: 'flex-start', backgroundColor: cores.cartao, borderWidth: 1, borderColor: cores.borda },
-  suporte: { alignSelf: 'flex-start', backgroundColor: cores.alertaFundo, borderWidth: 1, borderColor: cores.alerta },
-  autor: { fontSize: 11, fontWeight: '800', color: cores.suave, marginBottom: 2 },
+  outro: { alignSelf: 'flex-start', backgroundColor: cores.cartao, ...sombra },
+  suporte: { alignSelf: 'flex-start', backgroundColor: cores.alertaFundo },
+  autor: { fontSize: 11, fontWeight: '700', color: cores.suave, marginBottom: 2 },
   texto: { fontSize: 15, color: cores.texto },
   hora: { fontSize: 10, color: cores.suave, marginTop: 2, alignSelf: 'flex-end' },
   erro: { color: cores.erro, fontSize: 12, paddingHorizontal: 12 },

@@ -123,7 +123,12 @@ CREATE TABLE IF NOT EXISTS avisos (
   id INTEGER PRIMARY KEY AUTOINCREMENT, texto TEXT NOT NULL, corrida_id TEXT, criado_em TEXT NOT NULL, lido INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS saques (
   id TEXT PRIMARY KEY, motorista_id TEXT NOT NULL, valor REAL NOT NULL, chave_pix TEXT NOT NULL, status TEXT NOT NULL,
-  criado_em TEXT NOT NULL, pago_em TEXT, motivo TEXT)
+  criado_em TEXT NOT NULL, pago_em TEXT, motivo TEXT);
+CREATE TABLE IF NOT EXISTS avaliacoes (
+  corrida_id TEXT PRIMARY KEY, cliente_id TEXT NOT NULL, motorista_id TEXT, nota INTEGER NOT NULL, sugestao TEXT, criado_em TEXT NOT NULL, lida INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS gorjetas (
+  id TEXT PRIMARY KEY, corrida_id TEXT NOT NULL, cliente_id TEXT NOT NULL, motorista_id TEXT NOT NULL, valor REAL NOT NULL, status TEXT NOT NULL,
+  checkout_url TEXT, slug TEXT, transaction_nsu TEXT, metodo TEXT, receipt_url TEXT, criado_em TEXT NOT NULL, pago_em TEXT)
 `;
 // Colunas acrescentadas depois da primeira versão (o banco em produção já existe).
 const COLUNAS_NOVAS = [`ALTER TABLE corridas ADD COLUMN pagamento_ate TEXT`, `ALTER TABLE corridas ADD COLUMN liberado_em TEXT`, `ALTER TABLE corridas ADD COLUMN reembolso REAL NOT NULL DEFAULT 0`, `ALTER TABLE corridas ADD COLUMN reembolsado_em TEXT`];
@@ -213,9 +218,14 @@ export class Central extends DurableObject<Env> {
   private ganho(valor: number) {
     return r2((valor * this.config().comissaoMotoristaPct) / 100);
   }
-  private creditar(motoristaId: unknown, corridaId: unknown, tipo: 'corrida' | 'taxa', valor: number) {
+  private creditar(motoristaId: unknown, corridaId: unknown, tipo: 'corrida' | 'taxa' | 'gorjeta', valor: number) {
     if (!motoristaId || valor <= 0) return;
     this.sql.exec(`INSERT INTO creditos (id, motorista_id, corrida_id, tipo, valor, criado_em) VALUES (?,?,?,?,?,?)`, novoId('cre'), motoristaId, corridaId, tipo, r2(valor), iso(Date.now()));
+  }
+  private notaMotorista(motoristaId: unknown) {
+    const a = this.um(`SELECT AVG(nota) AS media, COUNT(*) AS n FROM avaliacoes WHERE motorista_id=?`, motoristaId);
+    const g = this.um(`SELECT COALESCE(SUM(valor),0) AS v FROM gorjetas WHERE motorista_id=? AND status='paga'`, motoristaId);
+    return { notaMedia: a?.n ? Math.round(Number(a.media) * 10) / 10 : null, avaliacoes: Number(a?.n ?? 0), gorjetasTotal: r2(Number(g?.v ?? 0)) };
   }
   saldo(motoristaId: unknown) {
     const creditos = Number(this.um(`SELECT COALESCE(SUM(valor),0) AS v FROM creditos WHERE motorista_id=?`, motoristaId)?.v ?? 0);
@@ -338,6 +348,8 @@ export class Central extends DurableObject<Env> {
       esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, taxaDeslocamento: cfg.taxaDeslocamento,
       motorista: comMotorista ? this.motoristaPublico(c.motorista_id) : null,
       mensagens: Number(this.um(`SELECT COUNT(*) AS n FROM mensagens WHERE corrida_id=?`, c.id)?.n ?? 0),
+      avaliacao: this.um(`SELECT nota FROM avaliacoes WHERE corrida_id=?`, c.id)?.nota ?? null,
+      gorjeta: this.um(`SELECT valor FROM gorjetas WHERE corrida_id=? AND status='paga'`, c.id)?.valor ?? null,
     };
   }
   private corridaParaMotorista(c: Linha) {
@@ -349,6 +361,7 @@ export class Central extends DurableObject<Env> {
       mercado: m ? { id: m.id, nome: m.nome, endereco: m.endereco.split(', Guaramirim')[0], lat: m.lat, lon: m.lon } : null,
       cliente: cli ? { nome: String(cli.nome).split(' ')[0], telefone: null, endereco: cli.endereco, lat: cli.lat, lon: cli.lon } : null,
       km: c.km, minutos: c.minutos, valor: c.valor, ganho: c.ganho_motorista ?? this.ganho(Number(c.valor)),
+      gorjeta: this.um(`SELECT valor FROM gorjetas WHERE corrida_id=? AND status='paga'`, c.id)?.valor ?? null,
       chegouEm: c.chegou_em, liberadoEm: c.liberado_em, esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, raioChegadaM: cfg.raioChegadaM, taxaDeslocamento: cfg.taxaDeslocamento,
     };
   }
@@ -356,36 +369,77 @@ export class Central extends DurableObject<Env> {
   // ---------- InfinitePay ----------
   private async criarLink(c: Linha, cli: Linha, origem: string) {
     const cfg = this.config();
-    const comChave = !!this.env.INFINITEPAY_API_KEY;
-    const resp = await fetch(`${API_IP}/links`, {
+    return this.linkInfinitePay({
+      orderNsu: String(c.id), valor: Number(c.valor), descricao: `Frete ${c.mercado_nome} - ${c.agendado ? c.janela : 'agora'}`,
+      cli, origem, validoMin: cfg.esperaPagamentoMin + 5,
+    });
+  }
+
+  /**
+   * Gera o link do Checkout Integrado. Com a API Key: pagamento único, só Pix e cartão, e
+   * eventual parcelamento com juros por conta de quem paga (a InfinitePay não permite
+   * desligar o parcelamento; o app orienta "Pix ou cartão à vista").
+   */
+  private async linkInfinitePay(o: { orderNsu: string; valor: number; descricao: string; cli: Linha; origem: string; validoMin: number }) {
+    const chave = this.env.INFINITEPAY_API_KEY;
+    const corpo = {
+      handle: this.env.INFINITEPAY_HANDLE,
+      items: [{ quantity: 1, price: Math.round(o.valor * 100), description: o.descricao }],
+      order_nsu: o.orderNsu,
+      redirect_url: `${o.origem}/retorno`,
+      webhook_url: `${o.origem}/webhook`,
+      customer: { name: o.cli.nome, phone_number: o.cli.telefone ? `+55${soDigitos(o.cli.telefone).replace(/^55/, '')}` : undefined },
+    };
+    const basico = { single_payment: true, valid_until: iso(Date.now() + o.validoMin * MIN) };
+    const tentativas = chave
+      ? [{ ...basico, payment_methods_enabled: ['pix', 'credit_card'], assured_installments: 0 }, basico]
+      : [undefined];
+    let msg = 'Não foi possível gerar o pagamento.';
+    for (const options of tentativas) {
+      const resp = await fetch(`${API_IP}/links`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(chave ? { 'X-Api-Key': chave } : {}) },
+        body: JSON.stringify({ ...corpo, options }),
+      }).catch(() => null);
+      const d = ((await resp?.json().catch(() => ({}))) ?? {}) as { url?: string; message?: string };
+      if (resp?.ok && d.url) return d.url;
+      msg = d.message ?? msg;
+    }
+    throw new Error(msg);
+  }
+
+  private async checarPagamento(orderNsu: string, slug: string, tx: string) {
+    const resp = await fetch(`${API_IP}/payment_check`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...(comChave ? { 'X-Api-Key': this.env.INFINITEPAY_API_KEY! } : {}) },
-      body: JSON.stringify({
-        handle: this.env.INFINITEPAY_HANDLE,
-        items: [{ quantity: 1, price: Math.round(Number(c.valor) * 100), description: `Frete ${c.mercado_nome} - ${c.agendado ? c.janela : 'agora'}` }],
-        order_nsu: c.id,
-        redirect_url: `${origem}/retorno`,
-        webhook_url: `${origem}/webhook`,
-        customer: { name: cli.nome, phone_number: cli.telefone ? `+55${soDigitos(cli.telefone).replace(/^55/, '')}` : undefined },
-        options: comChave ? { single_payment: true, valid_until: iso(Date.now() + (cfg.esperaPagamentoMin + 5) * MIN) } : undefined,
-      }),
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ handle: this.env.INFINITEPAY_HANDLE, order_nsu: orderNsu, transaction_nsu: tx, slug }),
     }).catch(() => null);
-    const d = ((await resp?.json().catch(() => ({}))) ?? {}) as { url?: string; message?: string };
-    if (!resp?.ok || !d.url) throw new Error(d.message ?? 'Não foi possível gerar o pagamento.');
-    return d.url;
+    const d = ((await resp?.json().catch(() => ({}))) ?? {}) as { success?: boolean; paid?: boolean; capture_method?: string };
+    return { pago: !!(d.success && d.paid), metodo: d.capture_method ?? null };
+  }
+
+  /** Gorjeta: 100% para o motorista, entra no saldo assim que a InfinitePay confirma. */
+  private async confirmarGorjeta(id: string, slug: string, tx: string, receiptUrl?: string | null) {
+    const g = this.um(`SELECT * FROM gorjetas WHERE id=?`, id);
+    if (!g || g.status === 'paga') return g ?? null;
+    const r = await this.checarPagamento(id, slug, tx);
+    if (!r.pago) return g;
+    const atual = this.um(`SELECT * FROM gorjetas WHERE id=?`, id)!;
+    if (atual.status === 'paga') return atual;
+    this.sql.exec(`UPDATE gorjetas SET status='paga', pago_em=?, metodo=?, slug=?, transaction_nsu=?, receipt_url=? WHERE id=?`, iso(Date.now()), r.metodo, slug, tx, receiptUrl ?? null, id);
+    this.creditar(atual.motorista_id, atual.corrida_id, 'gorjeta', Number(atual.valor));
+    const mot = this.um(`SELECT nome FROM motoristas WHERE id=?`, atual.motorista_id);
+    this.avisar(`💚 GORJETA de ${brl(Number(atual.valor))} para ${mot?.nome ?? 'o motorista'} (${r.metodo === 'pix' ? 'Pix' : 'cartão'}) — já está no saldo dele`, atual.corrida_id);
+    return this.um(`SELECT * FROM gorjetas WHERE id=?`, id)!;
   }
 
   private async confirmarPagamento(id: string, slug: string, tx: string, receiptUrl?: string | null) {
     const c = this.corrida(id);
     if (!c) return null;
     if (c.pago_em) return c;
-    const resp = await fetch(`${API_IP}/payment_check`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ handle: this.env.INFINITEPAY_HANDLE, order_nsu: id, transaction_nsu: tx, slug }),
-    }).catch(() => null);
-    const d = ((await resp?.json().catch(() => ({}))) ?? {}) as { success?: boolean; paid?: boolean; capture_method?: string };
-    if (!(d.success && d.paid)) return c;
+    const r = await this.checarPagamento(id, slug, tx);
+    if (!r.pago) return c;
+    const d = { capture_method: r.metodo };
     const atual = this.corrida(id)!; // pode ter mudado durante o await
     if (atual.pago_em) return atual;
     const cfg = this.config();
@@ -499,13 +553,18 @@ export class Central extends DurableObject<Env> {
       const q = url.searchParams;
       const id = q.get('order_nsu') ?? '';
       const slug = q.get('slug'), tx = q.get('transaction_nsu');
+      if (id.startsWith('gorj-')) {
+        const g = slug && tx ? await this.confirmarGorjeta(id, slug, tx, q.get('receipt_url')) : this.um(`SELECT * FROM gorjetas WHERE id=?`, id);
+        return paginaRetorno(this.env.APP_SCHEME, g?.status === 'paga', String(g?.corrida_id ?? ''), true);
+      }
       const c = slug && tx ? await this.confirmarPagamento(id, slug, tx, q.get('receipt_url')) : this.corrida(id);
       return paginaRetorno(this.env.APP_SCHEME, !!c?.pago_em, id);
     }
     if (metodo === 'POST' && p === '/webhook') {
       const b = await this.corpo<{ order_nsu?: string; invoice_slug?: string; transaction_nsu?: string; receipt_url?: string }>(req);
       if (!b.order_nsu || !b.invoice_slug || !b.transaction_nsu) return new Response('dados incompletos', { status: 400 });
-      await this.confirmarPagamento(b.order_nsu, b.invoice_slug, b.transaction_nsu, b.receipt_url);
+      if (b.order_nsu.startsWith('gorj-')) await this.confirmarGorjeta(b.order_nsu, b.invoice_slug, b.transaction_nsu, b.receipt_url);
+      else await this.confirmarPagamento(b.order_nsu, b.invoice_slug, b.transaction_nsu, b.receipt_url);
       return new Response('ok');
     }
     if (metodo === 'GET' && p === '/agenda.ics') {
@@ -599,6 +658,11 @@ export class Central extends DurableObject<Env> {
       );
       return json(lista.map((c) => this.corridaParaCliente(c)));
     }
+    const gm = p.match(/^\/v2\/gorjetas\/([\w-]+)$/);
+    if (metodo === 'GET' && gm) {
+      const g = this.um(`SELECT id, corrida_id AS corridaId, valor, status, checkout_url AS checkoutUrl, pago_em AS pagoEm, metodo FROM gorjetas WHERE id=? AND cliente_id=?`, gm[1], cli.id);
+      return g ? json(g) : erro('Gorjeta não encontrada.', 404);
+    }
     const m = p.match(/^\/v2\/corridas\/([\w-]+)(\/[\w-]+)?$/);
     if (m) {
       const c = this.um(`SELECT * FROM corridas WHERE id=? AND cliente_id=?`, m[1], cli.id);
@@ -619,6 +683,36 @@ export class Central extends DurableObject<Env> {
           this.cancelar(c, 'cliente_cancelou', 'cliente', '❌ CANCELADO pelo cliente — horário liberado');
         } else return erro('Este frete não pode mais ser cancelado pelo app.', 409);
         return json(this.corridaParaCliente(this.corrida(c.id)!));
+      }
+      if (metodo === 'POST' && acao === '/avaliar') {
+        if (c.status !== 'entregue') return erro('A avaliação fica disponível quando a entrega termina.', 409);
+        if (this.um(`SELECT 1 AS x FROM avaliacoes WHERE corrida_id=?`, c.id)) return erro('Você já avaliou este frete. Obrigado!', 409);
+        const b = await this.corpo<{ nota?: number; sugestao?: string }>(req);
+        const nota = Math.round(Number(b.nota));
+        if (!(nota >= 1 && nota <= 5)) return erro('Escolha de 1 a 5 estrelas.');
+        const sugestao = String(b.sugestao ?? '').trim().slice(0, 1000) || null;
+        this.sql.exec(`INSERT INTO avaliacoes (corrida_id, cliente_id, motorista_id, nota, sugestao, criado_em) VALUES (?,?,?,?,?,?)`, c.id, cli.id, c.motorista_id, nota, sugestao, iso(agora));
+        const mot = c.motorista_id ? this.um(`SELECT nome FROM motoristas WHERE id=?`, c.motorista_id) : undefined;
+        this.avisar(`${'⭐'.repeat(nota)} AVALIAÇÃO ${nota}/5 — ${cli.nome} sobre ${mot?.nome ?? 'o motorista'} (${c.mercado_nome})${sugestao ? `\n💡 Sugestão: ${sugestao.slice(0, 200)}` : ''}`, c.id);
+        return json(this.corridaParaCliente(this.corrida(c.id)!));
+      }
+      if (metodo === 'POST' && acao === '/gorjeta') {
+        if (c.status !== 'entregue' || !c.motorista_id) return erro('A gorjeta fica disponível quando a entrega termina.', 409);
+        if (this.um(`SELECT 1 AS x FROM gorjetas WHERE corrida_id=? AND status='paga'`, c.id)) return erro('Você já deu gorjeta neste frete. Obrigado!', 409);
+        const b = await this.corpo<{ valor?: number }>(req);
+        const valor = r2(Number(b.valor));
+        if (!(valor >= 1 && valor <= 200)) return erro('A gorjeta precisa ser entre R$ 1 e R$ 200.');
+        this.sql.exec(`UPDATE gorjetas SET status='cancelada' WHERE corrida_id=? AND status='pendente'`, c.id);
+        const id = novoId('gorj');
+        const mot = this.um(`SELECT nome FROM motoristas WHERE id=?`, c.motorista_id);
+        let checkoutUrl: string;
+        try {
+          checkoutUrl = await this.linkInfinitePay({ orderNsu: id, valor, descricao: `Gorjeta para ${String(mot?.nome ?? 'motorista').split(' ')[0]}`, cli, origem: url.origin, validoMin: 60 });
+        } catch (e) {
+          return erro(e instanceof Error ? e.message : 'Não foi possível gerar o pagamento.', 502);
+        }
+        this.sql.exec(`INSERT INTO gorjetas (id, corrida_id, cliente_id, motorista_id, valor, status, checkout_url, criado_em) VALUES (?,?,?,?,?,?,?,?)`, id, c.id, cli.id, c.motorista_id, valor, 'pendente', checkoutUrl, iso(agora));
+        return json({ id, valor, checkoutUrl, status: 'pendente' });
       }
       if (metodo === 'GET' && acao === '/foto-motorista') return this.fotoMotorista(c.motorista_id);
       if (acao === '/mensagens') return this.mensagens(req, c, 'cliente');
@@ -659,14 +753,14 @@ export class Central extends DurableObject<Env> {
       return json({
         tipo: 'motorista', id: mot.id, nome: mot.nome, telefone: mot.telefone, carro: mot.carro, placa: mot.placa, cor: mot.cor, pix: mot.cpf,
         status: mot.status, online: !!mot.online, temSelfie: !!mot.selfie, temCnh: !!mot.cnh, docsObrigatorios: !!this.env.DOCS,
-        ...s, comissaoPct: cfg.comissaoMotoristaPct,
+        ...s, comissaoPct: cfg.comissaoMotoristaPct, ...this.notaMotorista(mot.id),
         agendaLink: `${url.origin}/agenda.ics?m=${mot.id}&k=${await this.chaveAgenda(String(mot.id))}`,
       });
     }
     if (metodo === 'GET' && p === '/v2/saldo') {
       return json({
         ...this.saldo(mot.id), chavePix: mot.cpf, saqueDias: cfg.saqueDias,
-        creditos: this.q(`SELECT cr.id, cr.tipo, cr.valor, cr.criado_em AS criadoEm, c.mercado_nome AS mercado FROM creditos cr LEFT JOIN corridas c ON c.id=cr.corrida_id WHERE cr.motorista_id=? ORDER BY cr.criado_em DESC LIMIT 50`, mot.id),
+        creditos: this.q(`SELECT cr.id, cr.tipo, cr.valor, cr.criado_em AS criadoEm, c.mercado_nome AS mercado FROM creditos cr LEFT JOIN corridas c ON c.id=cr.corrida_id WHERE cr.motorista_id=? ORDER BY cr.criado_em DESC, cr.rowid DESC LIMIT 50`, mot.id),
         saques: this.q(`SELECT id, valor, status, chave_pix AS chavePix, criado_em AS criadoEm, pago_em AS pagoEm, motivo FROM saques WHERE motorista_id=? ORDER BY criado_em DESC LIMIT 30`, mot.id),
       });
     }
@@ -805,6 +899,9 @@ export class Central extends DurableObject<Env> {
         estornosPendentes: n(`SELECT COALESCE(SUM(reembolso),0) AS n FROM corridas WHERE reembolso > 0 AND reembolsado_em IS NULL`),
         estornosPendentesQtd: n(`SELECT COUNT(*) AS n FROM corridas WHERE reembolso > 0 AND reembolsado_em IS NULL`),
         avisosNaoLidos: n(`SELECT COUNT(*) AS n FROM avisos WHERE lido=0`),
+        avaliacoesNaoLidas: n(`SELECT COUNT(*) AS n FROM avaliacoes WHERE lida=0`),
+        notaMedia: Math.round(n(`SELECT COALESCE(AVG(nota),0) AS n FROM avaliacoes`) * 10) / 10,
+        gorjetasHoje: n(`SELECT COALESCE(SUM(valor),0) AS n FROM gorjetas WHERE status='paga' AND pago_em >= ?`, iso(Date.parse(dataLocal(agora) + 'T03:00:00Z'))),
         faturamentoHoje: n(`SELECT COALESCE(SUM(valor),0) AS n FROM corridas WHERE pago_em >= ? AND status!='cancelado'`, iso(Date.parse(dataLocal(agora) + 'T03:00:00Z'))),
       });
     }
@@ -814,6 +911,25 @@ export class Central extends DurableObject<Env> {
         naoLidos: Number(this.um(`SELECT COUNT(*) AS n FROM avisos WHERE lido=0`)?.n ?? 0),
         avisos: this.q(`SELECT id, texto, corrida_id AS corridaId, criado_em AS criadoEm, lido FROM avisos WHERE id>? ORDER BY id DESC LIMIT 100`, depois),
       });
+    }
+    if (metodo === 'GET' && p === '/v2/admin/avaliacoes') {
+      // Avaliações e sugestões: só a administração vê (o motorista vê apenas a média).
+      const lista = this.q(`SELECT a.corrida_id AS corridaId, a.nota, a.sugestao, a.criado_em AS criadoEm, a.lida,
+          cl.nome AS clienteNome, m.nome AS motoristaNome, c.mercado_nome AS mercado, c.valor,
+          (SELECT g.valor FROM gorjetas g WHERE g.corrida_id=a.corrida_id AND g.status='paga') AS gorjeta
+        FROM avaliacoes a JOIN corridas c ON c.id=a.corrida_id JOIN clientes cl ON cl.id=a.cliente_id LEFT JOIN motoristas m ON m.id=a.motorista_id
+        ORDER BY a.criado_em DESC LIMIT 300`);
+      const r = this.um(`SELECT AVG(nota) AS media, COUNT(*) AS n, SUM(sugestao IS NOT NULL) AS s FROM avaliacoes`);
+      const g = this.um(`SELECT COALESCE(SUM(valor),0) AS v, COUNT(*) AS n FROM gorjetas WHERE status='paga'`);
+      return json({
+        media: r?.n ? Math.round(Number(r.media) * 10) / 10 : null, total: Number(r?.n ?? 0), comSugestao: Number(r?.s ?? 0),
+        gorjetas: { total: r2(Number(g?.v ?? 0)), quantidade: Number(g?.n ?? 0) },
+        avaliacoes: lista,
+      });
+    }
+    if (metodo === 'POST' && p === '/v2/admin/avaliacoes/lidas') {
+      this.sql.exec(`UPDATE avaliacoes SET lida=1 WHERE lida=0`);
+      return json({ ok: true });
     }
     if (metodo === 'POST' && p === '/v2/admin/avisos/lidos') {
       this.sql.exec(`UPDATE avisos SET lido=1 WHERE lido=0`);
@@ -836,7 +952,7 @@ export class Central extends DurableObject<Env> {
       return json(
         this.q(`SELECT id, nome, cpf, telefone, carro, placa, cor, status, online, lat, lon, loc_em, criado_em, selfie, cnh,
           (SELECT COUNT(*) FROM corridas c WHERE c.motorista_id=motoristas.id AND c.status IN ('em_andamento','entregue')) AS corridas
-          FROM motoristas ORDER BY (status='pendente') DESC, nome`).map((m) => ({ ...m, ...this.saldo(m.id) })),
+          FROM motoristas ORDER BY (status='pendente') DESC, nome`).map((m) => ({ ...m, ...this.saldo(m.id), ...this.notaMotorista(m.id) })),
       );
     if (metodo === 'GET' && p === '/v2/admin/clientes')
       return json(this.q(`SELECT id, nome, cpf, telefone, endereco, lat, lon, bloqueado, criado_em, foto,
@@ -906,14 +1022,14 @@ export class Central extends DurableObject<Env> {
   }
 }
 
-export function paginaRetorno(scheme: string, pago: boolean, id: string) {
+export function paginaRetorno(scheme: string, pago: boolean, id: string, gorjeta = false) {
   const link = `${scheme}://pagamento?corrida=${encodeURIComponent(id)}&status=${pago ? 'pago' : 'aguardando'}`;
-  const titulo = pago ? 'Pagamento confirmado!' : 'Pagamento em processamento';
+  const titulo = gorjeta ? (pago ? 'Obrigado pela gorjeta!' : 'Gorjeta em processamento') : pago ? 'Pagamento confirmado!' : 'Pagamento em processamento';
   return new Response(
     `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${titulo}</title><style>body{font-family:system-ui,sans-serif;background:#F2F5F3;color:#15201A;display:grid;place-items:center;min-height:100vh;margin:0;padding:24px;text-align:center}
-a{display:inline-block;margin-top:16px;background:#1B8048;color:#fff;padding:14px 24px;border-radius:12px;text-decoration:none;font-weight:700}</style></head>
-<body><div><h1>${titulo}</h1><p>${pago ? 'O valor fica retido até você confirmar que o motorista chegou.' : 'Assim que a InfinitePay confirmar, o app mostra o pagamento.'}</p>
+<title>${titulo}</title><style>body{font-family:system-ui,sans-serif;background:#F6F7F5;color:#1E2925;display:grid;place-items:center;min-height:100vh;margin:0;padding:24px;text-align:center}
+a{display:inline-block;margin-top:16px;background:#2E8A5E;color:#fff;padding:14px 24px;border-radius:14px;text-decoration:none;font-weight:700}</style></head>
+<body><div><h1>${titulo}</h1><p>${gorjeta ? 'O valor vai inteiro para o motorista.' : pago ? 'O valor fica retido até você confirmar que o motorista chegou.' : 'Assim que a InfinitePay confirmar, o app mostra o pagamento.'}</p>
 <a href="${link}">Voltar ao Mercado Frete</a></div></body></html>`,
     { headers: { 'content-type': 'text/html; charset=utf-8' } },
   );

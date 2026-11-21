@@ -1,6 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
 import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { cores, raio } from './tema';
+import { cores, raio, sombra } from './tema';
 
 type Props = {
   rotulo: string;
@@ -58,7 +58,7 @@ export default function CampoFoto({ rotulo, uri, onFoto, frontal, enviada, forma
 }
 
 const s = StyleSheet.create({
-  caixa: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: cores.cartao, borderWidth: 1, borderColor: cores.borda, borderRadius: raio, padding: 12 },
+  caixa: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: cores.cartao, ...sombra, borderRadius: raio, padding: 12 },
   previa: { width: 72, height: 72, borderRadius: 36, backgroundColor: cores.fundo, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   previaDoc: { width: 96, height: 72, borderRadius: 10 },
   icone: { fontSize: 30, color: cores.primaria },

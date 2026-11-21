@@ -52,7 +52,7 @@ export async function iniciarRastreio(): Promise<{ segundoPlano: boolean }> {
       foregroundService: {
         notificationTitle: 'Frete Motorista: você está online',
         notificationBody: 'Recebendo corridas e compartilhando sua posição com o cliente.',
-        notificationColor: '#1B8048',
+        notificationColor: '#3D6FD1',
       },
     });
   }

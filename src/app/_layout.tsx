@@ -6,21 +6,19 @@ import { AppProvider } from '../estado/AppContext';
 import { AgendaProvider } from '../hooks/useAgendaCelular';
 // Registra a tarefa de localização em segundo plano (app do motorista) já na abertura do app.
 import '../services/localizacao';
-import { VARIANTE } from '../variante';
-
-const COR_TOPO = VARIANTE === 'motorista' ? '#1F4FA8' : VARIANTE === 'admin' ? '#15201A' : cores.primaria;
 
 export default function Layout() {
   return (
     <SafeAreaProvider>
       <AppProvider>
         <AgendaProvider>
-          <StatusBar style="light" />
+          <StatusBar style="dark" />
           <Stack
             screenOptions={{
-              headerStyle: { backgroundColor: COR_TOPO },
-              headerTintColor: '#fff',
-              headerTitleStyle: { fontWeight: '700' },
+              headerStyle: { backgroundColor: cores.fundo },
+              headerTintColor: cores.primaria,
+              headerTitleStyle: { fontWeight: '700', color: cores.texto, fontSize: 17 },
+              headerShadowVisible: false,
               contentStyle: { backgroundColor: cores.fundo },
               headerBackTitle: 'Voltar',
             }}
@@ -47,6 +45,7 @@ export default function Layout() {
             <Stack.Screen name="saques-admin" options={{ title: 'Saques dos motoristas' }} />
             <Stack.Screen name="estornos-admin" options={{ title: 'Estornos' }} />
             <Stack.Screen name="avisos-admin" options={{ title: 'Avisos' }} />
+            <Stack.Screen name="avaliacoes-admin" options={{ title: 'Avaliações e sugestões' }} />
             <Stack.Screen name="ajustes" options={{ title: 'Ajustes' }} />
             <Stack.Screen name="tarifas" options={{ title: 'Tarifas' }} />
           </Stack>

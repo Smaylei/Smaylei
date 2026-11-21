@@ -1,7 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import { useAgenda } from '../hooks/useAgendaCelular';
 import { api, apagarToken, ROTULO_STATUS, type CorridaMotorista } from '../services/api';
 import { eventosDaAgenda } from '../services/agendaMotorista';
@@ -126,13 +126,13 @@ export default function AgendaMotorista() {
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 10 },
   vazio: { color: cores.suave, fontSize: 14, textAlign: 'center', marginTop: 10 },
-  dia: { fontSize: 14, fontWeight: '800', color: cores.texto, textTransform: 'capitalize', marginTop: 6 },
-  item: { flexDirection: 'row', gap: 12, alignItems: 'center', backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12 },
-  hora: { fontSize: 18, fontWeight: '800', color: cores.primaria, width: 64 },
+  dia: { fontSize: 14, fontWeight: '700', color: cores.texto, textTransform: 'capitalize', marginTop: 6 },
+  item: { flexDirection: 'row', gap: 12, alignItems: 'center', backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 12 },
+  hora: { fontSize: 18, fontWeight: '700', color: cores.primaria, width: 64 },
   texto: { fontSize: 15, fontWeight: '600', color: cores.texto },
   detalhe: { fontSize: 13, color: cores.suave },
-  secao: { fontSize: 13, fontWeight: '800', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 12 },
-  cartao: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12, gap: 8 },
+  secao: { fontSize: 13, fontWeight: '700', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 12 },
+  cartao: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 12, gap: 8 },
   linha: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   opcao: { borderWidth: 1, borderColor: cores.borda, borderRadius: 10, padding: 10 },
   opcaoAtiva: { borderColor: cores.primaria, backgroundColor: cores.primariaClara },

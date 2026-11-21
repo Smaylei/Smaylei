@@ -3,7 +3,7 @@ import * as Notifications from 'expo-notifications';
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import { useAgenda, type EventoAgenda } from '../hooks/useAgendaCelular';
 import * as Admin from '../services/admin';
 import { ErroApi, ROTULO_STATUS } from '../services/api';
@@ -118,10 +118,10 @@ export default function Painel() {
           headerRight: () => (
             <View style={{ flexDirection: 'row', gap: 18 }}>
               <Pressable onPress={() => router.push('/avisos-admin')} hitSlop={10}>
-                <Text style={{ color: '#fff', fontWeight: '700' }}>🔔{res.avisosNaoLidos ? ` ${res.avisosNaoLidos}` : ''}</Text>
+                <Text style={{ color: cores.primaria, fontWeight: '700', fontSize: 15 }}>🔔{res.avisosNaoLidos ? ` ${res.avisosNaoLidos}` : ''}</Text>
               </Pressable>
               <Pressable onPress={() => router.push('/ajustes')} hitSlop={10}>
-                <Text style={{ color: '#fff', fontWeight: '700' }}>Ajustes</Text>
+                <Text style={{ color: cores.primaria, fontWeight: '700', fontSize: 15 }}>Ajustes</Text>
               </Pressable>
             </View>
           ),
@@ -153,6 +153,12 @@ export default function Painel() {
           <Text style={s.atalhoTexto}>👤 Clientes</Text>
         </Pressable>
       </View>
+      <Pressable style={[s.atalho, { flex: 0 }, res.avaliacoesNaoLidas > 0 && s.atalhoAlerta]} onPress={() => router.push('/avaliacoes-admin')}>
+        <Text style={s.atalhoTexto}>
+          ⭐ Avaliações e sugestões{res.notaMedia ? ` · média ${res.notaMedia.toFixed(1).replace('.', ',')}` : ''}
+          {res.avaliacoesNaoLidas ? ` · ${res.avaliacoesNaoLidas} nova${res.avaliacoesNaoLidas > 1 ? 's' : ''}` : ''}
+        </Text>
+      </Pressable>
       <View style={s.atalhos}>
         <Pressable style={[s.atalho, res.saquesPendentesQtd > 0 && s.atalhoAlerta]} onPress={() => router.push('/saques-admin')}>
           <Text style={s.atalhoTexto}>
@@ -248,7 +254,7 @@ function Cartao({ c, onCancelar }: { c: Admin.CorridaAdmin; onCancelar: () => vo
 
 function Mini({ texto, onPress, perigo }: { texto: string; onPress: () => void; perigo?: boolean }) {
   return (
-    <Pressable onPress={onPress} style={[s.mini, perigo && { borderColor: cores.erro }]}>
+    <Pressable onPress={onPress} style={[s.mini, perigo && { backgroundColor: cores.erroFundo }]}>
       <Text style={[s.miniTexto, perigo && { color: cores.erro }]}>{texto}</Text>
     </Pressable>
   );
@@ -257,41 +263,41 @@ function Mini({ texto, onPress, perigo }: { texto: string; onPress: () => void; 
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 10 },
   login: { padding: 24, gap: 10, marginTop: 30 },
-  titulo: { fontSize: 24, fontWeight: '800', color: cores.texto },
+  titulo: { fontSize: 24, fontWeight: '700', color: cores.texto },
   sub: { fontSize: 14, color: cores.suave },
-  input: { backgroundColor: cores.cartao, borderWidth: 1, borderColor: cores.borda, borderRadius: raio, padding: 14, fontSize: 16, color: cores.texto },
-  status: { borderRadius: raio, padding: 16, borderWidth: 1 },
+  input: { backgroundColor: cores.cartao, ...sombra, borderRadius: raio, padding: 14, fontSize: 16, color: cores.texto },
+  status: { borderRadius: raio, padding: 16 },
   statusLivre: { backgroundColor: cores.primariaClara, borderColor: cores.primaria },
   statusFechado: { backgroundColor: cores.alertaFundo, borderColor: cores.alerta },
-  statusTitulo: { fontSize: 18, fontWeight: '800', color: cores.texto },
+  statusTitulo: { fontSize: 18, fontWeight: '700', color: cores.texto },
   statusSub: { fontSize: 13, color: cores.suave, marginTop: 2 },
   linha: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   numeros: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  numero: { width: '48%', backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12 },
-  numeroValor: { fontSize: 20, fontWeight: '800', color: cores.texto, fontVariant: ['tabular-nums'] },
+  numero: { width: '48%', backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 12 },
+  numeroValor: { fontSize: 20, fontWeight: '700', color: cores.texto, fontVariant: ['tabular-nums'] },
   numeroRotulo: { fontSize: 12, color: cores.suave },
   atalhos: { flexDirection: 'row', gap: 8 },
-  atalho: { flex: 1, backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.primaria, padding: 12 },
+  atalho: { flex: 1, backgroundColor: cores.cartao, borderRadius: raio, padding: 14, ...sombra },
   atalhoTexto: { fontSize: 14, fontWeight: '700', color: cores.primaria },
   atalhoAlerta: { borderColor: cores.alerta, backgroundColor: cores.alertaFundo },
   agenda: { fontSize: 12, color: cores.suave },
   erro: { color: cores.erro, fontSize: 13 },
   abas: { flexDirection: 'row', gap: 6, marginTop: 6 },
-  aba: { flex: 1, borderWidth: 1, borderColor: cores.borda, borderRadius: 999, paddingVertical: 8, alignItems: 'center', backgroundColor: cores.cartao },
+  aba: { flex: 1, ...sombra, borderRadius: 999, paddingVertical: 8, alignItems: 'center', backgroundColor: cores.cartao },
   abaAtiva: { backgroundColor: cores.primaria, borderColor: cores.primaria },
   abaTexto: { fontSize: 12, fontWeight: '700', color: cores.texto },
   vazio: { textAlign: 'center', color: cores.suave, marginTop: 16 },
-  cartao: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 14, gap: 3 },
-  selo: { fontSize: 11, fontWeight: '800', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, overflow: 'hidden', color: '#fff' },
+  cartao: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 14, gap: 3 },
+  selo: { fontSize: 11, fontWeight: '700', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, overflow: 'hidden', color: '#fff' },
   seloAgendado: { backgroundColor: cores.primaria },
   seloUrgente: { backgroundColor: cores.erro },
   quando: { fontSize: 14, fontWeight: '700', color: cores.texto, flexShrink: 1, textAlign: 'right' },
   statusCorrida: { fontSize: 14, fontWeight: '700', color: cores.primaria, marginTop: 4 },
-  cliente: { fontSize: 17, fontWeight: '800', color: cores.texto },
+  cliente: { fontSize: 17, fontWeight: '700', color: cores.texto },
   detalhe: { fontSize: 14, color: cores.suave },
-  valor: { fontSize: 18, fontWeight: '800', color: cores.primaria },
+  valor: { fontSize: 18, fontWeight: '700', color: cores.primaria },
   botoes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  mini: { borderWidth: 1, borderColor: cores.primaria, borderRadius: 10, paddingVertical: 7, paddingHorizontal: 10 },
+  mini: { backgroundColor: cores.primariaClara, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 10 },
   miniTexto: { color: cores.primaria, fontWeight: '700', fontSize: 13 },
   botao: { backgroundColor: cores.primaria, borderRadius: raio, paddingVertical: 15, alignItems: 'center' },
   botaoTexto: { color: '#fff', fontSize: 17, fontWeight: '700' },

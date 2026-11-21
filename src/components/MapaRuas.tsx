@@ -125,13 +125,13 @@ const SCRIPT = String.raw`
 
 function html() {
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<style>html,body{margin:0;height:100%;overflow:hidden;background:#EEF1EC;touch-action:none}canvas{display:block;touch-action:none}
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#F1F3F0;touch-action:none}canvas{display:block;touch-action:none}
 .z{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:6px}
-.z button{width:38px;height:38px;border-radius:10px;border:1px solid #DAE2DD;background:#fff;font-size:20px;font-weight:600;color:#15201A}
+.z button{width:38px;height:38px;border-radius:12px;border:0;box-shadow:0 2px 8px rgba(30,41,37,.12);background:#fff;font-size:20px;font-weight:600;color:#15201A}
 .a{position:absolute;right:6px;bottom:4px;font:10px sans-serif;color:#5B6A62}</style></head>
 <body><canvas id="c"></canvas><div class="z"><button id="mais">+</button><button id="menos">−</button></div>
 <div class="a">© colaboradores do OpenStreetMap</div>
-<script>window.DADOS=${JSON.stringify(dados)};</script><script>${SCRIPT}</script></body></html>`;
+<script>window.DADOS=${JSON.stringify(dados)};</script><script>${SCRIPT.replace(/#1B8048/g, cores.primaria)}</script></body></html>`;
 }
 
 let htmlCache: string | null = null;
@@ -175,6 +175,6 @@ export default function MapaRuas({ estado, onEscolher, style }: Props) {
 }
 
 const s = StyleSheet.create({
-  caixa: { height: 320, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: cores.borda },
+  caixa: { height: 320, borderRadius: 18, overflow: 'hidden' },
   web: { flex: 1, backgroundColor: '#EEF1EC' },
 });

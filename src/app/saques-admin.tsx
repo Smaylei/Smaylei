@@ -1,7 +1,7 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import * as Admin from '../services/admin';
 import { formatarCpf } from '../services/cpf';
 import { formatarReais } from '../services/preco';
@@ -50,7 +50,7 @@ export default function SaquesAdmin() {
       <Text style={s.secao}>A pagar ({pendentes.length})</Text>
       {pendentes.length === 0 && <Text style={s.vazio}>Nenhum saque pendente.</Text>}
       {pendentes.map((q) => (
-        <View key={q.id} style={[s.cartao, { borderColor: cores.alerta, borderWidth: 2 }]}>
+        <View key={q.id} style={[s.cartao, { borderColor: cores.alerta, borderWidth: 1.5 }]}>
           <View style={s.linha}>
             <Text style={s.nome}>{q.motorista_nome}</Text>
             <Text style={s.valor}>{formatarReais(q.valor)}</Text>
@@ -102,7 +102,7 @@ export default function SaquesAdmin() {
 
 function Mini({ texto, onPress, perigo }: { texto: string; onPress: () => void; perigo?: boolean }) {
   return (
-    <Pressable onPress={onPress} style={[s.mini, perigo && { borderColor: cores.erro }]}>
+    <Pressable onPress={onPress} style={[s.mini, perigo && { backgroundColor: cores.erroFundo }]}>
       <Text style={[s.miniTexto, perigo && { color: cores.erro }]}>{texto}</Text>
     </Pressable>
   );
@@ -111,15 +111,15 @@ function Mini({ texto, onPress, perigo }: { texto: string; onPress: () => void; 
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 10 },
   ajuda: { fontSize: 13, color: cores.suave },
-  secao: { fontSize: 13, fontWeight: '800', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
+  secao: { fontSize: 13, fontWeight: '700', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
   vazio: { color: cores.suave },
-  cartao: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 14, gap: 3 },
+  cartao: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 14, gap: 3 },
   linha: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  nome: { fontSize: 16, fontWeight: '800', color: cores.texto, flexShrink: 1 },
-  valor: { fontSize: 20, fontWeight: '800', color: cores.primaria },
+  nome: { fontSize: 16, fontWeight: '700', color: cores.texto, flexShrink: 1 },
+  valor: { fontSize: 20, fontWeight: '700', color: cores.primaria },
   detalhe: { fontSize: 13, color: cores.suave },
   pix: { fontSize: 16, fontWeight: '700', color: cores.texto, marginTop: 4 },
   botoes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  mini: { borderWidth: 1, borderColor: cores.primaria, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12 },
+  mini: { backgroundColor: cores.primariaClara, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12 },
   miniTexto: { color: cores.primaria, fontWeight: '700', fontSize: 13 },
 });

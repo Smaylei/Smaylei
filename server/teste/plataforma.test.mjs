@@ -64,7 +64,7 @@ const avanca = (min) => (relogio += min * 60_000);
 const pagar = (id, n = id) => call(`/retorno?order_nsu=${id}&slug=s-${n}&transaction_nsu=t-${n}`);
 const online = (token, p = COOPER) => call('/v2/eu/online', { metodo: 'POST', token, corpo: { online: true, ...p } });
 
-let cliente, motorista, motId;
+let cliente, motorista, motId, entregueId;
 
 test('cadastros, documentos, aprovação; Pix do motorista = CPF', async () => {
   const c = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Ana Souza', cpf: '529.982.247-25', telefone: '(47) 98888-7777', endereco: 'Rua X, 10, Corticeira', lat: -26.4893, lon: -48.9872 } });
@@ -132,6 +132,60 @@ test('fluxo completo: paga ao pedir (retido) → aceite → GPS no local → cli
   const ent = await call(`/v2/corridas/${c.d.id}/entregue`, { metodo: 'POST', token: motorista });
   assert.equal(ent.s, 200, JSON.stringify(ent.d));
   assert.equal(ent.d.status, 'entregue');
+  entregueId = c.d.id;
+});
+
+test('fim do atendimento: avaliação + sugestão (só o admin lê) e gorjeta 100% ao motorista, Pix ou cartão', async () => {
+  const id = entregueId;
+  const antes = (await call('/v2/saldo', { token: motorista })).d.disponivel;
+  assert.equal((await call(`/v2/corridas/${id}/avaliar`, { metodo: 'POST', token: cliente, corpo: { nota: 9 } })).s, 400);
+  const av = await call(`/v2/corridas/${id}/avaliar`, { metodo: 'POST', token: cliente, corpo: { nota: 5, sugestao: 'Poderia avisar quando sair do mercado' } });
+  assert.equal(av.s, 200, JSON.stringify(av.d));
+  assert.equal(av.d.avaliacao, 5);
+  assert.equal((await call(`/v2/corridas/${id}/avaliar`, { metodo: 'POST', token: cliente, corpo: { nota: 1 } })).s, 409); // uma vez só
+  assert.match(await ultimoAviso(), /AVALIAÇÃO 5\/5[\s\S]*Sugestão: Poderia avisar/);
+
+  // gorjeta: link próprio, só Pix e cartão (com a API Key)
+  env.INFINITEPAY_API_KEY = 'chave-teste';
+  assert.equal((await call(`/v2/corridas/${id}/gorjeta`, { metodo: 'POST', token: cliente, corpo: { valor: 500 } })).s, 400);
+  const g = await call(`/v2/corridas/${id}/gorjeta`, { metodo: 'POST', token: cliente, corpo: { valor: 5 } });
+  delete env.INFINITEPAY_API_KEY;
+  assert.equal(g.s, 200, JSON.stringify(g.d));
+  assert.ok(g.d.checkoutUrl);
+  assert.equal(linkCriado.order_nsu, g.d.id);
+  assert.equal(linkCriado.items[0].price, 500);
+  assert.deepEqual(linkCriado.options.payment_methods_enabled, ['pix', 'credit_card']);
+  assert.equal(linkCriado.options.assured_installments, 0);
+  assert.equal((await call(`/v2/gorjetas/${g.d.id}`, { token: cliente })).d.status, 'pendente');
+  assert.equal((await call(`/v2/gorjetas/${g.d.id}`, { token: motorista })).s, 404);
+
+  const ret = await pagar(g.d.id);
+  assert.match(ret.d, /Obrigado pela gorjeta/);
+  assert.equal((await call(`/v2/gorjetas/${g.d.id}`, { token: cliente })).d.status, 'paga');
+  await pagar(g.d.id); // repetido não credita duas vezes
+  const s = (await call('/v2/saldo', { token: motorista })).d;
+  assert.equal(s.disponivel, Math.round((antes + 5) * 100) / 100);
+  assert.equal(s.creditos[0].tipo, 'gorjeta');
+  assert.equal((await call(`/v2/corridas/${id}`, { token: cliente })).d.gorjeta, 5);
+  assert.equal((await call(`/v2/corridas/${id}/gorjeta`, { metodo: 'POST', token: cliente, corpo: { valor: 2 } })).s, 409);
+  assert.match(await ultimoAviso(), /GORJETA de R\$ 5,00/);
+
+  // motorista vê a média e a gorjeta, nunca a sugestão
+  const eu = (await call('/v2/eu', { token: motorista })).d;
+  assert.equal(eu.notaMedia, 5);
+  assert.equal(eu.gorjetasTotal, 5);
+  const hist = (await call('/v2/historico', { token: motorista })).d;
+  assert.equal(hist.find((c) => c.id === id).gorjeta, 5);
+  assert.ok(!JSON.stringify(hist).includes('Poderia avisar'));
+
+  const adm = (await call('/v2/admin/avaliacoes', { token: ADM })).d;
+  assert.equal(adm.media, 5);
+  assert.equal(adm.avaliacoes[0].sugestao, 'Poderia avisar quando sair do mercado');
+  assert.equal(adm.avaliacoes[0].gorjeta, 5);
+  assert.equal(adm.avaliacoes[0].lida, 0);
+  assert.equal((await call('/v2/admin/resumo', { token: ADM })).d.avaliacoesNaoLidas, 1);
+  await call('/v2/admin/avaliacoes/lidas', { metodo: 'POST', token: ADM });
+  assert.equal((await call('/v2/admin/resumo', { token: ADM })).d.avaliacoesNaoLidas, 0);
 });
 
 test('saque semanal: pede, admin vê a ordem com Pix CPF, marca pago; segundo saque só depois de 7 dias', async () => {

@@ -1,7 +1,7 @@
 import { Redirect, router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import { useAgenda } from '../hooks/useAgendaCelular';
 import { api, ErroApi, ROTULO_STATUS, type CorridaMotorista } from '../services/api';
 import { enviarPosicao, iniciarRastreio, pararRastreio, posicaoAtual } from '../services/localizacao';
@@ -17,6 +17,9 @@ type Eu = {
   disponivel: number;
   emLiberacao: number;
   comissaoPct: number;
+  notaMedia: number | null;
+  avaliacoes: number;
+  gorjetasTotal: number;
   carro: string;
   placa: string;
 };
@@ -119,7 +122,7 @@ export default function Motorista() {
           title: 'Frete Motorista',
           headerRight: () => (
             <Pressable onPress={() => router.push('/agenda-motorista')} hitSlop={10}>
-              <Text style={{ color: '#fff', fontWeight: '700' }}>Agenda</Text>
+              <Text style={{ color: cores.primaria, fontWeight: '700', fontSize: 15 }}>Agenda</Text>
             </Pressable>
           ),
         }}
@@ -224,6 +227,17 @@ export default function Motorista() {
         </>
       )}
 
+      <View style={s.reputacao}>
+        <View style={s.repItem}>
+          <Text style={s.repValor}>{eu.notaMedia != null ? `★ ${eu.notaMedia.toFixed(1).replace('.', ',')}` : '—'}</Text>
+          <Text style={s.detalhe}>{eu.avaliacoes ? `${eu.avaliacoes} ${eu.avaliacoes === 1 ? 'avaliação' : 'avaliações'}` : 'Sem avaliações ainda'}</Text>
+        </View>
+        <View style={s.repItem}>
+          <Text style={s.repValor}>{formatarReais(eu.gorjetasTotal ?? 0)}</Text>
+          <Text style={s.detalhe}>em gorjetas 💚</Text>
+        </View>
+      </View>
+
       <Pressable style={s.ganhos} onPress={() => router.push('/saldo-motorista')}>
         <Text style={s.detalhe}>Saldo disponível para saque · você recebe {eu.comissaoPct}% do frete</Text>
         <Text style={s.ganhosValor}>{formatarReais(eu.disponivel)}</Text>
@@ -238,36 +252,39 @@ export default function Motorista() {
 }
 
 const s = StyleSheet.create({
+  reputacao: { flexDirection: 'row', gap: 10 },
+  repItem: { flex: 1, backgroundColor: cores.cartao, borderRadius: raio, padding: 14, gap: 2, ...sombra },
+  repValor: { fontSize: 20, fontWeight: '700', color: cores.texto },
   conteudo: { padding: 16, paddingBottom: 40, gap: 10 },
-  status: { borderRadius: raio, padding: 16, borderWidth: 1 },
+  status: { borderRadius: raio, padding: 16 },
   statusOn: { backgroundColor: cores.primariaClara, borderColor: cores.primaria },
   statusOff: { backgroundColor: cores.cartao, borderColor: cores.borda },
   statusEspera: { backgroundColor: cores.alertaFundo, borderColor: cores.alerta },
-  statusTitulo: { fontSize: 19, fontWeight: '800', color: cores.texto },
+  statusTitulo: { fontSize: 19, fontWeight: '700', color: cores.texto },
   statusSub: { fontSize: 13, color: cores.suave, marginTop: 2 },
   linha: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   aviso: { fontSize: 13, color: cores.alerta, backgroundColor: cores.alertaFundo, padding: 10, borderRadius: 10 },
   atual: { backgroundColor: cores.primaria, borderRadius: raio, padding: 16, gap: 2 },
-  atualRotulo: { fontSize: 11, fontWeight: '800', color: '#D7F0E1', letterSpacing: 0.5 },
-  atualTitulo: { fontSize: 18, fontWeight: '800', color: '#fff' },
-  voltando: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 14, gap: 8 },
-  secao: { fontSize: 13, fontWeight: '800', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
+  atualRotulo: { fontSize: 11, fontWeight: '700', color: cores.sobrePrimaria, letterSpacing: 0.5 },
+  atualTitulo: { fontSize: 18, fontWeight: '700', color: '#fff' },
+  voltando: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 14, gap: 8 },
+  secao: { fontSize: 13, fontWeight: '700', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
   vazio: { color: cores.suave, fontSize: 14 },
-  oferta: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 2, borderColor: cores.primaria, padding: 14, gap: 4 },
-  selo: { fontSize: 11, fontWeight: '800', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, overflow: 'hidden', color: '#fff' },
+  oferta: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1.5, borderColor: cores.primaria, padding: 16, gap: 4, ...sombra },
+  selo: { fontSize: 11, fontWeight: '700', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, overflow: 'hidden', color: '#fff' },
   seloAgendado: { backgroundColor: cores.primaria },
   seloAgora: { backgroundColor: cores.erro },
-  ganho: { fontSize: 24, fontWeight: '800', color: cores.primaria },
+  ganho: { fontSize: 24, fontWeight: '700', color: cores.primaria },
   texto: { fontSize: 15, color: cores.texto },
   detalhe: { fontSize: 13, color: cores.suave },
-  proximo: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12, gap: 2 },
-  agendaCorridas: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 2, borderColor: '#1F4FA8', padding: 14, gap: 2 },
-  agendaCorridasTitulo: { fontSize: 17, fontWeight: '800', color: '#1F4FA8' },
-  ganhos: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 14, marginTop: 8 },
-  ganhosValor: { fontSize: 26, fontWeight: '800', color: cores.primaria },
+  proximo: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 12, gap: 2 },
+  agendaCorridas: { backgroundColor: cores.primariaClara, borderRadius: raio, padding: 16, gap: 2 },
+  agendaCorridasTitulo: { fontSize: 17, fontWeight: '700', color: cores.primaria },
+  ganhos: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 14, marginTop: 8 },
+  ganhosValor: { fontSize: 26, fontWeight: '700', color: cores.primaria },
   agendaInfo: { fontSize: 12, color: cores.suave },
   botao: { flex: 1, backgroundColor: cores.primaria, borderRadius: raio, paddingVertical: 14, alignItems: 'center' },
-  botaoSec: { backgroundColor: cores.cartao, borderWidth: 1, borderColor: cores.borda },
+  botaoSec: { backgroundColor: cores.cartao, ...sombra },
   botaoTexto: { color: '#fff', fontSize: 16, fontWeight: '700' },
   link: { color: cores.primaria, fontWeight: '700', fontSize: 15, marginTop: 4 },
 });

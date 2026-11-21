@@ -2,8 +2,9 @@ import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import AvaliarFrete from '../../components/AvaliarFrete';
 import MapaRuas, { type EstadoMapa } from '../../components/MapaRuas';
-import { cores, raio } from '../../components/tema';
+import { cores, raio, sombra } from '../../components/tema';
 import { MERCADOS } from '../../data/mercados';
 import { useApp } from '../../estado/AppContext';
 import { api, fonteImagem, ROTULO_STATUS, type CorridaCliente } from '../../services/api';
@@ -176,6 +177,8 @@ export default function Corrida() {
         </View>
       )}
 
+      {c.status === 'entregue' && c.motorista && <AvaliarFrete c={c} onAtualizar={setC} />}
+
       {estadoMapa && ['aceito', 'no_local', 'em_andamento'].includes(c.status) && <MapaRuas estado={estadoMapa} style={{ height: 320 }} />}
 
       {mot && c.status !== 'cancelado' && (
@@ -205,6 +208,7 @@ export default function Corrida() {
         <Linha a="Coleta" b={c.mercadoNome} />
         <Linha a="Quando" b={c.agendado ? c.janela : 'Agora'} />
         <Linha a="Frete" b={formatarReais(c.valor)} />
+        {c.gorjeta ? <Linha a="Gorjeta" b={formatarReais(c.gorjeta)} /> : null}
         {c.pagoEm ? (
           <Linha a="Pagamento" b={`${c.metodo === 'pix' ? 'Pix' : 'Cartão'} · ${c.liberadoEm ? 'liberado ao motorista' : c.status === 'cancelado' ? 'devolução' : 'retido'}`} />
         ) : null}
@@ -235,32 +239,32 @@ function Linha({ a, b }: { a: string; b: string }) {
 
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 12 },
-  topo: { backgroundColor: cores.primariaClara, borderRadius: raio, padding: 16, gap: 4 },
-  topoTitulo: { fontSize: 20, fontWeight: '800', color: cores.primaria },
+  topo: { backgroundColor: cores.primariaClara, borderRadius: raio, padding: 18, gap: 4 },
+  topoTitulo: { fontSize: 20, fontWeight: '700', color: cores.primaria },
   eta: { fontSize: 15, color: cores.texto },
-  etaForte: { fontWeight: '800', fontSize: 17 },
+  etaForte: { fontWeight: '700', fontSize: 17 },
   etapas: { flexDirection: 'row', gap: 6, marginTop: 10 },
-  etapa: { flex: 1, height: 6, borderRadius: 3, backgroundColor: cores.borda },
+  etapa: { flex: 1, height: 6, borderRadius: 3, backgroundColor: cores.primariaMedia },
   etapaFeita: { backgroundColor: cores.primaria },
-  confirmar: { backgroundColor: cores.cartao, borderWidth: 2, borderColor: cores.alerta, borderRadius: raio, padding: 14, gap: 8 },
-  confirmarTitulo: { fontSize: 17, fontWeight: '800', color: cores.texto },
+  confirmar: { backgroundColor: cores.alertaFundo, borderRadius: raio, padding: 18, gap: 8 },
+  confirmarTitulo: { fontSize: 17, fontWeight: '700', color: cores.texto },
   confirmarTexto: { fontSize: 14, color: cores.suave },
-  motorista: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12 },
+  motorista: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 12 },
   foto: { width: 64, height: 64, borderRadius: 32 },
   fotoVazia: { backgroundColor: cores.fundo, alignItems: 'center', justifyContent: 'center' },
-  motNome: { fontSize: 17, fontWeight: '800', color: cores.texto },
+  motNome: { fontSize: 17, fontWeight: '700', color: cores.texto },
   motCarro: { fontSize: 14, color: cores.suave },
-  placa: { alignSelf: 'flex-start', marginTop: 4, fontSize: 15, fontWeight: '800', letterSpacing: 1, borderWidth: 1, borderColor: cores.texto, borderRadius: 4, paddingHorizontal: 6 },
-  chatSuporte: { borderWidth: 1, borderColor: cores.primaria, borderRadius: raio, paddingVertical: 12, alignItems: 'center' },
+  placa: { alignSelf: 'flex-start', marginTop: 4, fontSize: 14, fontWeight: '700', letterSpacing: 1, backgroundColor: cores.fundo, color: cores.texto, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden' },
+  chatSuporte: { backgroundColor: cores.primariaClara, borderRadius: raio, paddingVertical: 14, alignItems: 'center' },
   chatSuporteTexto: { color: cores.primaria, fontWeight: '700', fontSize: 15 },
-  chat: { backgroundColor: cores.primaria, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12 },
-  chatTexto: { color: '#fff', fontWeight: '700' },
-  resumo: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12, gap: 6 },
+  chat: { backgroundColor: cores.primariaClara, borderRadius: 999, paddingVertical: 10, paddingHorizontal: 14 },
+  chatTexto: { color: cores.primaria, fontWeight: '700' },
+  resumo: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 12, gap: 6 },
   linha: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
   linhaA: { color: cores.suave, fontSize: 14 },
   linhaB: { color: cores.texto, fontSize: 14, fontWeight: '600', flexShrink: 1, textAlign: 'right' },
   botao: { backgroundColor: cores.primaria, borderRadius: raio, paddingVertical: 16, alignItems: 'center' },
-  botaoTexto: { color: '#fff', fontSize: 17, fontWeight: '800' },
+  botaoTexto: { color: '#fff', fontSize: 17, fontWeight: '700' },
   link: { color: cores.primaria, fontWeight: '700', fontSize: 15, textAlign: 'center', paddingVertical: 8 },
   erro: { color: cores.erro, fontSize: 13 },
 });

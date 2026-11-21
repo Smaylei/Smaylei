@@ -1,7 +1,7 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import { api, type Saldo } from '../services/api';
 import { formatarCpf } from '../services/cpf';
 import { formatarReais } from '../services/preco';
@@ -9,7 +9,7 @@ import { formatarReais } from '../services/preco';
 type Detalhe = Saldo & {
   chavePix: string;
   saqueDias: number;
-  creditos: { id: string; tipo: 'corrida' | 'taxa'; valor: number; criadoEm: string; mercado: string | null }[];
+  creditos: { id: string; tipo: 'corrida' | 'taxa' | 'gorjeta'; valor: number; criadoEm: string; mercado: string | null }[];
   saques: { id: string; valor: number; status: 'solicitado' | 'pago' | 'recusado'; criadoEm: string; pagoEm: string | null; motivo: string | null }[];
 };
 
@@ -100,7 +100,7 @@ export default function SaldoMotorista() {
       {d.creditos.map((c) => (
         <View key={c.id} style={s.item}>
           <View style={{ flex: 1 }}>
-            <Text style={s.texto}>{c.tipo === 'taxa' ? 'Taxa de deslocamento' : `Corrida · ${c.mercado ?? ''}`}</Text>
+            <Text style={s.texto}>{c.tipo === 'taxa' ? 'Taxa de deslocamento' : c.tipo === 'gorjeta' ? `💚 Gorjeta · ${c.mercado ?? ''}` : `Corrida · ${c.mercado ?? ''}`}</Text>
             <Text style={s.detalhe}>{data(c.criadoEm)}</Text>
           </View>
           <Text style={[s.itemValor, { color: cores.primaria }]}>+ {formatarReais(c.valor)}</Text>
@@ -113,16 +113,16 @@ export default function SaldoMotorista() {
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 10 },
   saldo: { backgroundColor: cores.primaria, borderRadius: raio, padding: 18 },
-  rotulo: { color: '#D7F0E1', fontSize: 13, fontWeight: '700' },
-  valor: { color: '#fff', fontSize: 34, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  sub: { color: '#D7F0E1', fontSize: 13 },
+  rotulo: { color: cores.sobrePrimaria, fontSize: 13, fontWeight: '700' },
+  valor: { color: '#fff', fontSize: 34, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  sub: { color: cores.sobrePrimaria, fontSize: 13 },
   botao: { backgroundColor: cores.primaria, borderRadius: raio, paddingVertical: 16, alignItems: 'center' },
-  botaoTexto: { color: '#fff', fontSize: 17, fontWeight: '800' },
+  botaoTexto: { color: '#fff', fontSize: 17, fontWeight: '700' },
   ajuda: { fontSize: 12, color: cores.suave, textAlign: 'center' },
-  secao: { fontSize: 13, fontWeight: '800', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 10 },
+  secao: { fontSize: 13, fontWeight: '700', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 10 },
   vazio: { color: cores.suave, fontSize: 14 },
-  item: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12 },
+  item: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 12 },
   texto: { fontSize: 15, fontWeight: '600', color: cores.texto },
   detalhe: { fontSize: 12, color: cores.suave },
-  itemValor: { fontSize: 16, fontWeight: '800', color: cores.texto },
+  itemValor: { fontSize: 16, fontWeight: '700', color: cores.texto },
 });

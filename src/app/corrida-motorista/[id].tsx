@@ -4,7 +4,7 @@ import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import MapaRuas, { type EstadoMapa } from '../../components/MapaRuas';
-import { cores, raio } from '../../components/tema';
+import { cores, raio, sombra } from '../../components/tema';
 import { api, ROTULO_STATUS, type CorridaMotorista } from '../../services/api';
 import { rotaAte } from '../../services/eta';
 import { enviarPosicao, posicaoAtual } from '../../services/localizacao';
@@ -138,7 +138,7 @@ export default function CorridaMotoristaTela() {
         <Text style={s.topoTitulo}>{ROTULO_STATUS[c.status]}</Text>
         {eta && ['aceito', 'em_andamento'].includes(c.status) && (
           <Text style={s.eta}>
-            {indoAoCliente ? 'Até a entrega' : 'Até a coleta'}: <Text style={{ fontWeight: '800' }}>~{eta.min} min</Text> · {km(eta.km)} km
+            {indoAoCliente ? 'Até a entrega' : 'Até a coleta'}: <Text style={{ fontWeight: '700' }}>~{eta.min} min</Text> · {km(eta.km)} km
           </Text>
         )}
         <Text style={s.ganho}>
@@ -204,6 +204,7 @@ export default function CorridaMotoristaTela() {
         </>
       )}
       {c.status === 'entregue' && <Text style={s.pago}>✓ Entregue. Bom trabalho!</Text>}
+      {c.status === 'entregue' && c.gorjeta ? <Text style={s.pago}>💚 O cliente deixou {formatarReais(c.gorjeta)} de gorjeta (já está no seu saldo).</Text> : null}
       {c.status === 'cancelado' && <Text style={[s.pago, { color: cores.erro }]}>Corrida cancelada.</Text>}
     </ScrollView>
   );
@@ -212,20 +213,20 @@ export default function CorridaMotoristaTela() {
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 12 },
   topo: { backgroundColor: cores.primariaClara, borderRadius: raio, padding: 16, gap: 4 },
-  topoTitulo: { fontSize: 19, fontWeight: '800', color: cores.primaria },
+  topoTitulo: { fontSize: 19, fontWeight: '700', color: cores.primaria },
   eta: { fontSize: 15, color: cores.texto },
   ganho: { fontSize: 14, color: cores.texto },
-  bloco: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12, gap: 2 },
-  rotulo: { fontSize: 11, fontWeight: '800', color: cores.suave, letterSpacing: 0.5 },
+  bloco: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 12, gap: 2 },
+  rotulo: { fontSize: 11, fontWeight: '700', color: cores.suave, letterSpacing: 0.5 },
   texto: { fontSize: 16, fontWeight: '600', color: cores.texto },
   detalhe: { fontSize: 14, color: cores.suave },
   link: { color: cores.primaria, fontWeight: '700', fontSize: 15, paddingVertical: 6 },
   botao: { backgroundColor: cores.primaria, borderRadius: raio, paddingVertical: 17, alignItems: 'center' },
-  botaoNav: { backgroundColor: '#1F4FA8' },
+  botaoNav: { backgroundColor: cores.primaria },
   botaoSec: { backgroundColor: cores.cartao, borderWidth: 1, borderColor: cores.erro },
-  botaoTexto: { color: '#fff', fontSize: 17, fontWeight: '800' },
+  botaoTexto: { color: '#fff', fontSize: 17, fontWeight: '700' },
   ajuda: { fontSize: 12, color: cores.suave, textAlign: 'center' },
   esperando: { backgroundColor: cores.alertaFundo, borderRadius: raio, padding: 14, gap: 8 },
-  esperandoTitulo: { fontSize: 17, fontWeight: '800', color: cores.alerta },
+  esperandoTitulo: { fontSize: 17, fontWeight: '700', color: cores.alerta },
   pago: { fontSize: 16, fontWeight: '700', color: cores.primaria, textAlign: 'center' },
 });

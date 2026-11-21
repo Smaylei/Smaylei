@@ -3,17 +3,19 @@ import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import WebView, { type WebViewNavigation } from 'react-native-webview';
 import { cores } from '../../components/tema';
-import { API, api, type CorridaCliente } from '../../services/api';
+import { API, api, type CorridaCliente, type Gorjeta } from '../../services/api';
 import { formatarReais } from '../../services/preco';
 
 /**
  * Pagamento dentro do app: o checkout seguro da InfinitePay abre embutido nesta tela (sem navegador
  * externo). Quando a InfinitePay manda o cliente de volta, o servidor confirma o pagamento e
- * seguimos para o acompanhamento da corrida.
+ * seguimos para o acompanhamento da corrida. Também usado para a gorjeta (?tipo=gorjeta).
  */
+type Cobranca = { titulo: string; valor: number; checkoutUrl: string | null; pendente: boolean };
 export default function Checkout() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const [c, setC] = useState<CorridaCliente | null>(null);
+  const { id, tipo, corrida } = useLocalSearchParams<{ id: string; tipo?: string; corrida?: string }>();
+  const ehGorjeta = tipo === 'gorjeta';
+  const [c, setC] = useState<Cobranca | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregandoPagina, setCarregandoPagina] = useState(true);
   const [confirmando, setConfirmando] = useState(false);
@@ -21,16 +23,24 @@ export default function Checkout() {
 
   const conferir = useCallback(async () => {
     try {
-      const atual = await api<CorridaCliente>('cliente', `/v2/corridas/${id}`);
+      let atual: Cobranca;
+      if (ehGorjeta) {
+        const g = await api<Gorjeta>('cliente', `/v2/gorjetas/${id}`);
+        atual = { titulo: 'Gorjeta para o motorista', valor: g.valor, checkoutUrl: g.status === 'pendente' ? g.checkoutUrl : null, pendente: g.status === 'pendente' };
+      } else {
+        const cc = await api<CorridaCliente>('cliente', `/v2/corridas/${id}`);
+        atual = { titulo: cc.mercadoNome, valor: cc.valor, checkoutUrl: cc.checkoutUrl, pendente: cc.status === 'pagamento_pendente' };
+      }
       setC(atual);
-      if (atual.status !== 'pagamento_pendente' && !saiu.current) {
+      if (!atual.pendente && !saiu.current) {
         saiu.current = true;
-        router.replace(`/corrida/${id}`);
+        if (ehGorjeta) router.back();
+        else router.replace(`/corrida/${id}`);
       }
     } catch (e) {
       setErro((e as Error).message);
     }
-  }, [id]);
+  }, [id, ehGorjeta]);
 
   useFocusEffect(
     useCallback(() => {
@@ -64,14 +74,18 @@ export default function Checkout() {
 
   return (
     <View style={{ flex: 1, backgroundColor: cores.fundo }}>
-      <Stack.Screen options={{ title: 'Pagamento seguro' }} />
+      <Stack.Screen options={{ title: ehGorjeta ? 'Gorjeta' : 'Pagamento seguro' }} />
       <View style={s.topo}>
         <Text style={s.cadeado}>🔒</Text>
         <View style={{ flex: 1 }}>
           <Text style={s.topoTitulo}>
-            {c.mercadoNome} · {formatarReais(c.valor)}
+            {c.titulo} · {formatarReais(c.valor)}
           </Text>
-          <Text style={s.topoSub}>Processado pela InfinitePay. O valor fica retido até você confirmar que o motorista chegou.</Text>
+          <Text style={s.topoSub}>
+            {ehGorjeta
+              ? 'Pix ou cartão à vista, pela InfinitePay. 100% vai para o motorista.'
+              : 'Pix ou cartão à vista, pela InfinitePay. O valor fica retido até você confirmar que o motorista chegou.'}
+          </Text>
         </View>
       </View>
       {c.checkoutUrl ? (
@@ -89,7 +103,7 @@ export default function Checkout() {
           style={{ flex: 1 }}
         />
       ) : (
-        <Text style={s.erro}>Este pagamento expirou. Faça o pedido de novo.</Text>
+        <Text style={s.erro}>{ehGorjeta ? 'Este link de gorjeta expirou. Volte e tente de novo.' : 'Este pagamento expirou. Faça o pedido de novo.'}</Text>
       )}
       {(carregandoPagina || confirmando) && (
         <View style={s.sobre}>
@@ -100,23 +114,27 @@ export default function Checkout() {
       <Pressable
         style={s.cancelar}
         onPress={() =>
-          api('cliente', `/v2/corridas/${id}/cancelar`, { method: 'POST' })
-            .catch(() => {})
-            .finally(() => router.replace('/'))
+          ehGorjeta
+            ? router.canGoBack()
+              ? router.back()
+              : router.replace(corrida ? `/corrida/${corrida}` : '/')
+            : api('cliente', `/v2/corridas/${id}/cancelar`, { method: 'POST' })
+                .catch(() => {})
+                .finally(() => router.replace('/'))
         }
       >
-        <Text style={s.cancelarTexto}>Desistir do pedido</Text>
+        <Text style={[s.cancelarTexto, ehGorjeta && { color: cores.suave }]}>{ehGorjeta ? 'Agora não' : 'Desistir do pedido'}</Text>
       </Pressable>
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  topo: { flexDirection: 'row', gap: 10, alignItems: 'center', padding: 12, backgroundColor: cores.primariaClara, borderBottomWidth: 1, borderBottomColor: cores.borda },
+  topo: { flexDirection: 'row', gap: 12, alignItems: 'center', padding: 14, backgroundColor: cores.primariaClara },
   cadeado: { fontSize: 24 },
-  topoTitulo: { fontSize: 15, fontWeight: '800', color: cores.texto },
+  topoTitulo: { fontSize: 15, fontWeight: '700', color: cores.texto },
   topoSub: { fontSize: 12, color: cores.suave },
-  sobre: { position: 'absolute', top: 70, left: 0, right: 0, bottom: 50, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(242,245,243,0.92)', gap: 10 },
+  sobre: { position: 'absolute', top: 70, left: 0, right: 0, bottom: 50, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(246,247,245,0.94)', gap: 10 },
   sobreTexto: { color: cores.texto, fontSize: 15 },
   erro: { color: cores.erro, fontSize: 14, padding: 16 },
   cancelar: { padding: 14, alignItems: 'center', borderTopWidth: 1, borderTopColor: cores.borda, backgroundColor: cores.cartao },

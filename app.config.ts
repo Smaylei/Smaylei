@@ -37,7 +37,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       android: {
         ...base.android,
         package: 'br.com.mercadofrete.motorista',
-        adaptiveIcon: { ...base.android?.adaptiveIcon, backgroundColor: '#1F4FA8', backgroundImage: './assets/motorista-icon-background.png' },
+        adaptiveIcon: { ...base.android?.adaptiveIcon, backgroundColor: '#3D6FD1', backgroundImage: './assets/motorista-icon-background.png' },
         permissions: [...(base.android?.permissions ?? []), 'ACCESS_BACKGROUND_LOCATION', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_LOCATION'],
       },
       plugins: [
@@ -67,7 +67,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     android: {
       ...base.android,
       package: 'br.com.mercadofrete.admin',
-      adaptiveIcon: { ...base.android?.adaptiveIcon, backgroundColor: '#15201A', backgroundImage: './assets/admin-icon-background.png' },
+      adaptiveIcon: { ...base.android?.adaptiveIcon, backgroundColor: '#5560C4', backgroundImage: './assets/admin-icon-background.png' },
     },
     plugins: [...plugins, ['expo-calendar', { calendarPermission: AGENDA, remindersPermission: false }], ['expo-notifications', {}]],
   };

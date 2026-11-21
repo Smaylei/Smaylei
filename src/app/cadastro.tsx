@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import CampoFoto from '../components/CampoFoto';
 import MapaRuas, { type EstadoMapa } from '../components/MapaRuas';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import { MERCADOS } from '../data/mercados';
 import { useApp } from '../estado/AppContext';
 import { api, enviarFoto, ErroApi, guardarToken } from '../services/api';
@@ -160,7 +160,7 @@ const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 6 },
   intro: { fontSize: 15, color: cores.texto, marginBottom: 6 },
   rotulo: { fontSize: 13, color: cores.suave, marginTop: 8 },
-  input: { backgroundColor: cores.cartao, borderWidth: 1, borderColor: cores.borda, borderRadius: raio, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: cores.texto },
+  input: { backgroundColor: cores.cartao, ...sombra, borderRadius: raio, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: cores.texto },
   passo: { fontSize: 13, color: cores.primaria, fontWeight: '600', marginVertical: 8 },
   linha: { flexDirection: 'row', gap: 20, marginTop: 6 },
   link: { color: cores.primaria, fontWeight: '700', fontSize: 15, paddingVertical: 6 },

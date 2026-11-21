@@ -1,7 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import { useAgenda } from '../hooks/useAgendaCelular';
 import * as Admin from '../services/admin';
 
@@ -161,8 +161,8 @@ export default function Ajustes() {
 
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 10 },
-  secao: { fontSize: 13, fontWeight: '800', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
-  cartao: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 14, gap: 8 },
+  secao: { fontSize: 13, fontWeight: '700', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
+  cartao: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 14, gap: 8 },
   grade: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   campo: { width: '47%' },
   rotulo: { fontSize: 12, color: cores.suave, marginBottom: 4 },

@@ -1,7 +1,7 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import * as Admin from '../services/admin';
 import { mascararCpf } from '../services/cpf';
 
@@ -62,7 +62,7 @@ export default function ClientesAdmin() {
 
 function Mini({ texto, onPress, perigo }: { texto: string; onPress: () => void; perigo?: boolean }) {
   return (
-    <Pressable onPress={onPress} style={[s.mini, perigo && { borderColor: cores.erro }]}>
+    <Pressable onPress={onPress} style={[s.mini, perigo && { backgroundColor: cores.erroFundo }]}>
       <Text style={[s.miniTexto, perigo && { color: cores.erro }]}>{texto}</Text>
     </Pressable>
   );
@@ -70,12 +70,12 @@ function Mini({ texto, onPress, perigo }: { texto: string; onPress: () => void; 
 
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 10 },
-  busca: { backgroundColor: cores.cartao, borderWidth: 1, borderColor: cores.borda, borderRadius: raio, padding: 12, fontSize: 15, color: cores.texto },
-  cartao: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 14, gap: 2 },
+  busca: { backgroundColor: cores.cartao, ...sombra, borderRadius: raio, padding: 12, fontSize: 15, color: cores.texto },
+  cartao: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 14, gap: 2 },
   linha: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  nome: { fontSize: 16, fontWeight: '800', color: cores.texto, flexShrink: 1 },
+  nome: { fontSize: 16, fontWeight: '700', color: cores.texto, flexShrink: 1 },
   detalhe: { fontSize: 13, color: cores.suave },
   botoes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
-  mini: { borderWidth: 1, borderColor: cores.primaria, borderRadius: 10, paddingVertical: 7, paddingHorizontal: 10 },
+  mini: { backgroundColor: cores.primariaClara, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 10 },
   miniTexto: { color: cores.primaria, fontWeight: '700', fontSize: 13 },
 });

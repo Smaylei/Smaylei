@@ -147,3 +147,19 @@ APP_VARIANT=admin npx expo start                # macOS/Linux
 npx eas-cli@latest build -p android --profile admin-preview
 npx eas-cli@latest build -p ios --profile admin-production
 ```
+
+## Fim do atendimento: avaliação, gorjeta e sugestões
+
+- Quando o frete é entregue, o cliente vê um cartão para dar **nota de 1 a 5**, uma **gorjeta opcional**
+  (R$ 2, 5, 10 ou outro valor, até R$ 200) e uma **caixa de sugestões**.
+- A **gorjeta** é cobrada num link próprio da InfinitePay (dentro do app) e vai **100% para o motorista**:
+  entra no saldo dele assim que o pagamento é confirmado e sai no saque semanal.
+- As **sugestões** só aparecem no App Admin (Avaliações e sugestões). O motorista vê apenas a média das
+  notas e o total de gorjetas.
+
+## Formas de pagamento
+
+Pix ou cartão à vista. Com a `INFINITEPAY_API_KEY` cadastrada como secret na Cloudflare, o servidor
+gera os links com `payment_methods_enabled: ['pix','credit_card']` e `assured_installments: 0`. A
+InfinitePay não permite desligar o parcelamento no checkout; com essa opção, se o cliente escolher
+parcelar, os juros ficam por conta dele e você recebe o valor cheio.

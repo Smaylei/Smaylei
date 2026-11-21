@@ -1,7 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import { api, type CorridaMotorista } from '../services/api';
 import { formatarReais } from '../services/preco';
 
@@ -68,7 +68,7 @@ export default function AgendaCorridas() {
             {dias.map((d) => (
               <Pressable key={d.data} onPress={() => setSel(d.data)} style={[s.dia, sel === d.data && s.diaAtivo]}>
                 <Text style={[s.diaTexto, sel === d.data && { color: '#fff' }]}>{d.rotulo}</Text>
-                <Text style={[s.diaQtd, sel === d.data && { color: '#D7F0E1' }]}>
+                <Text style={[s.diaQtd, sel === d.data && { color: cores.sobrePrimaria }]}>
                   {d.corridas.length} corrida{d.corridas.length > 1 ? 's' : ''}
                 </Text>
               </Pressable>
@@ -103,17 +103,17 @@ export default function AgendaCorridas() {
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 10 },
   vazio: { color: cores.suave, fontSize: 14, textAlign: 'center', marginTop: 16 },
-  dia: { borderWidth: 1, borderColor: cores.borda, borderRadius: 14, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: cores.cartao, alignItems: 'center' },
+  dia: { ...sombra, borderRadius: 14, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: cores.cartao, alignItems: 'center' },
   diaAtivo: { backgroundColor: cores.primaria, borderColor: cores.primaria },
-  diaTexto: { fontSize: 14, fontWeight: '800', color: cores.texto },
+  diaTexto: { fontSize: 14, fontWeight: '700', color: cores.texto },
   diaQtd: { fontSize: 11, color: cores.suave },
-  cartao: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 14, gap: 4 },
+  cartao: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 14, gap: 4 },
   linha: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  hora: { fontSize: 22, fontWeight: '800', color: cores.texto },
-  ganho: { fontSize: 22, fontWeight: '800', color: cores.primaria },
+  hora: { fontSize: 22, fontWeight: '700', color: cores.texto },
+  ganho: { fontSize: 22, fontWeight: '700', color: cores.primaria },
   texto: { fontSize: 15, color: cores.texto },
   detalhe: { fontSize: 13, color: cores.suave },
   botao: { backgroundColor: cores.primaria, borderRadius: raio, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
-  botaoTexto: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  botaoTexto: { color: '#fff', fontSize: 16, fontWeight: '700' },
   link: { color: cores.primaria, fontWeight: '700', fontSize: 15, textAlign: 'center', paddingVertical: 8 },
 });

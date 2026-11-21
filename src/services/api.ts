@@ -102,6 +102,10 @@ export type CorridaCliente = {
   taxaDeslocamento: number;
   motorista: MotoristaPublico | null;
   mensagens: number;
+  /** Nota que o cliente deu (1–5) ou null se ainda não avaliou. */
+  avaliacao: number | null;
+  /** Gorjeta paga neste frete. */
+  gorjeta: number | null;
 };
 
 export type CorridaMotorista = {
@@ -117,6 +121,7 @@ export type CorridaMotorista = {
   minutos: number;
   valor: number;
   ganho: number;
+  gorjeta: number | null;
   chegouEm?: string;
   liberadoEm?: string;
   esperaConfirmacaoMin: number;
@@ -150,3 +155,5 @@ export const ROTULO_STATUS: Record<Status, string> = {
   entregue: 'Entregue',
   cancelado: 'Cancelado',
 };
+
+export type Gorjeta = { id: string; corridaId?: string; valor: number; status: 'pendente' | 'paga' | 'cancelada'; checkoutUrl: string | null };

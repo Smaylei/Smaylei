@@ -2,7 +2,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import CampoFoto from '../components/CampoFoto';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import { api, enviarFoto, ErroApi, guardarToken, lerToken } from '../services/api';
 import { cpfValido, formatarCpf } from '../services/cpf';
 
@@ -143,7 +143,7 @@ const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 8 },
   intro: { fontSize: 15, color: cores.texto, marginBottom: 4 },
   rotulo: { fontSize: 13, color: cores.suave, marginTop: 6 },
-  input: { backgroundColor: cores.cartao, borderWidth: 1, borderColor: cores.borda, borderRadius: raio, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: cores.texto },
+  input: { backgroundColor: cores.cartao, ...sombra, borderRadius: raio, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: cores.texto },
   dados: { fontSize: 15, color: cores.texto, fontWeight: '600' },
   erro: { color: cores.erro, fontSize: 14 },
   falta: { color: cores.suave, fontSize: 13 },

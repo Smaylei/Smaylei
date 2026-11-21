@@ -2,7 +2,7 @@ import { useFocusEffect } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import * as Admin from '../services/admin';
 import { formatarReais } from '../services/preco';
 
@@ -45,7 +45,7 @@ export default function EstornosAdmin() {
       <Text style={s.secao}>A fazer ({pendentes.length})</Text>
       {pendentes.length === 0 && <Text style={s.vazio}>Nenhum estorno pendente.</Text>}
       {pendentes.map((e) => (
-        <View key={e.id} style={[s.cartao, { borderColor: cores.alerta, borderWidth: 2 }]}>
+        <View key={e.id} style={[s.cartao, { borderColor: cores.alerta, borderWidth: 1.5 }]}>
           <View style={s.linha}>
             <Text style={s.nome}>{e.cliente_nome}</Text>
             <Text style={s.valor}>{formatarReais(e.reembolso)}</Text>
@@ -100,14 +100,14 @@ function Mini({ texto, onPress }: { texto: string; onPress: () => void }) {
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 10 },
   ajuda: { fontSize: 13, color: cores.suave },
-  secao: { fontSize: 13, fontWeight: '800', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
+  secao: { fontSize: 13, fontWeight: '700', color: cores.suave, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
   vazio: { color: cores.suave },
-  cartao: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 14, gap: 3 },
+  cartao: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 14, gap: 3 },
   linha: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  nome: { fontSize: 16, fontWeight: '800', color: cores.texto, flexShrink: 1 },
-  valor: { fontSize: 20, fontWeight: '800', color: cores.erro },
+  nome: { fontSize: 16, fontWeight: '700', color: cores.texto, flexShrink: 1 },
+  valor: { fontSize: 20, fontWeight: '700', color: cores.erro },
   detalhe: { fontSize: 13, color: cores.suave },
   botoes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  mini: { borderWidth: 1, borderColor: cores.primaria, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12 },
+  mini: { backgroundColor: cores.primariaClara, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12 },
   miniTexto: { color: cores.primaria, fontWeight: '700', fontSize: 13 },
 });

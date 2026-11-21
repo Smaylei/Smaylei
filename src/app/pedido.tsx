@@ -2,7 +2,7 @@ import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import { MERCADOS } from '../data/mercados';
 import { useApp } from '../estado/AppContext';
 import { api, type CorridaCliente, type Disponibilidade } from '../services/api';
@@ -163,17 +163,17 @@ function Chip({ texto, ativo, onPress }: { texto: string; ativo: boolean; onPres
 
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 30 },
-  secao: { fontSize: 17, fontWeight: '800', color: cores.texto, marginTop: 12, marginBottom: 10 },
-  mercado: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: cores.cartao, borderWidth: 1, borderColor: cores.borda, borderRadius: raio, paddingVertical: 16, paddingHorizontal: 16 },
-  mercadoAtivo: { borderColor: cores.primaria, borderWidth: 2, backgroundColor: cores.primariaClara, paddingVertical: 15, paddingHorizontal: 15 },
+  secao: { fontSize: 17, fontWeight: '700', color: cores.texto, marginTop: 12, marginBottom: 10 },
+  mercado: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: cores.cartao, ...sombra, borderRadius: raio, borderWidth: 1.5, borderColor: 'transparent', paddingVertical: 16, paddingHorizontal: 16 },
+  mercadoAtivo: { borderColor: cores.primaria, borderWidth: 1.5, backgroundColor: cores.primariaClara },
   mercadoNome: { fontSize: 16, fontWeight: '600', color: cores.texto, flexShrink: 1 },
-  mercadoValor: { fontSize: 18, fontWeight: '800', color: cores.texto, fontVariant: ['tabular-nums'] },
+  mercadoValor: { fontSize: 18, fontWeight: '700', color: cores.texto, fontVariant: ['tabular-nums'] },
   faixas: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
-  chip: { borderWidth: 1, borderColor: cores.borda, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 14, backgroundColor: cores.cartao },
+  chip: { ...sombra, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 14, backgroundColor: cores.cartao },
   chipAtivo: { backgroundColor: cores.primaria, borderColor: cores.primaria },
   chipTexto: { fontSize: 14, fontWeight: '600', color: cores.texto },
   aviso: { marginTop: 8, marginBottom: 4, backgroundColor: cores.alertaFundo, borderRadius: 12, padding: 12, gap: 4 },
-  avisoTitulo: { color: cores.alerta, fontSize: 15, fontWeight: '800' },
+  avisoTitulo: { color: cores.alerta, fontSize: 15, fontWeight: '700' },
   avisoTexto: { color: cores.alerta, fontSize: 14 },
   info: { marginTop: 16, gap: 4 },
   infoTexto: { fontSize: 13, color: cores.suave },
@@ -181,7 +181,7 @@ const s = StyleSheet.create({
   link: { color: cores.primaria, fontWeight: '700', fontSize: 15, paddingVertical: 6 },
   rodape: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingTop: 12, backgroundColor: cores.cartao, borderTopWidth: 1, borderTopColor: cores.borda },
   rodapeRotulo: { fontSize: 13, color: cores.suave },
-  rodapeValor: { fontSize: 26, fontWeight: '800', color: cores.primaria, fontVariant: ['tabular-nums'] },
+  rodapeValor: { fontSize: 26, fontWeight: '700', color: cores.primaria, fontVariant: ['tabular-nums'] },
   botao: { backgroundColor: cores.primaria, borderRadius: raio, paddingVertical: 16, paddingHorizontal: 22, alignItems: 'center' },
   botaoTexto: { color: '#fff', fontSize: 17, fontWeight: '700' },
 });

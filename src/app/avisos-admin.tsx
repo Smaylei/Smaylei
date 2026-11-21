@@ -1,7 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text } from 'react-native';
-import { cores, raio } from '../components/tema';
+import { cores, raio, sombra } from '../components/tema';
 import * as Admin from '../services/admin';
 
 const data = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
@@ -49,8 +49,8 @@ export default function AvisosAdmin() {
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 8 },
   vazio: { textAlign: 'center', color: cores.suave, marginTop: 20 },
-  cartao: { backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1, borderColor: cores.borda, padding: 12, gap: 4 },
-  novo: { borderColor: cores.primaria, borderWidth: 2 },
+  cartao: { backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 12, gap: 4 },
+  novo: { borderColor: cores.primaria, borderWidth: 1.5 },
   data: { fontSize: 11, color: cores.suave, fontWeight: '700' },
   texto: { fontSize: 14, color: cores.texto },
   link: { fontSize: 13, color: cores.primaria, fontWeight: '700' },

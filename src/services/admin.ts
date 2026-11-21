@@ -33,6 +33,9 @@ export type Resumo = {
   estornosPendentes: number;
   estornosPendentesQtd: number;
   avisosNaoLidos: number;
+  avaliacoesNaoLidas: number;
+  notaMedia: number;
+  gorjetasHoje: number;
   faturamentoHoje: number;
 };
 
@@ -156,3 +159,19 @@ export type Aviso = { id: number; texto: string; corridaId: string | null; criad
 export const avisos = () => api<{ naoLidos: number; avisos: Aviso[] }>('admin', '/v2/admin/avisos');
 export const avisosLidos = () => api('admin', '/v2/admin/avisos/lidos', { method: 'POST' });
 export const arquivo = (chave: string) => `/v2/admin/arquivo?chave=${encodeURIComponent(chave)}`;
+
+export type AvaliacaoAdmin = {
+  corridaId: string;
+  nota: number;
+  sugestao: string | null;
+  criadoEm: string;
+  lida: number;
+  clienteNome: string;
+  motoristaNome: string | null;
+  mercado: string;
+  valor: number;
+  gorjeta: number | null;
+};
+export type Avaliacoes = { media: number | null; total: number; comSugestao: number; gorjetas: { total: number; quantidade: number }; avaliacoes: AvaliacaoAdmin[] };
+export const avaliacoes = () => api<Avaliacoes>('admin', '/v2/admin/avaliacoes');
+export const avaliacoesLidas = () => api('admin', '/v2/admin/avaliacoes/lidas', { method: 'POST' });
