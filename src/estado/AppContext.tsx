@@ -58,7 +58,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             cidadesAtivas: c.cidadesAtivas ?? LIBERACAO_PADRAO.cidadesAtivas,
             motoAtivo: c.motoAtivo ?? MOTO_PADRAO.motoAtivo,
             motoServicos: c.motoServicos ?? MOTO_PADRAO.motoServicos,
-            motoFatorPreco: c.motoFatorPreco ?? MOTO_PADRAO.motoFatorPreco,
+            motoMinimo: c.motoMinimo ?? MOTO_PADRAO.motoMinimo,
+            motoKmIncluso: c.motoKmIncluso ?? MOTO_PADRAO.motoKmIncluso,
+            motoPorKm: c.motoPorKm ?? MOTO_PADRAO.motoPorKm,
           });
         if (c?.locais) setLocais((antes) => (JSON.stringify(antes) === JSON.stringify(c.locais) ? antes : c.locais!));
       })

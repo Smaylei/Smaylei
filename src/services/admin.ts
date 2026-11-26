@@ -28,7 +28,9 @@ export type ConfigServidor = {
   cidadesAtivas: CidadeId[];
   motoAtivo: boolean;
   motoServicos: ServicoId[];
-  motoFatorPreco: number;
+  motoMinimo: number;
+  motoKmIncluso: number;
+  motoPorKm: number;
   deslocamentoPadraoKm: number;
   deslocamentoMaxKm: number;
 };

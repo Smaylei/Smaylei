@@ -3,7 +3,8 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { cores, raio, sombra } from '../components/tema';
 import { CIDADES } from '../data/cidades';
-import { CATEGORIAS, MODALIDADES, SERVICOS, type CategoriaId, type ConfigMoto, type Liberacao, type ServicoId } from '../data/servicos';
+import { CATEGORIAS, MODALIDADES, SERVICOS, tarifaMoto, type CategoriaId, type ConfigMoto, type Liberacao, type ServicoId } from '../data/servicos';
+import { formatarReais } from '../services/preco';
 import * as Admin from '../services/admin';
 
 type Ajustes = Liberacao & ConfigMoto & { deslocamentoPadraoKm: number; deslocamentoMaxKm: number };
@@ -14,7 +15,7 @@ type Ajustes = Liberacao & ConfigMoto & { deslocamentoPadraoKm: number; deslocam
  */
 export default function ServicosAdmin() {
   const [lib, setLib] = useState<Ajustes | null>(null);
-  const [fator, setFator] = useState('');
+  const [tabela, setTabela] = useState({ minimo: '', incluso: '', porKm: '' });
   const [desloc, setDesloc] = useState('');
   const [salvando, setSalvando] = useState(false);
 
@@ -23,9 +24,10 @@ export default function ServicosAdmin() {
       const c = (await Admin.resumo()).config;
       setLib({
         servicosAtivos: c.servicosAtivos, categoriasAtivas: c.categoriasAtivas, outroEnderecoLoja: c.outroEnderecoLoja, cidadesAtivas: c.cidadesAtivas,
-        motoAtivo: c.motoAtivo, motoServicos: c.motoServicos, motoFatorPreco: c.motoFatorPreco, deslocamentoPadraoKm: c.deslocamentoPadraoKm, deslocamentoMaxKm: c.deslocamentoMaxKm,
+        motoAtivo: c.motoAtivo, motoServicos: c.motoServicos, motoMinimo: c.motoMinimo, motoKmIncluso: c.motoKmIncluso, motoPorKm: c.motoPorKm, deslocamentoPadraoKm: c.deslocamentoPadraoKm, deslocamentoMaxKm: c.deslocamentoMaxKm,
       });
-      setFator(String(Math.round(c.motoFatorPreco * 100)));
+      const br = (n: number) => String(n).replace('.', ',');
+      setTabela({ minimo: br(c.motoMinimo), incluso: br(c.motoKmIncluso), porKm: br(c.motoPorKm) });
       setDesloc(String(c.deslocamentoPadraoKm).replace('.', ','));
     } catch (e) {
       Alert.alert('Erro', (e as Error).message);
@@ -123,19 +125,40 @@ export default function ServicosAdmin() {
               bloqueado={salvando}
             />
           ))}
-        <View style={s.campoLinha}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.item}>Preço da moto (% do carro)</Text>
-            <Text style={s.sub}>Ex.: 70 = a moto custa 30% menos que o carro no mesmo percurso.</Text>
-          </View>
-          <TextInput style={s.campo} value={fator} onChangeText={setFator} keyboardType="number-pad" maxLength={3} />
+        <Text style={[s.item, { marginTop: 10 }]}>Tabela da moto</Text>
+        <Text style={s.sub}>Km totais = moto até a coleta + coleta até o destino. Pedido para agora ainda soma a urgência.</Text>
+        <View style={s.tabela}>
+          {(
+            [
+              ['minimo', 'Valor mínimo (R$)'],
+              ['incluso', 'Km incluídos no mínimo'],
+              ['porKm', 'R$ por km excedente'],
+            ] as const
+          ).map(([k, rotulo]) => (
+            <View key={k} style={s.tabelaCampo}>
+              <Text style={s.sub}>{rotulo}</Text>
+              <TextInput style={s.campoLargo} value={tabela[k]} onChangeText={(t) => setTabela({ ...tabela, [k]: t })} keyboardType="decimal-pad" maxLength={6} />
+            </View>
+          ))}
           <Pressable
-            style={s.ok}
+            style={[s.ok, { alignSelf: 'flex-end' }]}
             disabled={salvando}
-            onPress={() => (numero(fator) >= 20 && numero(fator) <= 200 ? salvar({ ...lib, motoFatorPreco: numero(fator) / 100 }) : Alert.alert('Moto', 'Use um valor entre 20 e 200.'))}
+            onPress={() => {
+              const [minimo, incluso, porKm] = [numero(tabela.minimo), numero(tabela.incluso), numero(tabela.porKm)];
+              if (!(minimo >= 1 && incluso >= 0 && porKm >= 0)) return Alert.alert('Moto', 'Confira os valores da tabela.');
+              salvar({ ...lib, motoMinimo: minimo, motoKmIncluso: incluso, motoPorKm: porKm });
+            }}
           >
-            <Text style={s.okTexto}>Salvar</Text>
+            <Text style={s.okTexto}>Salvar tabela</Text>
           </Pressable>
+        </View>
+        <View style={s.exemplos}>
+          {[2, 3, 5, 8, 10].map((km) => (
+            <View key={km} style={s.exemplo}>
+              <Text style={s.sub}>{km === lib.motoKmIncluso ? `até ${km} km` : `${km} km`}</Text>
+              <Text style={s.item}>{formatarReais(tarifaMoto(km, lib))}</Text>
+            </View>
+          ))}
         </View>
       </View>
 
@@ -198,5 +221,10 @@ const s = StyleSheet.create({
   campoLinha: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderTopWidth: 1, borderTopColor: cores.borda },
   campo: { width: 72, backgroundColor: cores.fundo, borderRadius: 10, borderWidth: 1, borderColor: cores.borda, paddingHorizontal: 10, paddingVertical: 8, fontSize: 16, color: cores.texto, textAlign: 'center' },
   ok: { backgroundColor: cores.primaria, borderRadius: 10, paddingVertical: 9, paddingHorizontal: 14 },
+  tabela: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', gap: 12, paddingVertical: 8 },
+  tabelaCampo: { gap: 4, minWidth: 150 },
+  campoLargo: { width: 150, backgroundColor: cores.fundo, borderRadius: 10, borderWidth: 1, borderColor: cores.borda, paddingHorizontal: 10, paddingVertical: 8, fontSize: 16, color: cores.texto },
+  exemplos: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingTop: 6, paddingBottom: 4 },
+  exemplo: { backgroundColor: cores.fundo, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, minWidth: 92 },
   okTexto: { color: '#fff', fontWeight: '700' },
 });

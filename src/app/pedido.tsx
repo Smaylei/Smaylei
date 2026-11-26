@@ -148,8 +148,8 @@ export default function PedidoTela() {
                   <Text style={[s.segTexto, veiculo === v.id && s.segTextoAtivo]}>
                     {v.icone} {v.nome}
                   </Text>
-                  {v.id === 'moto' && config.motoFatorPreco < 1 && (
-                    <Text style={[s.segSub, veiculo === v.id && s.segTextoAtivo]}>{Math.round((1 - config.motoFatorPreco) * 100)}% mais barato</Text>
+                  {v.id === 'moto' && (
+                    <Text style={[s.segSub, veiculo === v.id && s.segTextoAtivo]}>a partir de {formatarReais(config.motoMinimo)}</Text>
                   )}
                 </Pressable>
               ))}

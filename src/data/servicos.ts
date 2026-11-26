@@ -165,9 +165,16 @@ export const VEICULOS: { id: Veiculo; nome: string; icone: string }[] = [
   { id: 'moto', nome: 'Moto', icone: '🏍️' },
 ];
 
-/** Moto (motoboy): o Admin escolhe em quais serviços ela entra e quanto custa em relação ao carro. */
-export type ConfigMoto = { motoAtivo: boolean; motoServicos: ServicoId[]; motoFatorPreco: number };
-export const MOTO_PADRAO: ConfigMoto = { motoAtivo: true, motoServicos: ['buscar', 'encomenda', 'loja_entrega'], motoFatorPreco: 0.7 };
+/**
+ * Moto (motoboy): o Admin escolhe em quais serviços ela entra e a tabela própria da moto:
+ * valor mínimo que cobre os primeiros km + valor por km excedente (km totais: moto até a coleta +
+ * coleta até o destino). Padrão: R$ 9,00 até 2 km + R$ 1,80 por km acima de 2 km.
+ */
+export type ConfigMoto = { motoAtivo: boolean; motoServicos: ServicoId[]; motoMinimo: number; motoKmIncluso: number; motoPorKm: number };
+export const MOTO_PADRAO: ConfigMoto = { motoAtivo: true, motoServicos: ['buscar', 'encomenda', 'loja_entrega'], motoMinimo: 9, motoKmIncluso: 2, motoPorKm: 1.8 };
+
+/** Tabela da moto para uma distância total (antes da urgência). */
+export const tarifaMoto = (km: number, cfg: ConfigMoto) => Math.round((cfg.motoMinimo + Math.max(0, km - cfg.motoKmIncluso) * cfg.motoPorKm) * 100) / 100;
 export const aceitaMoto = (servico: ServicoId, cfg: ConfigMoto) => cfg.motoAtivo && cfg.motoServicos.includes(servico);
 
 export type ConfigPreco = ConfigMoto & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin?: number };
@@ -178,14 +185,14 @@ export type Percurso = { kmDesloc: number; minDesloc: number; kmViagem: number; 
 /**
  * Preço de qualquer serviço: deslocamento do motorista até a coleta + viagem da coleta ao destino
  * (na borracharia, ida e volta e a espera), com as tarifas Uber/99, a margem e a urgência do Admin.
- * Moto: o mesmo cálculo × fator definido no Admin.
+ * Moto: tabela própria (mínimo + km excedente) sobre os km totais; a urgência do pedido "agora" vale igual.
  */
 export function precoServico(p: Percurso, cfg: ConfigPreco, servico: ServicoId, agendado: boolean, veiculo: Veiculo = 'carro') {
+  if (veiculo === 'moto') return precoFrete(tarifaMoto(p.kmDesloc + p.kmViagem, cfg), agendado, cfg.urgencia);
   const espera = servico === 'borracharia' ? (cfg.esperaBorrachariaMin ?? 20) : 0;
   const t = { kmIda: p.kmDesloc, minIda: p.minDesloc + espera, kmVolta: p.kmViagem, minVolta: p.minViagem };
   const sugerido = precoSugerido(cfg.tarifas.map((x) => estimarIdaEVolta(t, x)), cfg.margem);
-  const carro = precoFrete(sugerido, agendado, cfg.urgencia);
-  return veiculo === 'moto' ? Math.round(carro * cfg.motoFatorPreco * 100) / 100 : carro;
+  return precoFrete(sugerido, agendado, cfg.urgencia);
 }
 
 /** O que está liberado para os clientes (Admin → Serviços). No lançamento: só mercados. */

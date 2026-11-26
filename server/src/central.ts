@@ -728,7 +728,7 @@ export class Central extends DurableObject<Env> {
         esperaPagamentoMin: cfg.esperaPagamentoMin, esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, comissaoMotoristaPct: cfg.comissaoMotoristaPct, aberto: cfg.aberto,
         esperaBorrachariaMin: cfg.esperaBorrachariaMin,
         servicosAtivos: cfg.servicosAtivos, categoriasAtivas: cfg.categoriasAtivas, outroEnderecoLoja: cfg.outroEnderecoLoja,
-        cidadesAtivas: cfg.cidadesAtivas, motoAtivo: cfg.motoAtivo, motoServicos: cfg.motoServicos, motoFatorPreco: cfg.motoFatorPreco,
+        cidadesAtivas: cfg.cidadesAtivas, motoAtivo: cfg.motoAtivo, motoServicos: cfg.motoServicos, motoMinimo: cfg.motoMinimo, motoKmIncluso: cfg.motoKmIncluso, motoPorKm: cfg.motoPorKm,
         deslocamentoPadraoKm: cfg.deslocamentoPadraoKm,
         locais: this.locais().filter((l) => cfg.categoriasAtivas.includes(l.categoria as never) && !!l.cidade && cfg.cidadesAtivas.includes(l.cidade)),
       });
@@ -1385,7 +1385,8 @@ export class Central extends DurableObject<Env> {
       if (!Array.isArray(cfg.servicosAtivos) || cfg.servicosAtivos.some((x) => !SERVICOS.some((s) => s.id === x))) return erro('Serviços inválidos.');
       if (!Array.isArray(cfg.categoriasAtivas) || cfg.categoriasAtivas.some((x) => !CATEGORIAS.some((c) => c.id === x))) return erro('Categorias inválidas.');
       cfg.outroEnderecoLoja = !!cfg.outroEnderecoLoja;
-      if (!(cfg.motoFatorPreco >= 0.2 && cfg.motoFatorPreco <= 2)) return erro('Fator da moto deve ficar entre 20% e 200% do carro.');
+      if (!(cfg.motoMinimo >= 1 && cfg.motoMinimo <= 200 && cfg.motoKmIncluso >= 0 && cfg.motoKmIncluso <= 30 && cfg.motoPorKm >= 0 && cfg.motoPorKm <= 50))
+        return erro('Tabela da moto inválida.');
       if (!Array.isArray(cfg.motoServicos) || cfg.motoServicos.some((x) => !SERVICOS.some((s) => s.id === x))) return erro('Serviços de moto inválidos.');
       if (!(cfg.deslocamentoPadraoKm >= 0 && cfg.deslocamentoPadraoKm <= cfg.deslocamentoMaxKm && cfg.deslocamentoMaxKm <= 50)) return erro('Deslocamento inválido.');
       cfg.motoAtivo = !!cfg.motoAtivo;
