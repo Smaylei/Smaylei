@@ -112,7 +112,9 @@ const MAX_VIAGENS = 20;
 // Corridas que ocupam o motorista/horário.
 const OCUPAM = `('buscando','aceito','no_local','em_andamento')`;
 const COM_MOTORISTA = `('aceito','no_local','em_andamento')`;
-const LOC_VALIDA_MIN = 3;
+// Motorista online parado (carro estacionado) só manda posição nova ao andar: vale a última por 20 min.
+// (Sem nenhuma posição há 30 min, a manutenção o coloca offline.)
+const LOC_VALIDA_MIN = 20;
 const API_IP = 'https://api.checkout.infinitepay.io';
 
 type Ponto = { lat: number; lon: number };
@@ -413,7 +415,10 @@ export class Central extends DurableObject<Env> {
     const blocos = this.blocosAtivos(agora);
     const livres = this.motoristasLivresAgora(agora).length;
     // Corridas "agora" já pagas esperando motorista também ocupam os livres.
-    const esperando = Number(this.um(`SELECT COUNT(*) AS n FROM corridas WHERE agendado=0 AND status IN ('buscando','pagamento_pendente')`)?.n ?? 0);
+    // Pedidos "agora" já pagos esperando motorista ocupam os livres; os ainda sem pagar, só nos primeiros 5 min.
+    const esperando = Number(
+      this.um(`SELECT COUNT(*) AS n FROM corridas WHERE agendado=0 AND (status='buscando' OR (status='pagamento_pendente' AND criado_em > ?))`, iso(agora - 5 * MIN))?.n ?? 0,
+    );
     const agoraOk = !cfg.aberto
       ? { ok: false, motivo: 'Não estamos aceitando pedidos no momento.' }
       : !dentroDoHorario(cfg, agora)
@@ -421,7 +426,16 @@ export class Central extends DurableObject<Env> {
         : livres - esperando < 1
           ? { ok: false, motivo: 'Nenhum motorista livre agora. Agende um horário.' }
           : { ok: true };
-    return { agora: agoraOk, dias: proximosDias(cfg, blocos, agora, 6, this.aprovados()), bloqueioMin: cfg.bloqueioMin };
+    // Só contagens (sem dados pessoais): ajuda a entender um "nenhum motorista livre".
+    const n = (q: string, ...x: unknown[]) => Number(this.um(q, ...x)?.n ?? 0);
+    const diag = {
+      v: 2,
+      online: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1`),
+      comPosicao: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1 AND loc_em > ?`, iso(agora - LOC_VALIDA_MIN * MIN)),
+      livres,
+      esperando,
+    };
+    return { agora: agoraOk, dias: proximosDias(cfg, blocos, agora, 6, this.aprovados()), bloqueioMin: cfg.bloqueioMin, diag };
   }
 
   // ---------- preço ----------

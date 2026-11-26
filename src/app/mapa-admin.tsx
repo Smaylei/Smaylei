@@ -6,7 +6,7 @@ import { COR_VEICULO, cores, raio } from '../components/tema';
 import * as Admin from '../services/admin';
 
 const ATUALIZAR_MS = 5000;
-const ONLINE_MIN = 3; // sem posição nova há mais que isso = offline
+const ONLINE_MIN = 20; // sem posição nova há mais que isso = offline (igual ao servidor)
 const ATIVAS = ['buscando', 'aceito', 'no_local', 'em_andamento'];
 type Estado = 'livre' | 'corrida' | 'offline';
 const ROTULO: Record<Estado, string> = { livre: 'Livre', corrida: 'Em corrida', offline: 'Offline' };

@@ -46,8 +46,9 @@ export default function Motorista() {
     try {
       const e = await api<Eu>('motorista', '/v2/eu');
       setEu(e);
-      if (e.online && !segundoPlano.current) {
-        // Sem permissão de segundo plano: envia a posição enquanto a tela está aberta.
+      if (e.online) {
+        // Tela aberta: envia a posição a cada atualização (também com o carro parado), para o
+        // servidor saber que o motorista continua disponível.
         const p = await posicaoAtual().catch(() => null);
         if (p) await enviarPosicao(p.lat, p.lon).catch(() => {});
       }

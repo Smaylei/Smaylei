@@ -45,8 +45,9 @@ export async function iniciarRastreio(): Promise<{ segundoPlano: boolean }> {
   if (segundoPlano && !(await Location.hasStartedLocationUpdatesAsync(TAREFA).catch(() => false))) {
     await Location.startLocationUpdatesAsync(TAREFA, {
       accuracy: Location.Accuracy.Balanced,
-      timeInterval: 10_000,
-      distanceInterval: 25,
+      // A cada 15 s mesmo parado (com distância mínima, o carro estacionado sumia como "indisponível").
+      timeInterval: 15_000,
+      distanceInterval: 0,
       pausesUpdatesAutomatically: false,
       showsBackgroundLocationIndicator: true,
       foregroundService: {
