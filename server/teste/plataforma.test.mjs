@@ -63,6 +63,12 @@ let relogio = Date.parse('2026-11-23T13:00:00Z');
 Date.now = () => relogio;
 const avanca = (min) => (relogio += min * 60_000);
 const pagar = (id, n = id) => call(`/retorno?order_nsu=${id}&slug=s-${n}&transaction_nsu=t-${n}`);
+// Ganho do motorista: 80% do frete sem a taxa de urgência + incentivo (R$ 4, no máximo a urgência).
+const ganhoEsperado = async (id) => {
+  const c = (await call('/v2/admin/corridas', { token: ADM })).d.find((x) => x.id === id);
+  const urg = Number(c.urgencia || 0);
+  return Math.round((((c.valor - urg) * 80) / 100 + (urg > 0 ? Math.min(4, urg) : 0)) * 100) / 100;
+};
 const online = (token, p = COOPER) => call('/v2/eu/online', { metodo: 'POST', token, corpo: { online: true, ...p } });
 
 let cliente, motorista, motId, entregueId;
@@ -99,8 +105,14 @@ test('fluxo completo: paga ao pedir (retido) → aceite → GPS no local → cli
 
   const of = await call('/v2/ofertas', { token: motorista });
   assert.equal(of.d.length, 1);
+  // o motorista não vê o valor pago pelo cliente nem a taxa de urgência: só o que ele recebe
+  const ganho = await ganhoEsperado(c.d.id);
+  const urg = (await call('/v2/admin/corridas', { token: ADM })).d.find((x) => x.id === c.d.id).urgencia;
+  assert.ok(urg > 0, 'pedido agora tem taxa de urgência');
+  assert.equal(of.d[0].ganho, ganho);
+  assert.equal(of.d[0].valor, ganho);
+  assert.equal(of.d[0].incentivo, Math.min(4, urg));
   assert.equal((await call(`/v2/ofertas/${c.d.id}/aceitar`, { metodo: 'POST', token: motorista })).d.status, 'aceito');
-  const ganho = Math.round(c.d.valor * 0.8 * 100) / 100;
   assert.equal((await call('/v2/saldo', { token: motorista })).d.emLiberacao, ganho);
   assert.equal((await call('/v2/saldo', { token: motorista })).d.disponivel, 0);
 
@@ -343,7 +355,7 @@ test('serviços: locais por categoria, só buscar (cliente confirma o recebiment
   const rec = await call(`/v2/corridas/${bu.d.id}/confirmar-recebimento`, { metodo: 'POST', token: cli2 });
   assert.equal(rec.d.status, 'entregue');
   const depois = (await call('/v2/saldo', { token: motorista })).d;
-  assert.equal(depois.disponivel, Math.round((antes.disponivel + Math.round(bu.d.valor * 0.8 * 100) / 100) * 100) / 100);
+  assert.equal(depois.disponivel, Math.round((antes.disponivel + (await ganhoEsperado(bu.d.id))) * 100) / 100);
   await call('/v2/eu/livre', { metodo: 'POST', token: motorista });
 
   // encomenda: endereço livre, fora da área é recusado
@@ -710,7 +722,9 @@ test('delivery das lojas: vitrine com mensalidade, pedido pago pela MOVI, loja a
   const of = (await call('/v2/ofertas', { token: mot })).d.find((o) => o.id === ac.corridaId);
   assert.ok(of, 'oferta para o motorista');
   assert.equal(of.servico, 'delivery');
-  assert.equal(of.valor, cot.frete);
+  assert.equal(of.ganho, Math.round(cot.frete * 0.8 * 100) / 100); // delivery sem urgência: 80% do frete
+  assert.equal(of.valor, of.ganho); // o motorista não vê o valor pago pelo cliente
+  assert.equal(of.incentivo, 0);
   assert.match(of.descricao, /Pedido #\w{4} · 3 itens/);
   assert.equal((await call(`/v2/ofertas/${ac.corridaId}/aceitar`, { metodo: 'POST', token: mot })).s, 200);
   assert.equal((await call(`/v2/corridas/${ac.corridaId}/cancelar`, { metodo: 'POST', token: cli })).s, 409); // cancelar só pelo suporte
@@ -777,4 +791,33 @@ test('delivery das lojas: vitrine com mensalidade, pedido pago pela MOVI, loja a
   // produto desativado some da vitrine
   await call(`/v2/loja/produtos/${refri.id}`, { metodo: 'PUT', token: loja, corpo: { ativo: false } });
   assert.equal((await call(`/v2/lojas/${lj.d.id}`, { token: cli })).d.produtos.length, 1);
+});
+
+test('urgência (pedido agora): o cliente paga, o motorista recebe 80% sem a urgência + incentivo do Admin; o resto fica com a MOVI', async () => {
+  const cfg0 = (await call('/v2/config')).d;
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { urgencia: { tipo: 'reais', valor: 10 } } });
+  const c = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Tom Urgente', cpf: gerarCpf(141421356), endereco: 'Rua Z, 7, Centro', lat: -26.4790, lon: -48.9900 } });
+  const cli = c.d.token;
+  const m = await call('/v2/motoristas', { metodo: 'POST', corpo: { nome: 'Uli Rápido', cpf: gerarCpf(173205080), telefone: '47977772222', carro: 'HB20', placa: 'ULI2B34' } });
+  const mot = m.d.token;
+  await call(`/v2/admin/motoristas/${m.d.id}/status`, { metodo: 'POST', token: ADM, corpo: { status: 'aprovado' } });
+  await call('/v2/arquivos?tipo=selfie', { metodo: 'POST', token: mot, bruto: JPG, tipo: 'image/jpeg' });
+  await call('/v2/arquivos?tipo=cnh', { metodo: 'POST', token: mot, bruto: JPG, tipo: 'image/jpeg' });
+  await online(mot, COOPER);
+  const p = await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', coleta: { localId: 'cooper' }, agendado: false } });
+  assert.equal(p.s, 200, JSON.stringify(p.d));
+  await pagar(p.d.id);
+  const adm = (await call('/v2/admin/corridas', { token: ADM })).d.find((x) => x.id === p.d.id);
+  assert.equal(adm.urgencia, 10); // o Admin vê a taxa de urgência
+  const of = (await call('/v2/ofertas', { token: mot })).d.find((o) => o.id === p.d.id);
+  const esperado = Math.round((((p.d.valor - 10) * 80) / 100 + 4) * 100) / 100;
+  assert.equal(of.ganho, esperado); // 80% do frete sem a urgência + R$ 4
+  assert.equal(of.valor, esperado); // nunca o valor pago pelo cliente
+  assert.equal(of.incentivo, 4);
+  // o Admin muda o incentivo para R$ 3
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { incentivoUrgencia: 3 } });
+  assert.equal((await call('/v2/ofertas', { token: mot })).d.find((o) => o.id === p.d.id).ganho, Math.round((esperado - 1) * 100) / 100);
+  assert.match((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { incentivoUrgencia: -1 } })).d.erro, /Incentivo/);
+  await call(`/v2/corridas/${p.d.id}/cancelar`, { metodo: 'POST', token: cli });
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { urgencia: cfg0.urgencia, incentivoUrgencia: 4 } });
 });

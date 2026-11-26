@@ -17,6 +17,7 @@ export type ConfigServidor = {
   margem: number;
   urgencia: Urgencia;
   comissaoMotoristaPct: number;
+  incentivoUrgencia: number;
   taxaDeslocamento: number;
   esperaPagamentoMin: number;
   esperaConfirmacaoMin: number;
@@ -88,6 +89,11 @@ export type CorridaAdmin = {
   valor_cobrado: number | null;
   taxa_incluida: number;
   ganho_motorista: number | null;
+  /** Taxa de urgência incluída no valor (pedido agora): só o Admin vê. */
+  urgencia?: number;
+  /** Parte da urgência que vai para o motorista. */
+  incentivo?: number;
+  ganho_previsto?: number;
   metodo: string | null;
   motivo: string | null;
   cancelado_por: string | null;

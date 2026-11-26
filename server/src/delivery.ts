@@ -15,7 +15,7 @@ import { distanciaRetaKm } from '../../src/services/preco';
 import { brl, DIA, erro, iso, json, MIN, novoId, r2, type Linha } from './util';
 
 type Ponto = { lat: number; lon: number };
-type Cotacao = { valor: number; km: number; minutos: number; kmDesloc: number };
+type Cotacao = { valor: number; urgencia: number; km: number; minutos: number; kmDesloc: number };
 
 /** O que o delivery usa da Central (banco, configuração, InfinitePay, preço e corridas). */
 export interface BaseDelivery {
@@ -59,6 +59,7 @@ export const COLUNAS_DELIVERY = [
   ...['delivery_ate TEXT', 'delivery_aberta INTEGER NOT NULL DEFAULT 0', 'delivery_desc TEXT', 'delivery_categoria TEXT', 'pedido_minimo REAL NOT NULL DEFAULT 0',
     'preparo_min INTEGER NOT NULL DEFAULT 20', 'pix_repasse TEXT'].map((c) => `ALTER TABLE clientes ADD COLUMN ${c}`),
   'ALTER TABLE corridas ADD COLUMN pedido_id TEXT',
+  'ALTER TABLE pedidos ADD COLUMN urgencia REAL NOT NULL DEFAULT 0',
 ];
 
 const ROTULO_PEDIDO: Record<string, string> = {
@@ -318,9 +319,9 @@ export class Delivery {
       const observacao = String(b.observacao ?? '').trim().slice(0, 300) || null;
       this.b.exec(
         `INSERT INTO pedidos (id, codigo, loja_id, cliente_id, itens, subtotal, frete, total, km, minutos, km_desloc, veiculo, observacao, status,
-           entrega_endereco, entrega_lat, entrega_lon, criado_em, pagamento_ate) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'pagamento_pendente', ?,?,?,?,?)`,
+           entrega_endereco, entrega_lat, entrega_lon, criado_em, pagamento_ate, urgencia) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'pagamento_pendente', ?,?,?,?,?,?)`,
         id, codigo, l.id, cli.id, JSON.stringify(itens), subtotal, cot.valor, total, cot.km, cot.minutos, cot.kmDesloc, veiculo, observacao,
-        cli.endereco, casa.lat, casa.lon, iso(agora), iso(agora + cfg.esperaPagamentoMin * MIN),
+        cli.endereco, casa.lat, casa.lon, iso(agora), iso(agora + cfg.esperaPagamentoMin * MIN), cot.urgencia,
       );
       try {
         const urlPg = await this.b.link({
@@ -504,12 +505,12 @@ export class Delivery {
     this.b.exec(
       `INSERT INTO corridas (id, cliente_id, mercado_id, mercado_nome, agendado, inicio, fim, janela, status, valor, km, minutos, criado_em,
          servico, descricao, coleta_nome, coleta_endereco, coleta_lat, coleta_lon, entrega_nome, entrega_endereco, entrega_lat, entrega_lon,
-         cliente_na_coleta, retorno, veiculo, km_desloc, pago_em, metodo, valor_cobrado, oferta_ate, pedido_id)
-       VALUES (?,?,?,?, 0, ?,?, 'Agora', 'buscando', ?,?,?,?, 'delivery', ?,?,?,?,?, 'Casa', ?,?,?, 0, 0, ?,?,?,?,?,?,?)`,
+         cliente_na_coleta, retorno, veiculo, km_desloc, pago_em, metodo, valor_cobrado, oferta_ate, pedido_id, urgencia)
+       VALUES (?,?,?,?, 0, ?,?, 'Agora', 'buscando', ?,?,?,?, 'delivery', ?,?,?,?,?, 'Casa', ?,?,?, 0, 0, ?,?,?,?,?,?,?,?)`,
       id, ped.cliente_id, `loja:${loja.id}`, loja.loja_nome, iso(agora), iso(agora + cfg.bloqueioMin * MIN), ped.frete, ped.km ?? 0, ped.minutos ?? 0, iso(agora),
       `Pedido #${ped.codigo} · ${qtd} ${qtd === 1 ? 'item' : 'itens'} em nome de ${String(cli?.nome ?? 'cliente').split(' ')[0]} — retirar no balcão`,
       loja.loja_nome, loja.endereco, loja.lat, loja.lon, ped.entrega_endereco, ped.entrega_lat, ped.entrega_lon,
-      ped.veiculo ?? 'carro', ped.km_desloc, ped.pago_em, ped.metodo, ped.frete, iso(agora + Math.max(cfg.ofertaMin, 15) * MIN), ped.id,
+      ped.veiculo ?? 'carro', ped.km_desloc, ped.pago_em, ped.metodo, ped.frete, iso(agora + Math.max(cfg.ofertaMin, 15) * MIN), ped.id, Number(ped.urgencia ?? 0),
     );
     this.b.exec(`UPDATE pedidos SET status='aceito', aceito_em=?, corrida_id=? WHERE id=?`, iso(agora), id, ped.id);
     this.b.avisar(this.textoPedido(this.pedido(ped.id)!, `✅ LOJA ACEITOU — procurando ${ped.veiculo === 'moto' ? 'motoboy' : 'motorista'} para a entrega`), id);

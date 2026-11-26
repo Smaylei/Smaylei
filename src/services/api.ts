@@ -148,8 +148,11 @@ export type CorridaMotorista = Viagem & {
   cliente: { nome: string; telefone: string | null; endereco: string; lat: number; lon: number } | null;
   km: number;
   minutos: number;
+  /** Para o motorista, igual ao ganho (ele não vê o valor pago pelo cliente). */
   valor: number;
   ganho: number;
+  /** Extra do pedido "agora" (já somado ao ganho). */
+  incentivo?: number;
   gorjeta: number | null;
   chegouEm?: string;
   liberadoEm?: string;

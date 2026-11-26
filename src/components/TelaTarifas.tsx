@@ -8,7 +8,10 @@ type Props = {
   tarifas: Tarifa[];
   margem: number;
   urgencia: Urgencia;
-  onSalvar: (t: Tarifa[], margem: number, urgencia: Urgencia) => void;
+  /** R$ a mais para o motorista no pedido agora (o resto da urgência fica com a MOVI). */
+  incentivo: number;
+  comissaoPct: number;
+  onSalvar: (t: Tarifa[], margem: number, urgencia: Urgencia, incentivo: number) => void;
 };
 
 type CampoNum = 'tarifaBase' | 'porKm' | 'porMinuto' | 'tarifaMinima';
@@ -22,7 +25,7 @@ const CAMPOS: { chave: CampoNum; rotulo: string }[] = [
 const paraTexto = (n: number) => String(n).replace('.', ',');
 const paraNumero = (t: string) => Number(t.replace(',', '.'));
 
-export default function TelaTarifas({ tarifas, margem, urgencia, onSalvar }: Props) {
+export default function TelaTarifas({ tarifas, margem, urgencia, incentivo, comissaoPct, onSalvar }: Props) {
   // Estado inicial vem das props; o App remonta esta tela (key) quando os valores salvos mudam.
   const [rascunho, setRascunho] = useState<Record<string, Record<CampoNum, string>>>(() => {
     const r: Record<string, Record<CampoNum, string>> = {};
@@ -39,6 +42,7 @@ export default function TelaTarifas({ tarifas, margem, urgencia, onSalvar }: Pro
   const [margemTxt, setMargemTxt] = useState(paraTexto(margem));
   const [urgTipo, setUrgTipo] = useState<Urgencia['tipo']>(urgencia.tipo);
   const [urgTxt, setUrgTxt] = useState(paraTexto(urgencia.valor));
+  const [incTxt, setIncTxt] = useState(paraTexto(incentivo));
   const [msg, setMsg] = useState<string | null>(null);
 
   function salvar() {
@@ -66,7 +70,12 @@ export default function TelaTarifas({ tarifas, margem, urgencia, onSalvar }: Pro
       setMsg('Acréscimo de urgência inválido.');
       return;
     }
-    onSalvar(novas, m, { tipo: urgTipo, valor: u });
+    const inc = paraNumero(incTxt);
+    if (!Number.isFinite(inc) || inc < 0 || inc > 100) {
+      setMsg('Incentivo do motorista inválido.');
+      return;
+    }
+    onSalvar(novas, m, { tipo: urgTipo, valor: u }, inc);
     setMsg('Tarifas salvas.');
   }
 
@@ -124,12 +133,18 @@ export default function TelaTarifas({ tarifas, margem, urgencia, onSalvar }: Pro
         </View>
         <TextInput style={s.input} keyboardType="decimal-pad" value={urgTxt} onChangeText={setUrgTxt} />
         <Text style={[s.rotulo, { marginTop: 6 }]}>Entrega agendada usa o preço calculado, sem acréscimo.</Text>
+        <Text style={[s.rotulo, { marginTop: 12 }]}>Incentivo ao motorista no pedido agora (R$)</Text>
+        <TextInput style={s.input} keyboardType="decimal-pad" value={incTxt} onChangeText={setIncTxt} />
+        <Text style={[s.rotulo, { marginTop: 6 }]}>
+          Só o Admin vê a taxa de urgência. O motorista recebe {comissaoPct}% do frete sem a urgência + este incentivo (no máximo o valor da urgência); o restante
+          da urgência fica com a MOVI. O motorista nunca vê o valor pago pelo cliente.
+        </Text>
       </View>
 
       <Pressable style={s.botao} onPress={salvar}>
         <Text style={s.botaoTexto}>Salvar tarifas</Text>
       </Pressable>
-      <Pressable style={s.botaoSec} onPress={() => onSalvar(TARIFAS_PADRAO, 0, URGENCIA_PADRAO)}>
+      <Pressable style={s.botaoSec} onPress={() => onSalvar(TARIFAS_PADRAO, 0, URGENCIA_PADRAO, 4)}>
         <Text style={s.botaoSecTexto}>Restaurar valores padrão</Text>
       </Pressable>
       {msg && <Text style={s.msg}>{msg}</Text>}

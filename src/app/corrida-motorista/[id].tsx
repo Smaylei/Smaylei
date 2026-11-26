@@ -147,7 +147,8 @@ export default function CorridaMotoristaTela() {
           </Text>
         )}
         <Text style={s.ganho}>
-          Ganho: {formatarReais(c.ganho)}{' '}
+          Ganho: {formatarReais(c.ganho)}
+          {c.incentivo ? ` (inclui +${formatarReais(c.incentivo)} de incentivo)` : ''}{' '}
           {c.liberadoEm ? '· liberado no seu saldo' : naColeta ? '· liberado quando o cliente confirmar sua chegada' : '· liberado quando o cliente confirmar o recebimento'}
         </Text>
       </View>

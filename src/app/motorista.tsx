@@ -201,6 +201,7 @@ export default function Motorista() {
             <Text style={[s.selo, o.agendado ? s.seloAgendado : s.seloAgora]}>{o.agendado ? `AGENDADA · ${o.janela}` : 'AGORA'}</Text>
             <Text style={s.ganho}>{formatarReais(o.ganho)}</Text>
           </View>
+          {!!o.incentivo && o.incentivo > 0 && <Text style={s.incentivo}>⚡ Inclui +{formatarReais(o.incentivo)} de incentivo por ser pedido agora</Text>}
           {o.servicoTitulo ? <Text style={s.detalhe}>{o.servicoTitulo}{o.retorno ? ' · leva e traz' : ''}{o.clienteNaColeta === false ? ' · só retirar e entregar' : ''}</Text> : null}
           <Text style={s.texto}>📍 Coleta: {o.coleta?.nome ?? o.mercado?.nome}</Text>
           <Text style={s.texto}>🏁 Destino: {o.entrega ? (o.entrega.nome === 'Casa' ? o.entrega.endereco : `${o.entrega.nome} · ${o.entrega.endereco}`) : o.cliente?.endereco}</Text>
@@ -246,7 +247,7 @@ export default function Motorista() {
       </View>
 
       <Pressable style={s.ganhos} onPress={() => router.push('/saldo-motorista')}>
-        <Text style={s.detalhe}>Saldo disponível para saque · você recebe {eu.comissaoPct}% do frete</Text>
+        <Text style={s.detalhe}>Saldo disponível para saque · você recebe {eu.comissaoPct}% do frete + incentivo nos pedidos agora</Text>
         <Text style={s.ganhosValor}>{formatarReais(eu.disponivel)}</Text>
         {eu.emLiberacao > 0 && <Text style={s.detalhe}>+ {formatarReais(eu.emLiberacao)} em liberação (corridas aceitas)</Text>}
         <Text style={s.link}>Ver saldo e pedir saque ›</Text>
@@ -260,6 +261,7 @@ export default function Motorista() {
 }
 
 const s = StyleSheet.create({
+  incentivo: { fontSize: 13, fontWeight: '700', color: cores.sucesso, marginTop: 2 },
   reputacao: { flexDirection: 'row', gap: 10 },
   repItem: { flex: 1, backgroundColor: cores.cartao, borderRadius: raio, padding: 14, gap: 2, ...sombra },
   repValor: { fontSize: 20, fontWeight: '700', color: cores.texto },

@@ -272,9 +272,14 @@ function Cartao({ c, onCancelar }: { c: Admin.CorridaAdmin; onCancelar: () => vo
         <Text style={s.valor}>{formatarReais(c.valor)}</Text>
         <Text style={s.detalhe}>
           {c.pago_em ? `${c.metodo === 'pix' ? 'Pix' : 'cartão'} · ${c.liberado_em ? 'liberado ao motorista' : c.status === 'cancelado' ? 'estorno' : '🔒 retido'}` : 'não pago'}
-          {c.ganho_motorista ? ` · motorista ${formatarReais(c.ganho_motorista)}` : ''}
+          {c.ganho_previsto ? ` · motorista ${formatarReais(c.ganho_previsto)}` : c.ganho_motorista ? ` · motorista ${formatarReais(c.ganho_motorista)}` : ''}
         </Text>
       </View>
+      {!!c.urgencia && c.urgencia > 0 && (
+        <Text style={s.detalhe}>
+          ⚡ Pedido agora: inclui urgência de {formatarReais(c.urgencia)} (motorista +{formatarReais(c.incentivo ?? 0)} · MOVI {formatarReais(c.urgencia - (c.incentivo ?? 0))})
+        </Text>
+      )}
       {c.status === 'cancelado' && (
         <Text style={s.erro}>
           Cancelada ({c.motivo === 'cliente_ausente' ? 'cliente não apareceu' : c.motivo === 'sem_motorista' ? 'sem motorista' : c.motivo === 'nao_pago' ? 'não pagou' : `por ${c.cancelado_por}`})

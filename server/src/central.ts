@@ -78,6 +78,7 @@ export type Config = ConfigAgenda & Liberacao & ConfigMoto & ConfigDelivery & {
   margem: number;
   urgencia: Urgencia;
   comissaoMotoristaPct: number; // parte do frete que vai para o saldo do motorista (80)
+  incentivoUrgencia: number; // R$ a mais para o motorista no pedido "agora" (a taxa de urgência fica com a MOVI)
   taxaDeslocamento: number; // R$ do motorista se o cliente cancelar/não aparecer com ele já no local
   esperaPagamentoMin: number; // prazo para pagar depois de pedir (o horário fica reservado)
   esperaConfirmacaoMin: number; // quanto o motorista espera o cliente confirmar no local
@@ -93,6 +94,7 @@ export const CONFIG_PADRAO: Config = {
   margem: 0,
   urgencia: URGENCIA_PADRAO,
   comissaoMotoristaPct: 80,
+  incentivoUrgencia: 4,
   taxaDeslocamento: 5,
   esperaPagamentoMin: 15,
   esperaConfirmacaoMin: 10,
@@ -177,6 +179,7 @@ const COLUNAS_NOVAS = [`ALTER TABLE corridas ADD COLUMN pagamento_ate TEXT`, `AL
   'ALTER TABLE motoristas ADD COLUMN senha_hash TEXT',
   'ALTER TABLE clientes ADD COLUMN senha_hash TEXT',
   "ALTER TABLE corridas ADD COLUMN veiculo TEXT NOT NULL DEFAULT 'carro'",
+  'ALTER TABLE corridas ADD COLUMN urgencia REAL NOT NULL DEFAULT 0',
   'ALTER TABLE corridas ADD COLUMN km_desloc REAL',
   ...["tipo TEXT NOT NULL DEFAULT 'cliente'", 'loja_nome TEXT', 'cnpj TEXT', "status TEXT NOT NULL DEFAULT 'aprovado'"].map((c) => `ALTER TABLE clientes ADD COLUMN ${c}`)];
 
@@ -310,7 +313,7 @@ export class Central extends DurableObject<Env> {
       `Coleta: ${c.coleta_nome ?? c.mercado_nome}${c.coleta_endereco && c.coleta_nome !== 'Casa' ? ` (${c.coleta_endereco})` : ''}`,
       `Destino: ${c.entrega_nome && c.entrega_nome !== 'Casa' ? `${c.entrega_nome} (${c.entrega_endereco})` : (c.entrega_endereco ?? cli?.endereco ?? '-')}`,
       c.descricao ? `O que: ${c.descricao}` : '',
-      `Frete: ${brl(Number(c.valor))}`,
+      `Frete: ${brl(Number(c.valor))}${Number(c.urgencia) > 0 ? ` (urgência ${brl(Number(c.urgencia))} · motorista recebe ${brl(this.ganhoDe(c))}, com +${brl(this.incentivoDe(c))} de incentivo)` : ''}`,
       mot ? `Motorista: ${mot.nome} (${mot.placa})` : '',
       Number(c.reembolso) > 0 ? `⚠️ ESTORNAR ${brl(Number(c.reembolso))} ao cliente pelo app da InfinitePay` : '',
     ]
@@ -319,8 +322,20 @@ export class Central extends DurableObject<Env> {
   }
 
   // ---------- dinheiro ----------
-  private ganho(valor: number) {
-    return r2((valor * this.config().comissaoMotoristaPct) / 100);
+  /**
+   * Ganho do motorista: a comissão sobre o frete SEM a taxa de urgência + o incentivo fixo do pedido
+   * "agora" (nunca mais que a própria urgência). O resto da urgência fica com a MOVI; o motorista
+   * não vê o valor que o cliente pagou.
+   */
+  private ganhoDe(c: Linha) {
+    const cfg = this.config();
+    const urg = Math.max(0, Number(c.urgencia ?? 0));
+    const base = Number(c.valor) - urg;
+    return r2((base * cfg.comissaoMotoristaPct) / 100 + (urg > 0 ? Math.min(cfg.incentivoUrgencia, urg) : 0));
+  }
+  private incentivoDe(c: Linha) {
+    const urg = Math.max(0, Number(c.urgencia ?? 0));
+    return urg > 0 ? r2(Math.min(this.config().incentivoUrgencia, urg)) : 0;
   }
   private creditar(motoristaId: unknown, corridaId: unknown, tipo: 'corrida' | 'taxa' | 'gorjeta', valor: number) {
     if (!motoristaId || valor <= 0) return;
@@ -334,7 +349,7 @@ export class Central extends DurableObject<Env> {
   /** Libera o valor retido para o saldo do motorista (uma vez só). */
   private liberar(c: Linha) {
     if (this.corrida(c.id)?.liberado_em) return;
-    const ganho = this.ganho(Number(c.valor));
+    const ganho = this.ganhoDe(this.corrida(c.id) ?? c);
     this.sql.exec(`UPDATE corridas SET liberado_em=?, ganho_motorista=? WHERE id=?`, iso(Date.now()), ganho, c.id);
     this.creditar(c.motorista_id, c.id, 'corrida', ganho);
     if (c.pedido_id) this.delivery.entregue(c.pedido_id); // delivery: produtos para o saldo da loja
@@ -342,7 +357,7 @@ export class Central extends DurableObject<Env> {
   saldo(motoristaId: unknown) {
     const creditos = Number(this.um(`SELECT COALESCE(SUM(valor),0) AS v FROM creditos WHERE motorista_id=?`, motoristaId)?.v ?? 0);
     const sacado = Number(this.um(`SELECT COALESCE(SUM(valor),0) AS v FROM saques WHERE motorista_id=? AND status IN ('solicitado','pago')`, motoristaId)?.v ?? 0);
-    const emLiberacao = this.q(`SELECT valor FROM corridas WHERE motorista_id=? AND status IN ('aceito','no_local','em_andamento') AND liberado_em IS NULL`, motoristaId).reduce((s, c) => s + this.ganho(Number(c.valor)), 0);
+    const emLiberacao = this.q(`SELECT valor, urgencia FROM corridas WHERE motorista_id=? AND status IN ('aceito','no_local','em_andamento') AND liberado_em IS NULL`, motoristaId).reduce((s, c) => s + this.ganhoDe(c), 0);
     const ultimo = this.um<{ criado_em: string }>(`SELECT criado_em FROM saques WHERE motorista_id=? AND status IN ('solicitado','pago') ORDER BY criado_em DESC LIMIT 1`, motoristaId);
     const proximo = ultimo ? Date.parse(ultimo.criado_em) + this.config().saqueDias * DIA : 0;
     return { disponivel: r2(creditos - sacado), emLiberacao: r2(emLiberacao), totalGanho: r2(creditos), proximoSaqueEm: proximo > Date.now() ? iso(proximo) : null };
@@ -430,7 +445,7 @@ export class Central extends DurableObject<Env> {
     // Só contagens (sem dados pessoais): ajuda a entender um "nenhum motorista livre".
     const n = (q: string, ...x: unknown[]) => Number(this.um(q, ...x)?.n ?? 0);
     const diag = {
-      v: 3,
+      v: 4,
       online: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1`),
       comPosicao: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1 AND loc_em > ?`, iso(agora - LOC_VALIDA_MIN * MIN)),
       livres,
@@ -489,7 +504,11 @@ export class Central extends DurableObject<Env> {
     const retorno = servicoPorId(servico).retorno;
     const kmViagem = ida ? t.kmIda : t.kmVolta, minViagem = ida ? t.minIda : t.minVolta;
     const p = { kmDesloc: desloc.km, minDesloc: desloc.min, kmViagem: retorno ? t.kmIda + t.kmVolta : kmViagem, minViagem: retorno ? t.minIda + t.minVolta : minViagem };
-    return { valor: precoServico(p, this.config(), servico, agendado, veiculo), km: r2(p.kmDesloc + p.kmViagem), minutos: Math.round(p.minDesloc + p.minViagem), kmDesloc: p.kmDesloc };
+    const cfg = this.config();
+    const valor = precoServico(p, cfg, servico, agendado, veiculo);
+    // Parte do valor que é taxa de urgência (pedido agora): fica com a MOVI, menos o incentivo do motorista.
+    const urgencia = agendado ? 0 : r2(Math.max(0, valor - precoServico(p, cfg, servico, true, veiculo)));
+    return { valor, urgencia, km: r2(p.kmDesloc + p.kmViagem), minutos: Math.round(p.minDesloc + p.minViagem), kmDesloc: p.kmDesloc };
   }
 
   private async cotar(servico: ServicoId, coleta: Ponto, entrega: Ponto, agendado: boolean, veiculo: Veiculo = 'carro') {
@@ -593,7 +612,8 @@ export class Central extends DurableObject<Env> {
       mercado: { id: c.mercado_id, nome: v.coleta.nome, endereco: v.coleta.endereco, lat: v.coleta.lat, lon: v.coleta.lon },
       solicitante: nomeCli,
       cliente: cli ? { nome: nomeCli, telefone: null, endereco: v.entrega.endereco, lat: v.entrega.lat, lon: v.entrega.lon } : null,
-      km: c.km, minutos: c.minutos, valor: c.valor, ganho: c.ganho_motorista ?? this.ganho(Number(c.valor)),
+      // O motorista vê só o que ele recebe (sem o valor pago pelo cliente nem a taxa de urgência).
+      km: c.km, minutos: c.minutos, valor: c.ganho_motorista ?? this.ganhoDe(c), ganho: c.ganho_motorista ?? this.ganhoDe(c), incentivo: this.incentivoDe(c),
       gorjeta: this.um(`SELECT valor FROM gorjetas WHERE corrida_id=? AND status='paga'`, c.id)?.valor ?? null,
       chegouEm: c.chegou_em, liberadoEm: c.liberado_em, esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, raioChegadaM: cfg.raioChegadaM, taxaDeslocamento: cfg.taxaDeslocamento,
     };
@@ -1044,12 +1064,12 @@ export class Central extends DurableObject<Env> {
         const janela = agendado ? `${rotuloDia(dataLocal(v.inicio), dataLocal(agora))} · ${horaLocal(v.inicio)}` : 'Agora';
         this.sql.exec(
           `INSERT INTO corridas (id, cliente_id, mercado_id, mercado_nome, agendado, inicio, fim, janela, status, valor, km, minutos, criado_em, pagamento_ate,
-             servico, descricao, coleta_nome, coleta_endereco, coleta_lat, coleta_lon, entrega_nome, entrega_endereco, entrega_lat, entrega_lon, cliente_na_coleta, retorno, pacote_id, veiculo, km_desloc)
-           VALUES (?,?,?,?,?,?,?,?, 'pagamento_pendente', ?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+             servico, descricao, coleta_nome, coleta_endereco, coleta_lat, coleta_lon, entrega_nome, entrega_endereco, entrega_lat, entrega_lon, cliente_na_coleta, retorno, pacote_id, veiculo, km_desloc, urgencia)
+           VALUES (?,?,?,?,?,?,?,?, 'pagamento_pendente', ?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           id, cli.id, de.localId, de.nome, agendado ? 1 : 0, iso(v.inicio), iso(v.inicio + cfg.bloqueioMin * MIN), janela,
           cot.valor, cot.km, cot.minutos, iso(agora), iso(agora + cfg.esperaPagamentoMin * MIN),
           sv.id, descricao || null, de.nome, de.endereco, de.lat, de.lon, para.nome, para.endereco, para.lat, para.lon, sv.clienteNaColeta ? 1 : 0, sv.retorno ? 1 : 0, pacote,
-          veiculo, cot.kmDesloc,
+          veiculo, cot.kmDesloc, agendado ? 0 : cot.urgencia,
         );
       }
       try {
@@ -1410,7 +1430,9 @@ export class Central extends DurableObject<Env> {
         this.q(`SELECT c.*, COALESCE(cl.nome, '(conta excluída)') AS cliente_nome, cl.telefone AS cliente_telefone, COALESCE(cl.endereco, c.entrega_endereco) AS cliente_endereco, cl.lat AS cliente_lat, cl.lon AS cliente_lon,
                 m.nome AS motorista_nome, m.placa AS motorista_placa, m.telefone AS motorista_telefone
          FROM corridas c LEFT JOIN clientes cl ON cl.id=c.cliente_id LEFT JOIN motoristas m ON m.id=c.motorista_id
-         WHERE c.status!='pagamento_pendente' OR c.pagamento_ate > ? ORDER BY c.inicio DESC LIMIT 300`, iso(agora)),
+         WHERE c.status!='pagamento_pendente' OR c.pagamento_ate > ? ORDER BY c.inicio DESC LIMIT 300`, iso(agora)).map((c) => ({
+          ...c, incentivo: this.incentivoDe(c), ganho_previsto: c.ganho_motorista ?? this.ganhoDe(c),
+        })),
       );
     if (metodo === 'GET' && p === '/v2/admin/motoristas')
       return json(
@@ -1546,6 +1568,7 @@ export class Central extends DurableObject<Env> {
         return erro('Tabela da moto inválida.');
       if (!Array.isArray(cfg.motoServicos) || cfg.motoServicos.some((x) => !SERVICOS.some((s) => s.id === x))) return erro('Serviços de moto inválidos.');
       if (!(cfg.deslocamentoPadraoKm >= 0 && cfg.deslocamentoPadraoKm <= cfg.deslocamentoMaxKm && cfg.deslocamentoMaxKm <= 50)) return erro('Deslocamento inválido.');
+      if (!(cfg.incentivoUrgencia >= 0 && cfg.incentivoUrgencia <= 100)) return erro('Incentivo de urgência inválido.');
       if (!(cfg.deliveryMensalidade >= 1 && cfg.deliveryMensalidade <= 1000 && cfg.deliveryAceiteMin >= 3 && cfg.deliveryAceiteMin <= 60)) return erro('Valores do delivery inválidos.');
       cfg.deliveryUrgencia = !!cfg.deliveryUrgencia;
       cfg.motoAtivo = !!cfg.motoAtivo;
