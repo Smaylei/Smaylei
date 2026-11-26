@@ -17,7 +17,7 @@
 // Pix na chave CPF do motorista: o dono faz o Pix e marca a ordem como paga no Admin.
 
 import { DurableObject } from 'cloudflare:workers';
-import { cidadeDe, CIDADES, nomeCidade } from '../../src/data/cidades';
+import { cidadeDe, CIDADES, nomeCidade, type CidadeId } from '../../src/data/cidades';
 import { LOCAIS_INICIAIS, LOCAIS_REGIAO } from '../../src/data/locais';
 import { MERCADOS } from '../../src/data/mercados';
 import {
@@ -167,6 +167,7 @@ const COLUNAS_NOVAS = [`ALTER TABLE corridas ADD COLUMN pagamento_ate TEXT`, `AL
     'entrega_lat REAL', 'entrega_lon REAL', 'cliente_na_coleta INTEGER NOT NULL DEFAULT 1', 'retorno INTEGER NOT NULL DEFAULT 0', 'pacote_id TEXT', 'chegou_destino_em TEXT',
   ].map((c) => `ALTER TABLE corridas ADD COLUMN ${c}`),
   // lojistas: a loja é uma conta de solicitante com status (aprovação pelo Admin)
+  'ALTER TABLE locais ADD COLUMN cidade TEXT',
   ...["tipo TEXT NOT NULL DEFAULT 'cliente'", 'loja_nome TEXT', 'cnpj TEXT', "status TEXT NOT NULL DEFAULT 'aprovado'"].map((c) => `ALTER TABLE clientes ADD COLUMN ${c}`)];
 
 export const ROTULO: Record<string, string> = {
@@ -226,11 +227,25 @@ export class Central extends DurableObject<Env> {
         this.sql.exec(`INSERT OR IGNORE INTO locais (id, categoria, nome, endereco, lat, lon, criado_em) VALUES (?,?,?,?,?,?,?)`, l.id, l.categoria, l.nome, l.endereco, l.lat, l.lon, iso(Date.now()));
       this.sql.exec(`INSERT INTO config (chave, valor) VALUES (?, '1')`, chave);
     }
+    // Serviços de lojista chegaram depois: liga uma vez na configuração já salva.
+    if (!this.um(`SELECT valor FROM config WHERE chave='lib_lojista_v1'`)) {
+      const cfg = this.config();
+      for (const id of ['loja_entrega', 'loja_cliente'] as const) if (!cfg.servicosAtivos.includes(id)) cfg.servicosAtivos.push(id);
+      this.salvarConfig(cfg);
+      this.sql.exec(`INSERT INTO config (chave, valor) VALUES ('lib_lojista_v1', '1')`);
+    }
+    // Cidade de cada local (a lista da região tem o prefixo da cidade no id).
+    const PREFIXO: Record<string, string> = { jar: 'jaragua', mas: 'massaranduba', joi: 'joinville', sch: 'schroeder' };
+    for (const l of this.q(`SELECT id, lat, lon FROM locais WHERE cidade IS NULL`)) {
+      const semente = [...LOCAIS_INICIAIS, ...LOCAIS_REGIAO].some((x) => x.id === l.id);
+      const cidade = semente ? (PREFIXO[String(l.id).slice(0, 3)] ?? 'guaramirim') : cidadeDe({ lat: Number(l.lat), lon: Number(l.lon) });
+      this.sql.exec(`UPDATE locais SET cidade=? WHERE id=?`, cidade, l.id);
+    }
   }
   private locais(todos = false) {
-    return this.q<{ id: string; categoria: string; nome: string; endereco: string; lat: number; lon: number; ativo: number }>(
-      `SELECT id, categoria, nome, endereco, lat, lon, ativo FROM locais ${todos ? '' : 'WHERE ativo=1'} ORDER BY categoria, nome`,
-    ).map((l) => ({ ...l, ativo: !!l.ativo, cidade: cidadeDe(l) }));
+    return this.q<{ id: string; categoria: string; nome: string; endereco: string; lat: number; lon: number; ativo: number; cidade: CidadeId | null }>(
+      `SELECT id, categoria, nome, endereco, lat, lon, ativo, cidade FROM locais ${todos ? '' : 'WHERE ativo=1'} ORDER BY categoria, nome`,
+    ).map((l) => ({ ...l, ativo: !!l.ativo, cidade: l.cidade ?? cidadeDe(l) }));
   }
 
   // ---------- utilidades de banco ----------
@@ -1328,7 +1343,7 @@ export class Central extends DurableObject<Env> {
     if (metodo === 'GET' && p === '/v2/admin/locais') return json(this.locais(true));
     const lm = p.match(/^\/v2\/admin\/locais(?:\/([\w-]+))?$/);
     if (lm && (metodo === 'POST' || metodo === 'PUT')) {
-      const b = await this.corpo<{ categoria?: string; nome?: string; endereco?: string; lat?: number; lon?: number; ativo?: boolean }>(req);
+      const b = await this.corpo<{ categoria?: string; nome?: string; endereco?: string; lat?: number; lon?: number; ativo?: boolean; cidade?: string }>(req);
       const atual = lm[1] ? this.um(`SELECT * FROM locais WHERE id=?`, lm[1]) : undefined;
       if (lm[1] && !atual) return erro('Local não encontrado.', 404);
       const l = {
@@ -1341,13 +1356,14 @@ export class Central extends DurableObject<Env> {
       if (l.endereco.length < 6) return erro('Informe o endereço.');
       if (!Number.isFinite(l.lat) || !Number.isFinite(l.lon)) return erro('Marque o local no mapa.');
       if (!cidadeDe(l)) return erro('Local fora da região atendida.');
+      const cidade = CIDADES.some((c) => c.id === b.cidade) ? b.cidade : ((atual?.cidade as string | undefined) ?? cidadeDe(l));
       const id = lm[1] ?? novoId(l.categoria);
       this.sql.exec(
-        `INSERT INTO locais (id, categoria, nome, endereco, lat, lon, ativo, criado_em) VALUES (?,?,?,?,?,?,?,?)
-         ON CONFLICT(id) DO UPDATE SET categoria=excluded.categoria, nome=excluded.nome, endereco=excluded.endereco, lat=excluded.lat, lon=excluded.lon, ativo=excluded.ativo`,
-        id, l.categoria, l.nome, l.endereco, l.lat, l.lon, l.ativo, iso(agora),
+        `INSERT INTO locais (id, categoria, nome, endereco, lat, lon, ativo, criado_em, cidade) VALUES (?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET categoria=excluded.categoria, nome=excluded.nome, endereco=excluded.endereco, lat=excluded.lat, lon=excluded.lon, ativo=excluded.ativo, cidade=excluded.cidade`,
+        id, l.categoria, l.nome, l.endereco, l.lat, l.lon, l.ativo, iso(agora), cidade,
       );
-      return json({ id, ...l, ativo: !!l.ativo });
+      return json({ id, ...l, ativo: !!l.ativo, cidade });
     }
     if (lm?.[1] && metodo === 'DELETE') {
       this.sql.exec(`DELETE FROM locais WHERE id=?`, lm[1]);
