@@ -4,7 +4,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import SeletorPonta, { escolhaCasa, type Escolha } from '../components/SeletorPonta';
 import { cores, raio, sombra } from '../components/tema';
-import { aceitaMoto, servicoPorId, VEICULOS, type Veiculo } from '../data/servicos';
+import { aceitaMoto, precoMoto, servicoPorId, VEICULOS, type Veiculo } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
 import { useCotacoes } from '../hooks/useCotacoes';
 import { api, type CorridaCliente, type Disponibilidade } from '../services/api';
@@ -149,7 +149,7 @@ export default function PedidoTela() {
                     {v.icone} {v.nome}
                   </Text>
                   {v.id === 'moto' && (
-                    <Text style={[s.segSub, veiculo === v.id && s.segTextoAtivo]}>a partir de {formatarReais(config.motoMinimo)}</Text>
+                    <Text style={[s.segSub, veiculo === v.id && s.segTextoAtivo]}>a partir de {formatarReais(precoMoto(0, config))}</Text>
                   )}
                 </Pressable>
               ))}

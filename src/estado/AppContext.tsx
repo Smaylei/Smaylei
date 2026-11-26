@@ -61,6 +61,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             motoMinimo: c.motoMinimo ?? MOTO_PADRAO.motoMinimo,
             motoKmIncluso: c.motoKmIncluso ?? MOTO_PADRAO.motoKmIncluso,
             motoPorKm: c.motoPorKm ?? MOTO_PADRAO.motoPorKm,
+            motoAcrescimoPct: c.motoAcrescimoPct ?? MOTO_PADRAO.motoAcrescimoPct,
           });
         if (c?.locais) setLocais((antes) => (JSON.stringify(antes) === JSON.stringify(c.locais) ? antes : c.locais!));
       })

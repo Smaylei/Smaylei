@@ -463,7 +463,7 @@ test('região: cidades vizinhas, cotação pelo servidor e lojista (aprovação,
 
 test('preço: deslocamento do motorista até a coleta + coleta até o destino; moto (motoboy) com fator e só nos serviços liberados', async () => {
   const cfg0 = (await call('/v2/config')).d;
-  assert.deepEqual([cfg0.motoMinimo, cfg0.motoKmIncluso, cfg0.motoPorKm], [9, 2, 1.8]);
+  assert.deepEqual([cfg0.motoMinimo, cfg0.motoKmIncluso, cfg0.motoPorKm, cfg0.motoAcrescimoPct], [9, 2, 1.8, 20]);
   assert.equal(cfg0.deslocamentoPadraoKm, 3);
   const c = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Gil Prado', cpf: '123.456.789-09', endereco: 'Rua K, 9, Centro', lat: -26.4790, lon: -48.9900 } });
   const cli = c.d.token;
@@ -488,14 +488,17 @@ test('preço: deslocamento do motorista até a coleta + coleta até o destino; m
   // moto: tabela própria — R$ 9,00 até 2 km + R$ 1,80 por km excedente, sobre os km totais (até a coleta + viagem)
   const tabela = (km) => Math.round((9 + Math.max(0, km - 2) * 1.8) * 100) / 100;
   assert.deepEqual([2, 3, 5, 8, 10].map(tabela), [9, 10.8, 14.4, 19.8, 23.4]);
+  // o cliente paga a tabela + 20% (o motoboy recebe 80% do total)
+  const cliente = (km) => Math.round(tabela(km) * 1.2 * 100) / 100;
+  assert.deepEqual([2, 3, 5, 8, 10].map(cliente), [10.8, 12.96, 17.28, 23.76, 28.08]);
   const moto = (await call('/v2/cotacoes', { metodo: 'POST', token: cli, corpo: { ...base, servico: 'buscar', veiculo: 'moto' } })).d.d;
-  assert.equal(moto.valor, tabela(moto.km), JSON.stringify(moto)); // agendado: sem urgência
+  assert.equal(moto.valor, cliente(moto.km), JSON.stringify(moto)); // agendado: sem urgência
   assert.ok(moto.km >= 3); // inclui o deslocamento padrão até a coleta
   const motoAgora = (await call('/v2/cotacoes', { metodo: 'POST', token: cli, corpo: { ...base, agendado: false, servico: 'buscar', veiculo: 'moto' } })).d.d;
-  assert.equal(motoAgora.valor, Math.round(tabela(motoAgora.km) * 1.1 * 100) / 100); // agora: + urgência (10%)
+  assert.equal(motoAgora.valor, Math.round(cliente(motoAgora.km) * 1.1 * 100) / 100); // agora: + urgência (10%)
   await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { motoMinimo: 10, motoPorKm: 2 } });
   const nova = (await call('/v2/cotacoes', { metodo: 'POST', token: cli, corpo: { ...base, servico: 'buscar', veiculo: 'moto' } })).d.d;
-  assert.equal(nova.valor, Math.round((10 + Math.max(0, nova.km - 2) * 2) * 100) / 100);
+  assert.equal(nova.valor, Math.round(Math.round((10 + Math.max(0, nova.km - 2) * 2) * 100) / 100 * 1.2 * 100) / 100);
   await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { motoMinimo: 9, motoPorKm: 1.8 } });
   const naoPode = await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', veiculo: 'moto', coleta: { localId: 'cooper' }, agendado: false } });
   assert.match(naoPode.d.erro, /moto/);

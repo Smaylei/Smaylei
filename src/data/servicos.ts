@@ -170,10 +170,12 @@ export const VEICULOS: { id: Veiculo; nome: string; icone: string }[] = [
  * valor mínimo que cobre os primeiros km + valor por km excedente (km totais: moto até a coleta +
  * coleta até o destino). Padrão: R$ 9,00 até 2 km + R$ 1,80 por km acima de 2 km.
  */
-export type ConfigMoto = { motoAtivo: boolean; motoServicos: ServicoId[]; motoMinimo: number; motoKmIncluso: number; motoPorKm: number };
-export const MOTO_PADRAO: ConfigMoto = { motoAtivo: true, motoServicos: ['buscar', 'encomenda', 'loja_entrega'], motoMinimo: 9, motoKmIncluso: 2, motoPorKm: 1.8 };
+export type ConfigMoto = { motoAtivo: boolean; motoServicos: ServicoId[]; motoMinimo: number; motoKmIncluso: number; motoPorKm: number; motoAcrescimoPct: number };
+export const MOTO_PADRAO: ConfigMoto = { motoAtivo: true, motoServicos: ['buscar', 'encomenda', 'loja_entrega'], motoMinimo: 9, motoKmIncluso: 2, motoPorKm: 1.8, motoAcrescimoPct: 20 };
 
-/** Tabela da moto para uma distância total (antes da urgência). */
+/** Tabela divulgada da moto para uma distância total (sem o acréscimo da plataforma e sem urgência). */
+/** O cliente paga a tabela + o acréscimo da plataforma (padrão 20%); o motoboy recebe a comissão sobre o total. */
+export const precoMoto = (km: number, cfg: ConfigMoto) => Math.round(tarifaMoto(km, cfg) * (1 + cfg.motoAcrescimoPct / 100) * 100) / 100;
 export const tarifaMoto = (km: number, cfg: ConfigMoto) => Math.round((cfg.motoMinimo + Math.max(0, km - cfg.motoKmIncluso) * cfg.motoPorKm) * 100) / 100;
 export const aceitaMoto = (servico: ServicoId, cfg: ConfigMoto) => cfg.motoAtivo && cfg.motoServicos.includes(servico);
 
@@ -188,7 +190,7 @@ export type Percurso = { kmDesloc: number; minDesloc: number; kmViagem: number; 
  * Moto: tabela própria (mínimo + km excedente) sobre os km totais; a urgência do pedido "agora" vale igual.
  */
 export function precoServico(p: Percurso, cfg: ConfigPreco, servico: ServicoId, agendado: boolean, veiculo: Veiculo = 'carro') {
-  if (veiculo === 'moto') return precoFrete(tarifaMoto(p.kmDesloc + p.kmViagem, cfg), agendado, cfg.urgencia);
+  if (veiculo === 'moto') return precoFrete(precoMoto(p.kmDesloc + p.kmViagem, cfg), agendado, cfg.urgencia);
   const espera = servico === 'borracharia' ? (cfg.esperaBorrachariaMin ?? 20) : 0;
   const t = { kmIda: p.kmDesloc, minIda: p.minDesloc + espera, kmVolta: p.kmViagem, minVolta: p.minViagem };
   const sugerido = precoSugerido(cfg.tarifas.map((x) => estimarIdaEVolta(t, x)), cfg.margem);

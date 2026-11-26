@@ -46,8 +46,9 @@ região já cadastrados (OpenStreetMap). Admin → *Serviços e cidades* liga/de
 - **Moto (motoboy)**: o motorista escolhe carro ou moto no cadastro; corridas de moto só vão para motos. O Admin
   liga a moto, escolhe os serviços em que ela entra (padrão: só buscar compras, encomenda, entrega do lojista) e a
   **tabela da moto**: R$ 9,00 até 2 km + R$ 1,80 por km excedente, sobre os km totais (moto até a coleta + coleta
-  até o destino). Ex.: 3 km R$ 10,80 · 5 km R$ 14,40 · 8 km R$ 19,80 · 10 km R$ 23,40. Pedido para agora soma a
-  urgência (+10%). Tudo editável no Admin → Serviços e cidades.
+  até o destino). Ex.: 3 km R$ 10,80 · 5 km R$ 14,40 · 8 km R$ 19,80 · 10 km R$ 23,40. O cliente paga a tabela
+  **+ 20%** (acréscimo da MOVI) e o motoboy recebe 80% do total: até 2 km o cliente paga R$ 10,80 e o motoboy recebe
+  R$ 8,64. Pedido para agora soma a urgência (+10%). Tudo editável no Admin → Serviços e cidades.
 
 **Lançamento: só mercados.** Os demais serviços e as categorias (padarias, farmácias, gás e bebidas, doces
 e festa, mecânicos, borracharias) já estão prontos e ficam desligados até o Admin liberar em

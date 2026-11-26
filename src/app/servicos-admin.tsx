@@ -3,11 +3,11 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { cores, raio, sombra } from '../components/tema';
 import { CIDADES } from '../data/cidades';
-import { CATEGORIAS, MODALIDADES, SERVICOS, tarifaMoto, type CategoriaId, type ConfigMoto, type Liberacao, type ServicoId } from '../data/servicos';
+import { CATEGORIAS, MODALIDADES, precoMoto, SERVICOS, tarifaMoto, type CategoriaId, type ConfigMoto, type Liberacao, type ServicoId } from '../data/servicos';
 import { formatarReais } from '../services/preco';
 import * as Admin from '../services/admin';
 
-type Ajustes = Liberacao & ConfigMoto & { deslocamentoPadraoKm: number; deslocamentoMaxKm: number };
+type Ajustes = Liberacao & ConfigMoto & { deslocamentoPadraoKm: number; deslocamentoMaxKm: number; comissaoMotoristaPct: number };
 
 /**
  * Liberação gradual: tudo já está pronto, e cada serviço/categoria só aparece para os clientes
@@ -15,7 +15,7 @@ type Ajustes = Liberacao & ConfigMoto & { deslocamentoPadraoKm: number; deslocam
  */
 export default function ServicosAdmin() {
   const [lib, setLib] = useState<Ajustes | null>(null);
-  const [tabela, setTabela] = useState({ minimo: '', incluso: '', porKm: '' });
+  const [tabela, setTabela] = useState({ minimo: '', incluso: '', porKm: '', acrescimo: '' });
   const [desloc, setDesloc] = useState('');
   const [salvando, setSalvando] = useState(false);
 
@@ -24,10 +24,10 @@ export default function ServicosAdmin() {
       const c = (await Admin.resumo()).config;
       setLib({
         servicosAtivos: c.servicosAtivos, categoriasAtivas: c.categoriasAtivas, outroEnderecoLoja: c.outroEnderecoLoja, cidadesAtivas: c.cidadesAtivas,
-        motoAtivo: c.motoAtivo, motoServicos: c.motoServicos, motoMinimo: c.motoMinimo, motoKmIncluso: c.motoKmIncluso, motoPorKm: c.motoPorKm, deslocamentoPadraoKm: c.deslocamentoPadraoKm, deslocamentoMaxKm: c.deslocamentoMaxKm,
+        motoAtivo: c.motoAtivo, motoServicos: c.motoServicos, motoMinimo: c.motoMinimo, motoKmIncluso: c.motoKmIncluso, motoPorKm: c.motoPorKm, motoAcrescimoPct: c.motoAcrescimoPct, comissaoMotoristaPct: c.comissaoMotoristaPct, deslocamentoPadraoKm: c.deslocamentoPadraoKm, deslocamentoMaxKm: c.deslocamentoMaxKm,
       });
       const br = (n: number) => String(n).replace('.', ',');
-      setTabela({ minimo: br(c.motoMinimo), incluso: br(c.motoKmIncluso), porKm: br(c.motoPorKm) });
+      setTabela({ minimo: br(c.motoMinimo), incluso: br(c.motoKmIncluso), porKm: br(c.motoPorKm), acrescimo: br(c.motoAcrescimoPct) });
       setDesloc(String(c.deslocamentoPadraoKm).replace('.', ','));
     } catch (e) {
       Alert.alert('Erro', (e as Error).message);
@@ -126,13 +126,17 @@ export default function ServicosAdmin() {
             />
           ))}
         <Text style={[s.item, { marginTop: 10 }]}>Tabela da moto</Text>
-        <Text style={s.sub}>Km totais = moto até a coleta + coleta até o destino. Pedido para agora ainda soma a urgência.</Text>
+        <Text style={s.sub}>
+          Km totais = moto até a coleta + coleta até o destino. O cliente paga a tabela + o acréscimo da MOVI; o motoboy recebe {lib.comissaoMotoristaPct}% do que o
+          cliente paga. Pedido para agora ainda soma a urgência.
+        </Text>
         <View style={s.tabela}>
           {(
             [
               ['minimo', 'Valor mínimo (R$)'],
               ['incluso', 'Km incluídos no mínimo'],
               ['porKm', 'R$ por km excedente'],
+              ['acrescimo', 'Acréscimo da MOVI (%)'],
             ] as const
           ).map(([k, rotulo]) => (
             <View key={k} style={s.tabelaCampo}>
@@ -144,21 +148,32 @@ export default function ServicosAdmin() {
             style={[s.ok, { alignSelf: 'flex-end' }]}
             disabled={salvando}
             onPress={() => {
-              const [minimo, incluso, porKm] = [numero(tabela.minimo), numero(tabela.incluso), numero(tabela.porKm)];
-              if (!(minimo >= 1 && incluso >= 0 && porKm >= 0)) return Alert.alert('Moto', 'Confira os valores da tabela.');
-              salvar({ ...lib, motoMinimo: minimo, motoKmIncluso: incluso, motoPorKm: porKm });
+              const [minimo, incluso, porKm, acrescimo] = [numero(tabela.minimo), numero(tabela.incluso), numero(tabela.porKm), numero(tabela.acrescimo)];
+              if (!(minimo >= 1 && incluso >= 0 && porKm >= 0 && acrescimo >= 0 && acrescimo <= 200)) return Alert.alert('Moto', 'Confira os valores da tabela.');
+              salvar({ ...lib, motoMinimo: minimo, motoKmIncluso: incluso, motoPorKm: porKm, motoAcrescimoPct: acrescimo });
             }}
           >
             <Text style={s.okTexto}>Salvar tabela</Text>
           </Pressable>
         </View>
         <View style={s.exemplos}>
-          {[2, 3, 5, 8, 10].map((km) => (
-            <View key={km} style={s.exemplo}>
-              <Text style={s.sub}>{km === lib.motoKmIncluso ? `até ${km} km` : `${km} km`}</Text>
-              <Text style={s.item}>{formatarReais(tarifaMoto(km, lib))}</Text>
-            </View>
-          ))}
+          <View style={s.exemploRotulos}>
+            <Text style={s.sub}>Km</Text>
+            <Text style={s.sub}>Tabela</Text>
+            <Text style={s.sub}>Cliente paga</Text>
+            <Text style={s.sub}>Motoboy recebe</Text>
+          </View>
+          {[2, 3, 5, 8, 10].map((km) => {
+            const cliente = precoMoto(km, lib);
+            return (
+              <View key={km} style={s.exemplo}>
+                <Text style={s.sub}>{km === lib.motoKmIncluso ? `até ${km} km` : `${km} km`}</Text>
+                <Text style={s.sub}>{formatarReais(tarifaMoto(km, lib))}</Text>
+                <Text style={s.item}>{formatarReais(cliente)}</Text>
+                <Text style={[s.sub, { color: cores.sucesso }]}>{formatarReais(Math.round(cliente * lib.comissaoMotoristaPct) / 100)}</Text>
+              </View>
+            );
+          })}
         </View>
       </View>
 
@@ -225,6 +240,7 @@ const s = StyleSheet.create({
   tabelaCampo: { gap: 4, minWidth: 150 },
   campoLargo: { width: 150, backgroundColor: cores.fundo, borderRadius: 10, borderWidth: 1, borderColor: cores.borda, paddingHorizontal: 10, paddingVertical: 8, fontSize: 16, color: cores.texto },
   exemplos: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingTop: 6, paddingBottom: 4 },
-  exemplo: { backgroundColor: cores.fundo, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, minWidth: 92 },
+  exemplo: { backgroundColor: cores.fundo, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, minWidth: 104, gap: 2 },
+  exemploRotulos: { paddingVertical: 8, paddingRight: 4, gap: 2, justifyContent: 'flex-start' },
   okTexto: { color: '#fff', fontWeight: '700' },
 });
