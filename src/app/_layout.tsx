@@ -52,7 +52,8 @@ export default function Layout() {
             >
               {/* escolha de perfil */}
               <Stack.Screen name="index" options={{ headerShown: false }} />
-              {/* cliente */}
+              <Stack.Screen name="entrar" options={{ title: '' }} />
+            {/* cliente */}
               <Stack.Screen name="cliente" options={{ title: 'MOVI' }} />
               <Stack.Screen name="cadastro" options={{ title: 'Meu cadastro' }} />
               <Stack.Screen name="pedido" options={{ title: 'Pedido' }} />

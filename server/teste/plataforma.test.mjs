@@ -522,3 +522,48 @@ test('preço: deslocamento do motorista até a coleta + coleta até o destino; m
   assert.equal((await call(`/v2/ofertas/${pm.d.id}/aceitar`, { metodo: 'POST', token: motorista })).s, 409);
   assert.equal((await call(`/v2/ofertas/${pm.d.id}/aceitar`, { metodo: 'POST', token: mot2 })).d.status, 'aceito');
 });
+
+test('login: CPF + senha em outro aparelho (cliente, motorista, lojista por CNPJ), bloqueio por tentativas, criar/trocar senha e senha provisória', async () => {
+  const c = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Lia Neves', cpf: '246.813.579-28', senha: 'segredo1', endereco: 'Rua L, 3, Centro', lat: -26.4752, lon: -48.9930 } });
+  assert.equal(c.s, 200, JSON.stringify(c.d));
+  // recadastro com o mesmo CPF orienta a usar o Login
+  assert.match((await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Lia Neves', cpf: '24681357928', senha: 'outra12', endereco: 'Rua L, 3', lat: -26.4752, lon: -48.993 } })).d.erro, /Entrar/);
+  const ok = await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'cliente', documento: '246.813.579-28', senha: 'segredo1' } });
+  assert.equal(ok.s, 200, JSON.stringify(ok.d));
+  assert.equal(ok.d.token, c.d.token);
+  assert.equal(ok.d.endereco, 'Rua L, 3, Centro');
+  assert.equal((await call('/v2/eu', { token: ok.d.token })).d.temSenha, true);
+  // senha errada: 5 tentativas bloqueiam
+  for (let i = 0; i < 5; i++) assert.equal((await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'cliente', documento: '24681357928', senha: 'errada' } })).s, 401);
+  assert.equal((await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'cliente', documento: '24681357928', senha: 'segredo1' } })).s, 429);
+  avanca(16);
+  assert.equal((await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'cliente', documento: '24681357928', senha: 'segredo1' } })).s, 200);
+  // o mesmo CPF como cliente não entra como motorista
+  assert.equal((await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'motorista', documento: '24681357928', senha: 'segredo1' } })).s, 401);
+
+  // conta antiga (sem senha): pede para criar no aparelho ou pedir provisória; cria sem a atual
+  const antigo = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Rui Antigo', cpf: '135.792.468-28', endereco: 'Rua M, 4, Centro', lat: -26.4752, lon: -48.9930 } });
+  assert.equal(antigo.s, 200, JSON.stringify(antigo.d));
+  assert.match((await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'cliente', documento: '13579246828', senha: 'qualquer' } })).d.erro, /ainda não tem senha/);
+  assert.equal((await call('/v2/eu', { token: antigo.d.token })).d.temSenha, false);
+  assert.equal((await call('/v2/eu/senha', { metodo: 'POST', token: antigo.d.token, corpo: { nova: 'nova123' } })).s, 200);
+  assert.equal((await call('/v2/eu/senha', { metodo: 'POST', token: antigo.d.token, corpo: { atual: 'errada', nova: 'outra123' } })).s, 401);
+  assert.equal((await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'cliente', documento: '13579246828', senha: 'nova123' } })).s, 200);
+
+  // motorista: o do começo dos testes não tem senha → Admin gera uma provisória
+  const id = (await call('/v2/admin/motoristas', { token: ADM })).d.find((m) => m.nome === 'Smaylei Luiz').id;
+  const prov = await call(`/v2/admin/motoristas/${id}/senha`, { metodo: 'POST', token: ADM });
+  assert.match(prov.d.senha, /^\d{6}$/);
+  const m = await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'motorista', documento: '153.509.460-56', senha: prov.d.senha } });
+  assert.equal(m.d.token, motorista);
+
+  // lojista entra pelo CNPJ
+  const lj = await call('/v2/lojistas', { metodo: 'POST', corpo: { lojaNome: 'Padaria Sol', cnpj: '11.222.333/0001-81', nome: 'Ana Sol', cpf: '13579246828', telefone: '47 99999-2222', senha: 'padaria1', endereco: 'Rua 28 de Agosto, 900, Centro', lat: -26.4745, lon: -49.006 } });
+  assert.equal(lj.s, 200, JSON.stringify(lj.d));
+  const pelaLoja = await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'lojista', documento: '11.222.333/0001-81', senha: 'padaria1' } });
+  assert.equal(pelaLoja.d.token, lj.d.token);
+  assert.equal(pelaLoja.d.lojaNome, 'Padaria Sol');
+  // o mesmo CPF tem conta de cliente com outra senha: cada perfil tem a sua
+  assert.equal((await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'lojista', documento: '13579246828', senha: 'padaria1' } })).d.token, lj.d.token);
+  assert.equal((await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'cliente', documento: '13579246828', senha: 'nova123' } })).d.token, antigo.d.token);
+});

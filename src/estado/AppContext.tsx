@@ -11,7 +11,7 @@ import { MODO, SOLICITANTE } from '../variante';
 type Config = Liberacao & ConfigMoto & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin: number };
 
 /** Cadastro no servidor de quem pede (cliente ou loja). */
-export type Eu = { tipo: 'cliente' | 'lojista'; nome: string; status?: 'pendente' | 'aprovado' | 'bloqueado'; lojaNome?: string; cidade?: CidadeId | null };
+export type Eu = { tipo: 'cliente' | 'lojista'; nome: string; temSenha?: boolean; status?: 'pendente' | 'aprovado' | 'bloqueado'; lojaNome?: string; cidade?: CidadeId | null };
 
 type Ctx = {
   carregado: boolean;

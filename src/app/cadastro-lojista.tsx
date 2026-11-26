@@ -2,6 +2,7 @@ import { router, Stack } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import CampoEndereco from '../components/CampoEndereco';
+import CamposSenha, { senhaOk } from '../components/CamposSenha';
 import { BotaoInicio } from '../components/Marca';
 import { cores, raio, sombra } from '../components/tema';
 import { useApp } from '../estado/AppContext';
@@ -27,6 +28,8 @@ export default function CadastroLojista() {
   const [telefone, setTelefone] = useState(casa?.telefone ?? '');
   const [endereco, setEndereco] = useState(casa?.endereco ?? '');
   const [pin, setPin] = useState<{ lat: number; lon: number } | null>(casa ? { lat: casa.lat, lon: casa.lon } : null);
+  const [senha, setSenha] = useState('');
+  const [confirma, setConfirma] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -38,6 +41,7 @@ export default function CadastroLojista() {
     telefone.replace(/\D/g, '').length < 10 && 'telefone com DDD',
     endereco.trim().length < 5 && 'endereço da loja',
     !pin && 'a loja marcada no mapa',
+    !temConta && !senhaOk(senha, confirma) && 'senha (mínimo 6, igual nas duas)',
   ].filter(Boolean) as string[];
 
   async function salvar() {
@@ -48,7 +52,7 @@ export default function CadastroLojista() {
       if (!temConta) {
         const r = await api<{ token: string }>(null, '/v2/lojistas', {
           method: 'POST',
-          corpo: { lojaNome: loja.trim(), cnpj, nome: nome.trim(), cpf, telefone, endereco: endereco.trim(), lat: pin.lat, lon: pin.lon },
+          corpo: { lojaNome: loja.trim(), cnpj, nome: nome.trim(), cpf, telefone, senha, endereco: endereco.trim(), lat: pin.lat, lon: pin.lon },
         });
         await guardarToken('lojista', r.token);
       } else {
@@ -98,6 +102,8 @@ export default function CadastroLojista() {
       <TextInput style={s.input} value={telefone} onChangeText={setTelefone} placeholder="(47) 99999-9999" placeholderTextColor={cores.apagado} keyboardType="phone-pad" />
 
       <CampoEndereco rotulo="Endereço da loja (rua, número e bairro)" endereco={endereco} onEndereco={setEndereco} pin={pin} onPin={setPin} gps="Estou na loja" />
+
+      {!temConta && <CamposSenha senha={senha} confirma={confirma} onSenha={setSenha} onConfirma={setConfirma} />}
 
       {msg && <Text style={s.erro}>{msg}</Text>}
       {faltando.length > 0 && <Text style={s.falta}>Falta: {faltando.join(', ')}.</Text>}

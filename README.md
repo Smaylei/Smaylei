@@ -22,6 +22,13 @@ Três apps no mesmo projeto: **MOVI** (cliente), **MOVI Motorista** (parceiro) e
   Publicar de novo: `APP_VARIANT=admin npx expo export --clear --platform web --output-dir dist-admin &&
   node admin-web/gerar.mjs && npx wrangler deploy --config admin-web/wrangler.jsonc`.
 
+### Login
+
+Depois de escolher o perfil: **Entrar** (CPF + senha; lojista: CPF do responsável ou CNPJ) ou **Realizar cadastro**.
+Senha guardada com PBKDF2 (nunca em texto); 5 erros seguidos bloqueiam 15 minutos. Em cada perfil, **Minha conta**
+cria a senha (contas antigas), troca a senha e sai. Esqueceu: Admin → Clientes/Motoristas/Lojistas → *Senha
+provisória* (6 números) e a pessoa troca depois.
+
 ### Mapas sem Google (OpenStreetMap)
 
 | Parte | Serviço | Custo |

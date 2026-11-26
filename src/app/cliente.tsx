@@ -2,6 +2,7 @@ import { Redirect, router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { BotaoInicio, MarcaTopo } from '../components/Marca';
+import MinhaConta from '../components/MinhaConta';
 import { cores, raio, sombra } from '../components/tema';
 import { MARCA, MODALIDADES, servicosLiberados } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
@@ -9,7 +10,7 @@ import { api, ROTULO_STATUS, type CorridaCliente } from '../services/api';
 import { formatarReais } from '../services/preco';
 
 export default function Inicio() {
-  const { carregado, casa, temConta, config } = useApp();
+  const { carregado, casa, temConta, config, eu, recarregarEu } = useApp();
   const [ativas, setAtivas] = useState<CorridaCliente[]>([]);
 
   useFocusEffect(
@@ -28,7 +29,8 @@ export default function Inicio() {
   );
 
   if (!carregado) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
-  if (!casa || !temConta) return <Redirect href="/cadastro" />;
+  if (!temConta) return <Redirect href="/entrar" />;
+  if (!casa) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
 
   return (
     <ScrollView contentContainerStyle={s.conteudo}>
@@ -114,6 +116,7 @@ export default function Inicio() {
         Você paga pelo app (Pix ou cartão à vista); o valor fica retido até o motorista chegar e você confirmar. Acompanhe o carro em tempo real. Em breve: padarias,
         farmácias, gás e bebidas, doces e festas, oficinas e borracharias.
       </Text>
+      <MinhaConta temSenha={eu?.temSenha ?? true} onSenhaCriada={recarregarEu} />
     </ScrollView>
   );
 }

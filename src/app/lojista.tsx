@@ -2,6 +2,7 @@ import { Redirect, router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { BotaoInicio, MarcaTopo } from '../components/Marca';
+import MinhaConta from '../components/MinhaConta';
 import { cores, raio, sombra } from '../components/tema';
 import { MODALIDADES, servicosLiberados } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
@@ -31,7 +32,8 @@ export default function Lojista() {
   );
 
   if (!carregado) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
-  if (!temConta || !casa) return <Redirect href="/cadastro-lojista" />;
+  if (!temConta) return <Redirect href="/entrar" />;
+  if (!casa) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   const aprovada = eu?.status === 'aprovado';
 
   return (
@@ -101,6 +103,7 @@ export default function Lojista() {
       <Text style={s.como}>
         Você paga a corrida pelo app (Pix ou cartão à vista). O valor fica retido e só é liberado ao motorista quando você confirmar que ele chegou à loja.
       </Text>
+      <MinhaConta temSenha={eu?.temSenha ?? true} onSenhaCriada={recarregarEu} />
     </ScrollView>
   );
 }

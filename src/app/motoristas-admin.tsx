@@ -75,6 +75,7 @@ export default function MotoristasAdmin() {
                 <Doc rotulo="CNH" fonte={m.cnh ? fotos[m.cnh] : undefined} largo />
               </View>
               <View style={s.botoes}>
+                <Mini texto="Senha provisória" onPress={() => Admin.senhaProvisoria('motoristas', m.id, m.nome)} />
                 {m.status !== 'aprovado' && <Mini texto="Aprovar" onPress={() => acao(() => Admin.statusMotorista(m.id, 'aprovado'))} />}
                 {m.status !== 'bloqueado' && <Mini texto="Bloquear" perigo onPress={() => acao(() => Admin.statusMotorista(m.id, 'bloqueado'))} />}
               </View>

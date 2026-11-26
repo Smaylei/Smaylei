@@ -52,6 +52,7 @@ import {
 import { cpfValido } from '../../src/services/cpf';
 import { distanciaDoMapa, rotaEntre } from '../../src/services/grafo';
 import { caminhoOsrm, tabelaOsrm, trajetoEstimado, type Trajeto } from './rotas';
+import { conferir, gerarHash, senhaProvisoria, senhaValida } from './senha';
 import { distanciaRetaKm, URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../../src/services/preco';
 
 export interface Env {
@@ -163,6 +164,7 @@ CREATE TABLE IF NOT EXISTS locais (
   ativo INTEGER NOT NULL DEFAULT 1, criado_em TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS pacotes (
   id TEXT PRIMARY KEY, cliente_id TEXT NOT NULL, valor REAL NOT NULL, viagens INTEGER NOT NULL, checkout_url TEXT, criado_em TEXT NOT NULL, pago_em TEXT);
+CREATE TABLE IF NOT EXISTS login_tentativas (chave TEXT PRIMARY KEY, falhas INTEGER NOT NULL, ate TEXT);
 CREATE TABLE IF NOT EXISTS rotas_cache (chave TEXT PRIMARY KEY, km_ida REAL, km_volta REAL, min_ida REAL, min_volta REAL, criado_em TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS avaliacoes (
   corrida_id TEXT PRIMARY KEY, cliente_id TEXT NOT NULL, motorista_id TEXT, nota INTEGER NOT NULL, sugestao TEXT, criado_em TEXT NOT NULL, lida INTEGER NOT NULL DEFAULT 0);
@@ -178,6 +180,8 @@ const COLUNAS_NOVAS = [`ALTER TABLE corridas ADD COLUMN pagamento_ate TEXT`, `AL
   // lojistas: a loja é uma conta de solicitante com status (aprovação pelo Admin)
   'ALTER TABLE locais ADD COLUMN cidade TEXT',
   "ALTER TABLE motoristas ADD COLUMN veiculo TEXT NOT NULL DEFAULT 'carro'",
+  'ALTER TABLE motoristas ADD COLUMN senha_hash TEXT',
+  'ALTER TABLE clientes ADD COLUMN senha_hash TEXT',
   "ALTER TABLE corridas ADD COLUMN veiculo TEXT NOT NULL DEFAULT 'carro'",
   'ALTER TABLE corridas ADD COLUMN km_desloc REAL',
   ...["tipo TEXT NOT NULL DEFAULT 'cliente'", 'loja_nome TEXT', 'cnpj TEXT', "status TEXT NOT NULL DEFAULT 'aprovado'"].map((c) => `ALTER TABLE clientes ADD COLUMN ${c}`)];
@@ -740,11 +744,12 @@ export class Central extends DurableObject<Env> {
       if (nome.length < 3) return erro('Informe o nome completo.');
       if (!cpfValido(cpf)) return erro('CPF inválido.');
       if (endereco.length < 5 || typeof b.lat !== 'number' || typeof b.lon !== 'number') return erro('Informe o endereço e marque no mapa.');
-      if (this.um(`SELECT id FROM clientes WHERE cpf=? AND tipo='cliente'`, cpf)) return erro('Já existe um cadastro com esse CPF. Fale com o suporte para recuperar o acesso.', 409);
+      if (b.senha !== undefined && !senhaValida(b.senha)) return erro('A senha precisa ter pelo menos 6 caracteres.');
+      if (this.um(`SELECT id FROM clientes WHERE cpf=? AND tipo='cliente'`, cpf)) return erro('Já existe um cadastro com esse CPF. Volte e toque em Entrar para usar sua conta.', 409);
       const id = novoId('cli'), token = crypto.randomUUID() + crypto.randomUUID();
       this.sql.exec(
-        `INSERT INTO clientes (id, token, nome, cpf, telefone, foto, endereco, lat, lon, criado_em) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        id, token, nome, cpf, soDigitos(b.telefone) || null, null, endereco, b.lat, b.lon, iso(agora),
+        `INSERT INTO clientes (id, token, nome, cpf, telefone, foto, endereco, lat, lon, criado_em, senha_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        id, token, nome, cpf, soDigitos(b.telefone) || null, null, endereco, b.lat, b.lon, iso(agora), b.senha ? await gerarHash(String(b.senha)) : null,
       );
       return json({ id, token });
     }
@@ -760,12 +765,13 @@ export class Central extends DurableObject<Env> {
       if (endereco.length < 5 || typeof b.lat !== 'number' || typeof b.lon !== 'number') return erro('Informe o endereço da loja e marque no mapa.');
       const fora = this.foraDaArea({ lat: b.lat, lon: b.lon });
       if (fora) return erro(`Loja ${fora}.`);
+      if (b.senha !== undefined && !senhaValida(b.senha)) return erro('A senha precisa ter pelo menos 6 caracteres.');
       if (this.um(`SELECT id FROM clientes WHERE tipo='lojista' AND ((cnpj IS NOT NULL AND cnpj=?) OR (loja_nome=? AND cpf=?))`, cnpj || '-', loja, cpf))
-        return erro('Essa loja já tem cadastro. Fale com o suporte.', 409);
+        return erro('Essa loja já tem cadastro. Volte e toque em Entrar para usar sua conta.', 409);
       const id = novoId('loja'), token = crypto.randomUUID() + crypto.randomUUID();
       this.sql.exec(
-        `INSERT INTO clientes (id, token, nome, cpf, telefone, endereco, lat, lon, criado_em, tipo, loja_nome, cnpj, status) VALUES (?,?,?,?,?,?,?,?,?, 'lojista', ?,?, 'pendente')`,
-        id, token, nome, cpf, tel, endereco, b.lat, b.lon, iso(agora), loja, cnpj || null,
+        `INSERT INTO clientes (id, token, nome, cpf, telefone, endereco, lat, lon, criado_em, tipo, loja_nome, cnpj, status, senha_hash) VALUES (?,?,?,?,?,?,?,?,?, 'lojista', ?,?, 'pendente', ?)`,
+        id, token, nome, cpf, tel, endereco, b.lat, b.lon, iso(agora), loja, cnpj || null, b.senha ? await gerarHash(String(b.senha)) : null,
       );
       this.avisar(`🏪 NOVO LOJISTA para aprovar\n${loja}${cnpj ? ` (CNPJ ${cnpj})` : ''}\nResponsável: ${nome}\n${endereco}`);
       return json({ id, token, status: 'pendente' });
@@ -780,15 +786,47 @@ export class Central extends DurableObject<Env> {
       if (tel.length < 10) return erro('Informe o WhatsApp com DDD.');
       if (carro.length < 2) return erro(veiculo === 'moto' ? 'Informe o modelo da moto.' : 'Informe o modelo do carro.');
       if (!/^[A-Z]{3}\d[A-Z0-9]\d{2}$/.test(placa)) return erro('Placa inválida (ex.: ABC1D23).');
-      if (this.um(`SELECT id FROM motoristas WHERE cpf=?`, cpf)) return erro('Já existe um motorista com esse CPF.', 409);
+      if (b.senha !== undefined && !senhaValida(b.senha)) return erro('A senha precisa ter pelo menos 6 caracteres.');
+      if (this.um(`SELECT id FROM motoristas WHERE cpf=?`, cpf)) return erro('Já existe um motorista com esse CPF. Volte e toque em Entrar para usar sua conta.', 409);
       const id = novoId('mot'), token = crypto.randomUUID() + crypto.randomUUID();
       // A chave Pix dos saques é o CPF do motorista.
       this.sql.exec(
-        `INSERT INTO motoristas (id, token, nome, cpf, telefone, carro, placa, cor, pix, criado_em, veiculo) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-        id, token, nome, cpf, tel, carro, placa, String(b.cor ?? '').trim() || null, cpf, iso(agora), veiculo,
+        `INSERT INTO motoristas (id, token, nome, cpf, telefone, carro, placa, cor, pix, criado_em, veiculo, senha_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        id, token, nome, cpf, tel, carro, placa, String(b.cor ?? '').trim() || null, cpf, iso(agora), veiculo, b.senha ? await gerarHash(String(b.senha)) : null,
       );
       this.avisar(`🆕 NOVO ${veiculo === 'moto' ? 'MOTOBOY' : 'MOTORISTA'} para aprovar\n${nome} · ${veiculo === 'moto' ? '🏍️' : '🚗'} ${carro} ${placa}\nVeja os documentos em Motoristas.`);
       return json({ id, token });
+    }
+
+    // Login: CPF (lojista: CPF do responsável ou CNPJ) + senha. 5 erros seguidos bloqueiam 15 minutos.
+    if (metodo === 'POST' && p === '/v2/entrar') {
+      const b = await this.corpo<{ perfil?: string; documento?: string; senha?: string }>(req);
+      const perfil = b.perfil === 'motorista' || b.perfil === 'lojista' ? b.perfil : 'cliente';
+      const doc = soDigitos(b.documento), senha = String(b.senha ?? '');
+      if (doc.length !== 11 && !(perfil === 'lojista' && doc.length === 14)) return erro(perfil === 'lojista' ? 'Informe o CPF do responsável ou o CNPJ.' : 'Informe o CPF.');
+      const chave = `${perfil}:${doc}`;
+      const t = this.um(`SELECT * FROM login_tentativas WHERE chave=?`, chave);
+      if (t && Number(t.falhas) >= 5 && String(t.ate) > iso(agora)) return erro('Muitas tentativas erradas. Tente de novo em 15 minutos.', 429);
+      const contas =
+        perfil === 'motorista'
+          ? this.q(`SELECT * FROM motoristas WHERE cpf=?`, doc)
+          : perfil === 'lojista'
+            ? this.q(`SELECT * FROM clientes WHERE tipo='lojista' AND (cpf=? OR cnpj=?)`, doc, doc)
+            : this.q(`SELECT * FROM clientes WHERE tipo='cliente' AND cpf=?`, doc);
+      if (contas.length && contas.every((c) => !c.senha_hash))
+        return erro('Esta conta ainda não tem senha. No celular em que você se cadastrou, crie a senha em "Minha conta", ou peça uma senha provisória ao suporte da MOVI.', 409);
+      let conta: Linha | undefined;
+      for (const c of contas) if (await conferir(senha, String(c.senha_hash ?? ''))) conta = c;
+      if (!conta) {
+        const falhas = t && String(t.ate) > iso(agora) ? Number(t.falhas) + 1 : 1;
+        this.sql.exec(`INSERT OR REPLACE INTO login_tentativas (chave, falhas, ate) VALUES (?,?,?)`, chave, falhas, iso(agora + 15 * MIN));
+        return erro(perfil === 'lojista' ? 'CPF/CNPJ ou senha incorretos.' : 'CPF ou senha incorretos.', 401);
+      }
+      this.sql.exec(`DELETE FROM login_tentativas WHERE chave=?`, chave);
+      return json({
+        token: conta.token, perfil, nome: conta.nome, telefone: conta.telefone, endereco: conta.endereco ?? null, lat: conta.lat ?? null, lon: conta.lon ?? null,
+        lojaNome: conta.loja_nome ?? null, status: conta.status ?? null,
+      });
     }
 
     // InfinitePay
@@ -834,6 +872,17 @@ export class Central extends DurableObject<Env> {
       return json({ chave });
     }
 
+    // Criar ou trocar a senha (contas antigas criam a primeira sem informar a atual).
+    if (metodo === 'POST' && p === '/v2/eu/senha' && eu.tipo !== 'admin') {
+      const b = await this.corpo<{ atual?: string; nova?: string }>(req);
+      if (!senhaValida(b.nova)) return erro('A nova senha precisa ter pelo menos 6 caracteres.');
+      const tabela = eu.tipo === 'motorista' ? 'motoristas' : 'clientes';
+      const guardada = eu.linha?.senha_hash;
+      if (guardada && !(await conferir(String(b.atual ?? ''), String(guardada)))) return erro('A senha atual está incorreta.', 401);
+      this.sql.exec(`UPDATE ${tabela} SET senha_hash=? WHERE id=?`, await gerarHash(String(b.nova)), eu.id);
+      return json({ ok: true });
+    }
+
     // Preço e rota (mapa sem Google: OSRM/OpenStreetMap). O preço é o mesmo cobrado no pedido.
     if (metodo === 'POST' && p === '/v2/cotacoes') {
       // base = o lado já escolhido; pontos = as opções do outro lado (ex.: mercados da lista).
@@ -871,7 +920,7 @@ export class Central extends DurableObject<Env> {
     if (metodo === 'GET' && p === '/v2/eu')
       return json({
         tipo: cli.tipo === 'lojista' ? 'lojista' : 'cliente', id: cli.id, nome: cli.nome, telefone: cli.telefone, endereco: cli.endereco, lat: cli.lat, lon: cli.lon,
-        temFoto: !!cli.foto, status: cli.status, lojaNome: cli.loja_nome, cnpj: cli.cnpj, cidade: cidadeDe({ lat: Number(cli.lat), lon: Number(cli.lon) }),
+        temFoto: !!cli.foto, temSenha: !!cli.senha_hash, status: cli.status, lojaNome: cli.loja_nome, cnpj: cli.cnpj, cidade: cidadeDe({ lat: Number(cli.lat), lon: Number(cli.lon) }),
       });
     if (metodo === 'PUT' && p === '/v2/eu') {
       const b = await this.corpo<Record<string, unknown>>(req);
@@ -1079,7 +1128,7 @@ export class Central extends DurableObject<Env> {
       const s = this.saldo(mot.id);
       return json({
         tipo: 'motorista', id: mot.id, nome: mot.nome, telefone: mot.telefone, carro: mot.carro, placa: mot.placa, cor: mot.cor, pix: mot.cpf, veiculo: mot.veiculo ?? 'carro',
-        status: mot.status, online: !!mot.online, temSelfie: !!mot.selfie, temCnh: !!mot.cnh, docsObrigatorios: !!this.env.DOCS,
+        status: mot.status, online: !!mot.online, temSenha: !!mot.senha_hash, temSelfie: !!mot.selfie, temCnh: !!mot.cnh, docsObrigatorios: !!this.env.DOCS,
         ...s, comissaoPct: cfg.comissaoMotoristaPct, ...this.notaMotorista(mot.id),
         agendaLink: `${url.origin}/agenda.ics?m=${mot.id}&k=${await this.chaveAgenda(String(mot.id))}`,
       });
@@ -1351,6 +1400,14 @@ export class Central extends DurableObject<Env> {
       if (!['aprovado', 'bloqueado', 'pendente'].includes(String(b.status))) return erro('Status inválido.');
       this.sql.exec(`UPDATE motoristas SET status=?, online=CASE WHEN ?='aprovado' THEN online ELSE 0 END WHERE id=?`, b.status, b.status, mm[1]);
       return json({ ok: true });
+    }
+    const spm = p.match(/^\/v2\/admin\/(clientes|lojistas|motoristas)\/([\w-]+)\/senha$/);
+    if (metodo === 'POST' && spm) {
+      const tabela = spm[1] === 'motoristas' ? 'motoristas' : 'clientes';
+      if (!this.um(`SELECT id FROM ${tabela} WHERE id=?`, spm[2])) return erro('Cadastro não encontrado.', 404);
+      const senha = senhaProvisoria();
+      this.sql.exec(`UPDATE ${tabela} SET senha_hash=? WHERE id=?`, await gerarHash(senha), spm[2]);
+      return json({ senha });
     }
     const cm = p.match(/^\/v2\/admin\/clientes\/([\w-]+)\/(bloquear|desbloquear)$/);
     if (metodo === 'POST' && cm) {

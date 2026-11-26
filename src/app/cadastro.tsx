@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import CampoFoto from '../components/CampoFoto';
 import CampoEndereco from '../components/CampoEndereco';
+import CamposSenha, { senhaOk } from '../components/CamposSenha';
 import { BotaoInicio } from '../components/Marca';
 import { cores, raio, sombra } from '../components/tema';
 import { useApp } from '../estado/AppContext';
@@ -18,6 +19,8 @@ export default function Cadastro() {
   const [foto, setFoto] = useState<string | null>(null);
   const [endereco, setEndereco] = useState(casa?.endereco ?? '');
   const [pin, setPin] = useState<{ lat: number; lon: number } | null>(casa ? { lat: casa.lat, lon: casa.lon } : null);
+  const [senha, setSenha] = useState('');
+  const [confirma, setConfirma] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -27,6 +30,7 @@ export default function Cadastro() {
     telefone.replace(/\D/g, '').length < 10 && 'WhatsApp com DDD',
     !temConta && !foto && 'sua foto',
     endereco.trim().length < 5 && 'endereço',
+    !temConta && !senhaOk(senha, confirma) && 'senha (mínimo 6, igual nas duas)',
     !pin && 'a casa marcada no mapa',
   ].filter(Boolean) as string[];
 
@@ -37,7 +41,7 @@ export default function Cadastro() {
     const dados = { nome: nome.trim(), cpf, telefone, endereco: endereco.trim(), lat: pin.lat, lon: pin.lon };
     try {
       if (!temConta) {
-        const r = await api<{ token: string }>(null, '/v2/clientes', { method: 'POST', corpo: dados });
+        const r = await api<{ token: string }>(null, '/v2/clientes', { method: 'POST', corpo: { ...dados, senha } });
         await guardarToken('cliente', r.token);
       } else {
         await api('cliente', '/v2/eu', { method: 'PUT', corpo: dados });
@@ -91,6 +95,8 @@ export default function Cadastro() {
       />
 
       <CampoEndereco rotulo="Endereço de entrega (rua, número e bairro)" endereco={endereco} onEndereco={setEndereco} pin={pin} onPin={setPin} gps="Estou em casa" />
+
+      {!temConta && <CamposSenha senha={senha} confirma={confirma} onSenha={setSenha} onConfirma={setConfirma} />}
 
       {msg && <Text style={s.erro}>{msg}</Text>}
       {faltando.length > 0 && <Text style={s.falta}>Falta: {faltando.join(', ')}.</Text>}

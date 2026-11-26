@@ -1,6 +1,7 @@
 import type { CidadeId } from '../data/cidades';
 import type { CategoriaId, ServicoId } from '../data/servicos';
 // Chamadas do App Admin (rotas /v2/admin no servidor). A senha é o ADMIN_TOKEN da Cloudflare.
+import { Alert } from 'react-native';
 import { api, apagarToken, guardarToken, type Disponibilidade, type Status } from './api';
 import type { Tarifa, Urgencia } from './preco';
 
@@ -214,3 +215,20 @@ export type LojistaAdmin = {
 };
 export const lojistas = () => api<LojistaAdmin[]>('admin', '/v2/admin/lojistas');
 export const statusLojista = (id: string, status: LojistaAdmin['status']) => api('admin', `/v2/admin/lojistas/${id}/status`, { method: 'POST', corpo: { status } });
+
+/** Gera uma senha provisória (6 números) para a pessoa entrar e depois trocar em "Minha conta". */
+export async function senhaProvisoria(tipo: 'clientes' | 'motoristas' | 'lojistas', id: string, nome: string) {
+  const ok = await new Promise<boolean>((res) =>
+    Alert.alert('Senha provisória', `Gerar uma senha provisória para ${nome}? A senha atual deixa de valer.`, [
+      { text: 'Voltar', style: 'cancel', onPress: () => res(false) },
+      { text: 'Gerar', onPress: () => res(true) },
+    ]),
+  );
+  if (!ok) return;
+  try {
+    const r = await api<{ senha: string }>('admin', `/v2/admin/${tipo}/${id}/senha`, { method: 'POST' });
+    Alert.alert('Senha provisória', `${nome}: ${r.senha}\n\nPasse para a pessoa entrar com o CPF${tipo === 'lojistas' ? ' ou CNPJ' : ''} e essa senha, e depois trocar em "Minha conta".`);
+  } catch (e) {
+    Alert.alert('Erro', (e as Error).message);
+  }
+}

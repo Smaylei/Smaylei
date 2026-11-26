@@ -2,6 +2,7 @@ import { Redirect, router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { BotaoInicio, MarcaTopo } from '../components/Marca';
+import MinhaConta from '../components/MinhaConta';
 import { cores, raio, sombra } from '../components/tema';
 import { useAgenda } from '../hooks/useAgendaCelular';
 import { api, ErroApi, ROTULO_STATUS, type CorridaMotorista } from '../services/api';
@@ -19,6 +20,7 @@ type Eu = {
   emLiberacao: number;
   comissaoPct: number;
   notaMedia: number | null;
+  temSenha?: boolean;
   avaliacoes: number;
   gorjetasTotal: number;
   carro: string;
@@ -107,7 +109,7 @@ export default function Motorista() {
     }
   }
 
-  if (semConta) return <Redirect href="/cadastro-motorista" />;
+  if (semConta) return <Redirect href="/entrar" />;
   if (!eu) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
 
   const atual = minhas.find((c) => ['aceito', 'no_local', 'em_andamento'].includes(c.status) && Date.parse(c.inicio) - agora < 60 * 60000);
@@ -251,6 +253,7 @@ export default function Motorista() {
       <Text style={s.agendaInfo}>
         📅 Agenda do celular: {!agenda.ativo ? 'desligada' : agenda.ultima?.erro ? `⚠️ ${agenda.ultima.erro}` : agenda.ultima ? 'sincronizada' : '…'}
       </Text>
+      <MinhaConta temSenha={eu.temSenha ?? true} onSenhaCriada={atualizar} />
     </ScrollView>
   );
 }

@@ -61,6 +61,9 @@ export default function LojistasAdmin() {
                 <Text style={s.miniTexto}>WhatsApp</Text>
               </Pressable>
             )}
+            <Pressable style={s.mini} onPress={() => Admin.senhaProvisoria('lojistas', l.id, l.loja_nome)}>
+              <Text style={s.miniTexto}>Senha provisória</Text>
+            </Pressable>
             <Pressable style={s.mini} onPress={() => Linking.openURL(`https://www.openstreetmap.org/?mlat=${l.lat}&mlon=${l.lon}#map=18/${l.lat}/${l.lon}`)}>
               <Text style={s.miniTexto}>Mapa</Text>
             </Pressable>

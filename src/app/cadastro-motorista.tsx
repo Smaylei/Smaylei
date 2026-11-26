@@ -2,6 +2,7 @@ import { router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import CampoFoto from '../components/CampoFoto';
+import CamposSenha, { senhaOk } from '../components/CamposSenha';
 import { BotaoInicio } from '../components/Marca';
 import { cores, raio, sombra } from '../components/tema';
 import { VEICULOS, type Veiculo } from '../data/servicos';
@@ -22,6 +23,8 @@ export default function CadastroMotorista() {
   const [placa, setPlaca] = useState('');
   const [selfie, setSelfie] = useState<string | null>(null);
   const [cnh, setCnh] = useState<string | null>(null);
+  const [senha, setSenha] = useState('');
+  const [confirma, setConfirma] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -55,6 +58,7 @@ export default function CadastroMotorista() {
         !placaOk && 'placa',
         !selfie && 'selfie',
         !cnh && 'foto da CNH',
+        !senhaOk(senha, confirma) && 'senha (mínimo 6, igual nas duas)',
       ].filter(Boolean);
 
   async function salvar() {
@@ -62,7 +66,7 @@ export default function CadastroMotorista() {
     setMsg(null);
     try {
       if (!temConta) {
-        const r = await api<{ token: string }>(null, '/v2/motoristas', { method: 'POST', corpo: { nome: nome.trim(), cpf, telefone, carro, placa, cor, veiculo } });
+        const r = await api<{ token: string }>(null, '/v2/motoristas', { method: 'POST', corpo: { nome: nome.trim(), cpf, telefone, carro, placa, cor, veiculo, senha } });
         await guardarToken('motorista', r.token);
         setTemConta(true);
       }
@@ -121,6 +125,7 @@ export default function CadastroMotorista() {
           <Campo rotulo={veiculo === 'moto' ? 'Moto (modelo)' : 'Carro (modelo)'} valor={carro} onChange={setCarro} exemplo={veiculo === 'moto' ? 'Ex.: Honda CG 160' : 'Ex.: Fiat Strada'} />
           <Campo rotulo="Cor" valor={cor} onChange={setCor} exemplo="Ex.: Branca" />
           <Campo rotulo="Placa" valor={placa} onChange={(t) => setPlaca(t.toUpperCase())} exemplo="ABC1D23" erro={placa.length >= 7 && !placaOk} />
+          <CamposSenha senha={senha} confirma={confirma} onSenha={setSenha} onConfirma={setConfirma} />
           <Text style={s.lgpd}>Seus saques vão por Pix para a chave CPF informada acima.</Text>
         </>
       )}
