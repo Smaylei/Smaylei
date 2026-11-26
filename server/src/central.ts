@@ -17,7 +17,8 @@
 // Pix na chave CPF do motorista: o dono faz o Pix e marca a ordem como paga no Admin.
 
 import { DurableObject } from 'cloudflare:workers';
-import { LOCAIS_INICIAIS } from '../../src/data/locais';
+import { cidadeDe, CIDADES, nomeCidade } from '../../src/data/cidades';
+import { LOCAIS_INICIAIS, LOCAIS_REGIAO } from '../../src/data/locais';
 import { MERCADOS } from '../../src/data/mercados';
 import {
   CATEGORIAS,
@@ -46,6 +47,7 @@ import {
 } from '../../src/services/agenda';
 import { cpfValido } from '../../src/services/cpf';
 import { distanciaDoMapa, rotaEntre } from '../../src/services/grafo';
+import { caminhoOsrm, tabelaOsrm, trajetoEstimado, type Trajeto } from './rotas';
 import { distanciaRetaKm, URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../../src/services/preco';
 
 export interface Env {
@@ -152,6 +154,7 @@ CREATE TABLE IF NOT EXISTS locais (
   ativo INTEGER NOT NULL DEFAULT 1, criado_em TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS pacotes (
   id TEXT PRIMARY KEY, cliente_id TEXT NOT NULL, valor REAL NOT NULL, viagens INTEGER NOT NULL, checkout_url TEXT, criado_em TEXT NOT NULL, pago_em TEXT);
+CREATE TABLE IF NOT EXISTS rotas_cache (chave TEXT PRIMARY KEY, km_ida REAL, km_volta REAL, min_ida REAL, min_volta REAL, criado_em TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS avaliacoes (
   corrida_id TEXT PRIMARY KEY, cliente_id TEXT NOT NULL, motorista_id TEXT, nota INTEGER NOT NULL, sugestao TEXT, criado_em TEXT NOT NULL, lida INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS gorjetas (
@@ -162,7 +165,9 @@ CREATE TABLE IF NOT EXISTS gorjetas (
 const COLUNAS_NOVAS = [`ALTER TABLE corridas ADD COLUMN pagamento_ate TEXT`, `ALTER TABLE corridas ADD COLUMN liberado_em TEXT`, `ALTER TABLE corridas ADD COLUMN reembolso REAL NOT NULL DEFAULT 0`, `ALTER TABLE corridas ADD COLUMN reembolsado_em TEXT`,
   ...['servico TEXT', 'descricao TEXT', 'coleta_nome TEXT', 'coleta_endereco TEXT', 'coleta_lat REAL', 'coleta_lon REAL', 'entrega_nome TEXT', 'entrega_endereco TEXT',
     'entrega_lat REAL', 'entrega_lon REAL', 'cliente_na_coleta INTEGER NOT NULL DEFAULT 1', 'retorno INTEGER NOT NULL DEFAULT 0', 'pacote_id TEXT', 'chegou_destino_em TEXT',
-  ].map((c) => `ALTER TABLE corridas ADD COLUMN ${c}`)];
+  ].map((c) => `ALTER TABLE corridas ADD COLUMN ${c}`),
+  // lojistas: a loja é uma conta de solicitante com status (aprovação pelo Admin)
+  ...["tipo TEXT NOT NULL DEFAULT 'cliente'", 'loja_nome TEXT', 'cnpj TEXT', "status TEXT NOT NULL DEFAULT 'aprovado'"].map((c) => `ALTER TABLE clientes ADD COLUMN ${c}`)];
 
 export const ROTULO: Record<string, string> = {
   pagamento_pendente: 'Aguardando pagamento',
@@ -215,15 +220,17 @@ export class Central extends DurableObject<Env> {
         m?.nome ?? c.mercado_id, m?.endereco ?? '', m?.lat ?? c.lat, m?.lon ?? c.lon, c.endereco, c.lat, c.lon, c.id,
       );
     }
-    if (this.um(`SELECT valor FROM config WHERE chave='locais_v1'`)) return;
-    for (const l of LOCAIS_INICIAIS)
-      this.sql.exec(`INSERT OR IGNORE INTO locais (id, categoria, nome, endereco, lat, lon, criado_em) VALUES (?,?,?,?,?,?,?)`, l.id, l.categoria, l.nome, l.endereco, l.lat, l.lon, iso(Date.now()));
-    this.sql.exec(`INSERT INTO config (chave, valor) VALUES ('locais_v1', '1')`);
+    for (const [chave, lista] of [['locais_v1', LOCAIS_INICIAIS], ['locais_v2', LOCAIS_REGIAO]] as const) {
+      if (this.um(`SELECT valor FROM config WHERE chave=?`, chave)) continue;
+      for (const l of lista)
+        this.sql.exec(`INSERT OR IGNORE INTO locais (id, categoria, nome, endereco, lat, lon, criado_em) VALUES (?,?,?,?,?,?,?)`, l.id, l.categoria, l.nome, l.endereco, l.lat, l.lon, iso(Date.now()));
+      this.sql.exec(`INSERT INTO config (chave, valor) VALUES (?, '1')`, chave);
+    }
   }
   private locais(todos = false) {
     return this.q<{ id: string; categoria: string; nome: string; endereco: string; lat: number; lon: number; ativo: number }>(
       `SELECT id, categoria, nome, endereco, lat, lon, ativo FROM locais ${todos ? '' : 'WHERE ativo=1'} ORDER BY categoria, nome`,
-    ).map((l) => ({ ...l, ativo: !!l.ativo }));
+    ).map((l) => ({ ...l, ativo: !!l.ativo, cidade: cidadeDe(l) }));
   }
 
   // ---------- utilidades de banco ----------
@@ -250,13 +257,13 @@ export class Central extends DurableObject<Env> {
     this.sql.exec(`INSERT INTO avisos (texto, corrida_id, criado_em) VALUES (?,?,?)`, texto, corridaId ?? null, iso(Date.now()));
   }
   private textoCorrida(c: Linha, cab: string) {
-    const cli = this.um(`SELECT nome, telefone, endereco, lat, lon FROM clientes WHERE id=?`, c.cliente_id);
+    const cli = this.um(`SELECT nome, telefone, endereco, lat, lon, tipo, loja_nome FROM clientes WHERE id=?`, c.cliente_id);
     const mot = c.motorista_id ? this.um(`SELECT nome, placa FROM motoristas WHERE id=?`, c.motorista_id) : undefined;
     return [
       cab,
       `Serviço: ${servicoPorId(c.servico).titulo}`,
       `Quando: ${c.agendado ? c.janela : `AGORA (${horaLocal(Date.parse(String(c.criado_em)))})`}`,
-      `Cliente: ${cli?.nome ?? '-'}`,
+      cli?.tipo === 'lojista' ? `Loja: ${cli.loja_nome} (${cli.nome})` : `Cliente: ${cli?.nome ?? '-'}`,
       `Coleta: ${c.coleta_nome ?? c.mercado_nome}${c.coleta_endereco && c.coleta_nome !== 'Casa' ? ` (${c.coleta_endereco})` : ''}`,
       `Destino: ${c.entrega_nome && c.entrega_nome !== 'Casa' ? `${c.entrega_nome} (${c.entrega_endereco})` : (c.entrega_endereco ?? cli?.endereco ?? '-')}`,
       c.descricao ? `O que: ${c.descricao}` : '',
@@ -370,10 +377,45 @@ export class Central extends DurableObject<Env> {
   }
 
   // ---------- preço ----------
-  private cotar(servico: ServicoId, coleta: Ponto, entrega: Ponto, agendado: boolean) {
-    const r = rotaEntre(coleta, entrega);
-    if (!r) return null;
+  /** Ida e volta entre dois pontos: OSRM (com cache), o mapa de Guaramirim ou, sem nada, a linha reta. */
+  private async trajetos(base: Ponto, pontos: Ponto[]): Promise<Trajeto[]> {
+    const chave = (p: Ponto) => `${base.lat.toFixed(4)},${base.lon.toFixed(4)}|${p.lat.toFixed(4)},${p.lon.toFixed(4)}`;
+    const validade = iso(Date.now() - 30 * DIA);
+    const res: (Trajeto | null)[] = pontos.map((p) => {
+      const c = this.um(`SELECT * FROM rotas_cache WHERE chave=? AND criado_em > ?`, chave(p), validade);
+      return c ? { kmIda: Number(c.km_ida), kmVolta: Number(c.km_volta), minIda: Number(c.min_ida), minVolta: Number(c.min_volta) } : null;
+    });
+    const faltam = pontos.map((p, i) => ({ p, i })).filter((x) => !res[x.i]);
+    for (let k = 0; k < faltam.length; k += 40) {
+      const lote = faltam.slice(k, k + 40);
+      const osrm = await tabelaOsrm(base, lote.map((x) => x.p));
+      lote.forEach((x, j) => {
+        const t = osrm[j];
+        if (t) {
+          res[x.i] = t;
+          this.sql.exec(`INSERT OR REPLACE INTO rotas_cache (chave, km_ida, km_volta, min_ida, min_volta, criado_em) VALUES (?,?,?,?,?,?)`, chave(x.p), t.kmIda, t.kmVolta, t.minIda, t.minVolta, iso(Date.now()));
+        }
+      });
+    }
+    return pontos.map((p, i) => {
+      if (res[i]) return res[i]!;
+      const noMapa = distanciaDoMapa(base) < AREA_M && distanciaDoMapa(p) < AREA_M ? rotaEntre(base, p) : null;
+      return noMapa ?? trajetoEstimado(base, p);
+    });
+  }
+
+  private async cotar(servico: ServicoId, coleta: Ponto, entrega: Ponto, agendado: boolean) {
+    const [r] = await this.trajetos(coleta, [entrega]);
     return { valor: precoServico(r, this.config(), servico, agendado), km: r2(r.kmIda + r.kmVolta), minutos: Math.round(r.minIda + r.minVolta) };
+  }
+
+  /** Ponto dentro de uma cidade liberada? */
+  private foraDaArea(p: Ponto) {
+    const c = cidadeDe(p);
+    const cfg = this.config();
+    if (!c) return `fora da região atendida (${CIDADES.filter((x) => cfg.cidadesAtivas.includes(x.id)).map((x) => x.nome).join(', ')})`;
+    if (!cfg.cidadesAtivas.includes(c)) return `ainda não atendemos ${nomeCidade(c)}`;
+    return null;
   }
 
   /** Uma ponta da viagem: a casa do cliente, um local cadastrado ou um endereço livre (dentro da área). */
@@ -383,8 +425,15 @@ export class Central extends DurableObject<Env> {
     if (o.localId) {
       const cat = this.um(`SELECT categoria FROM locais WHERE id=?`, o.localId)?.categoria ?? 'mercado';
       if (!cfg.categoriasAtivas.includes(cat as never)) return `${rotulo}: por enquanto atendemos apenas ${cfg.categoriasAtivas.includes('mercado') ? 'os mercados' : 'os locais'} da lista.`;
+      const l = this.um(`SELECT lat, lon FROM locais WHERE id=?`, o.localId);
+      const fora = l ? this.foraDaArea({ lat: Number(l.lat), lon: Number(l.lon) }) : null;
+      if (fora) return `${rotulo}: ${fora}.`;
     } else if (!o.casa && def && !livrePermitido(def, cfg)) return `${rotulo}: por enquanto atendemos apenas os mercados da lista.`;
-    if (o.casa) return { nome: 'Casa', endereco: String(cli.endereco), lat: Number(cli.lat), lon: Number(cli.lon), localId: 'casa' };
+    if (o.casa) {
+      const fora = this.foraDaArea({ lat: Number(cli.lat), lon: Number(cli.lon) });
+      if (fora) return `${rotulo}: ${fora}.`;
+      return { nome: cli.tipo === 'lojista' ? String(cli.loja_nome ?? 'Loja') : 'Casa', endereco: String(cli.endereco), lat: Number(cli.lat), lon: Number(cli.lon), localId: 'casa' };
+    }
     if (o.localId) {
       const l = this.um(`SELECT * FROM locais WHERE id=? AND ativo=1`, o.localId) ?? (MERCADOS.find((m) => m.id === o.localId) as unknown as Linha | undefined);
       if (!l) return `${rotulo}: local não encontrado.`;
@@ -393,7 +442,8 @@ export class Central extends DurableObject<Env> {
     const endereco = String(o.endereco ?? '').trim();
     if (endereco.length < 6) return `${rotulo}: informe o endereço completo (rua, número e bairro).`;
     if (typeof o.lat !== 'number' || typeof o.lon !== 'number') return `${rotulo}: marque o ponto no mapa.`;
-    if (distanciaDoMapa({ lat: o.lat, lon: o.lon }) > AREA_M) return `${rotulo}: endereço fora da área atendida (Guaramirim).`;
+    const fora = this.foraDaArea({ lat: o.lat, lon: o.lon });
+    if (fora) return `${rotulo}: endereço ${fora}.`;
     return { nome: String(o.nome ?? '').trim().slice(0, 60) || endereco.split(',')[0], endereco: endereco.slice(0, 200), lat: o.lat, lon: o.lon, localId: 'outro' };
   }
 
@@ -443,15 +493,17 @@ export class Central extends DurableObject<Env> {
     };
   }
   private corridaParaMotorista(c: Linha) {
-    const cli = this.um(`SELECT nome FROM clientes WHERE id=?`, c.cliente_id);
+    const cli = this.um(`SELECT nome, tipo, loja_nome FROM clientes WHERE id=?`, c.cliente_id);
     const cfg = this.config();
     const v = this.viagem(c);
+    const nomeCli = cli ? (cli.tipo === 'lojista' ? `${cli.loja_nome} (loja)` : String(cli.nome).split(' ')[0]) : '';
     return {
       id: c.id, status: c.status, agendado: !!c.agendado, janela: c.janela, inicio: c.inicio, fim: c.fim,
       ...v,
       // Campos antigos (versões anteriores do app do motorista): mercado = coleta, cliente = destino.
       mercado: { id: c.mercado_id, nome: v.coleta.nome, endereco: v.coleta.endereco, lat: v.coleta.lat, lon: v.coleta.lon },
-      cliente: cli ? { nome: String(cli.nome).split(' ')[0], telefone: null, endereco: v.entrega.endereco, lat: v.entrega.lat, lon: v.entrega.lon } : null,
+      solicitante: nomeCli,
+      cliente: cli ? { nome: nomeCli, telefone: null, endereco: v.entrega.endereco, lat: v.entrega.lat, lon: v.entrega.lon } : null,
       km: c.km, minutos: c.minutos, valor: c.valor, ganho: c.ganho_motorista ?? this.ganho(Number(c.valor)),
       gorjeta: this.um(`SELECT valor FROM gorjetas WHERE corrida_id=? AND status='paga'`, c.id)?.valor ?? null,
       chegouEm: c.chegou_em, liberadoEm: c.liberado_em, esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, raioChegadaM: cfg.raioChegadaM, taxaDeslocamento: cfg.taxaDeslocamento,
@@ -625,7 +677,8 @@ export class Central extends DurableObject<Env> {
         esperaPagamentoMin: cfg.esperaPagamentoMin, esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, comissaoMotoristaPct: cfg.comissaoMotoristaPct, aberto: cfg.aberto,
         esperaBorrachariaMin: cfg.esperaBorrachariaMin,
         servicosAtivos: cfg.servicosAtivos, categoriasAtivas: cfg.categoriasAtivas, outroEnderecoLoja: cfg.outroEnderecoLoja,
-        locais: this.locais().filter((l) => cfg.categoriasAtivas.includes(l.categoria as never)),
+        cidadesAtivas: cfg.cidadesAtivas,
+        locais: this.locais().filter((l) => cfg.categoriasAtivas.includes(l.categoria as never) && !!l.cidade && cfg.cidadesAtivas.includes(l.cidade)),
       });
     if (metodo === 'GET' && p === '/v2/disponibilidade') return json(this.disponibilidade());
 
@@ -635,13 +688,35 @@ export class Central extends DurableObject<Env> {
       if (nome.length < 3) return erro('Informe o nome completo.');
       if (!cpfValido(cpf)) return erro('CPF inválido.');
       if (endereco.length < 5 || typeof b.lat !== 'number' || typeof b.lon !== 'number') return erro('Informe o endereço e marque no mapa.');
-      if (this.um(`SELECT id FROM clientes WHERE cpf=?`, cpf)) return erro('Já existe um cadastro com esse CPF. Fale com o suporte para recuperar o acesso.', 409);
+      if (this.um(`SELECT id FROM clientes WHERE cpf=? AND tipo='cliente'`, cpf)) return erro('Já existe um cadastro com esse CPF. Fale com o suporte para recuperar o acesso.', 409);
       const id = novoId('cli'), token = crypto.randomUUID() + crypto.randomUUID();
       this.sql.exec(
         `INSERT INTO clientes (id, token, nome, cpf, telefone, foto, endereco, lat, lon, criado_em) VALUES (?,?,?,?,?,?,?,?,?,?)`,
         id, token, nome, cpf, soDigitos(b.telefone) || null, null, endereco, b.lat, b.lon, iso(agora),
       );
       return json({ id, token });
+    }
+    if (metodo === 'POST' && p === '/v2/lojistas') {
+      const b = await this.corpo<Record<string, unknown>>(req);
+      const nome = String(b.nome ?? '').trim(), cpf = soDigitos(b.cpf), loja = String(b.lojaNome ?? '').trim(), cnpj = soDigitos(b.cnpj);
+      const endereco = String(b.endereco ?? '').trim(), tel = soDigitos(b.telefone);
+      if (loja.length < 2) return erro('Informe o nome da loja.');
+      if (cnpj && cnpj.length !== 14) return erro('CNPJ inválido (14 números).');
+      if (nome.length < 3) return erro('Informe o nome do responsável.');
+      if (!cpfValido(cpf)) return erro('CPF do responsável inválido.');
+      if (tel.length < 10) return erro('Informe o telefone com DDD.');
+      if (endereco.length < 5 || typeof b.lat !== 'number' || typeof b.lon !== 'number') return erro('Informe o endereço da loja e marque no mapa.');
+      const fora = this.foraDaArea({ lat: b.lat, lon: b.lon });
+      if (fora) return erro(`Loja ${fora}.`);
+      if (this.um(`SELECT id FROM clientes WHERE tipo='lojista' AND ((cnpj IS NOT NULL AND cnpj=?) OR (loja_nome=? AND cpf=?))`, cnpj || '-', loja, cpf))
+        return erro('Essa loja já tem cadastro. Fale com o suporte.', 409);
+      const id = novoId('loja'), token = crypto.randomUUID() + crypto.randomUUID();
+      this.sql.exec(
+        `INSERT INTO clientes (id, token, nome, cpf, telefone, endereco, lat, lon, criado_em, tipo, loja_nome, cnpj, status) VALUES (?,?,?,?,?,?,?,?,?, 'lojista', ?,?, 'pendente')`,
+        id, token, nome, cpf, tel, endereco, b.lat, b.lon, iso(agora), loja, cnpj || null,
+      );
+      this.avisar(`🏪 NOVO LOJISTA para aprovar\n${loja}${cnpj ? ` (CNPJ ${cnpj})` : ''}\nResponsável: ${nome}\n${endereco}`);
+      return json({ id, token, status: 'pendente' });
     }
     if (metodo === 'POST' && p === '/v2/motoristas') {
       const b = await this.corpo<Record<string, unknown>>(req);
@@ -706,6 +781,26 @@ export class Central extends DurableObject<Env> {
       return json({ chave });
     }
 
+    // Preço e rota (mapa sem Google: OSRM/OpenStreetMap). O preço é o mesmo cobrado no pedido.
+    if (metodo === 'POST' && p === '/v2/cotacoes') {
+      const b = await this.corpo<{ servico?: string; agendado?: boolean; base?: Ponto; pontos?: (Ponto & { id: string })[] }>(req);
+      const pts = (b.pontos ?? []).filter((x) => typeof x?.lat === 'number' && typeof x?.lon === 'number').slice(0, 80);
+      if (!b.base || typeof b.base.lat !== 'number' || typeof b.base.lon !== 'number') return erro('Informe o ponto de partida.');
+      const sv = servicoPorId(b.servico);
+      const ts = await this.trajetos(b.base, pts);
+      const cfg = this.config();
+      return json(Object.fromEntries(pts.map((x, i) => [x.id, { valor: precoServico(ts[i], cfg, sv.id, !!b.agendado), km: r2(ts[i].kmIda + ts[i].kmVolta), minutos: Math.round(ts[i].minIda + ts[i].minVolta) }])));
+    }
+    if (metodo === 'GET' && p === '/v2/rota') {
+      const n = (k: string) => (url.searchParams.get(k) ?? '').split(',').map(Number);
+      const [la, lo] = n('de'), [lb, lob] = n('para');
+      if (![la, lo, lb, lob].every(Number.isFinite)) return erro('Pontos inválidos.');
+      const r = await caminhoOsrm({ lat: la, lon: lo }, { lat: lb, lon: lob });
+      if (r) return json({ km: r2(r.km), min: Math.max(1, Math.round(r.min)), caminho: r.caminho });
+      const t = trajetoEstimado({ lat: la, lon: lo }, { lat: lb, lon: lob });
+      return json({ km: r2(t.kmIda), min: Math.max(1, Math.round(t.minIda)), caminho: [[la, lo], [lb, lob]], estimado: true });
+    }
+
     if (eu.tipo === 'cliente') return this.rotasCliente(req, url, eu, p, metodo);
     if (eu.tipo === 'motorista') return this.rotasMotorista(req, url, eu, p, metodo);
     return this.rotasAdmin(req, url, p, metodo);
@@ -717,7 +812,10 @@ export class Central extends DurableObject<Env> {
     const cfg = this.config();
     const cli = eu.linha!;
     if (metodo === 'GET' && p === '/v2/eu')
-      return json({ tipo: 'cliente', id: cli.id, nome: cli.nome, telefone: cli.telefone, endereco: cli.endereco, lat: cli.lat, lon: cli.lon, temFoto: !!cli.foto });
+      return json({
+        tipo: cli.tipo === 'lojista' ? 'lojista' : 'cliente', id: cli.id, nome: cli.nome, telefone: cli.telefone, endereco: cli.endereco, lat: cli.lat, lon: cli.lon,
+        temFoto: !!cli.foto, status: cli.status, lojaNome: cli.loja_nome, cnpj: cli.cnpj, cidade: cidadeDe({ lat: Number(cli.lat), lon: Number(cli.lon) }),
+      });
     if (metodo === 'PUT' && p === '/v2/eu') {
       const b = await this.corpo<Record<string, unknown>>(req);
       const endereco = b.endereco !== undefined ? String(b.endereco).trim() : cli.endereco;
@@ -739,6 +837,9 @@ export class Central extends DurableObject<Env> {
       if (b.servico && !SERVICOS.some((x) => x.id === b.servico)) return erro('Serviço inválido.');
       // Versões antigas do app mandam só o mercado: coleta no mercado, entrega em casa.
       if (!cfg.servicosAtivos.includes(sv.id)) return erro(`“${sv.titulo}” ainda não está disponível. Em breve!`, 403);
+      const souLoja = cli.tipo === 'lojista';
+      if (sv.publico !== (souLoja ? 'lojista' : 'cliente')) return erro(souLoja ? 'Use os serviços da área do lojista.' : 'Serviço exclusivo para lojistas.', 403);
+      if (souLoja && cli.status !== 'aprovado') return erro(cli.status === 'bloqueado' ? 'Loja bloqueada. Fale com o suporte.' : 'O cadastro da sua loja está em análise. Avisaremos quando for aprovado.', 403);
       const coleta = this.ponta(b.coleta ?? (b.mercadoId ? { localId: b.mercadoId } : undefined), cli, 'Coleta', sv.coleta);
       if (typeof coleta === 'string') return erro(coleta);
       const entrega = this.ponta(b.entrega ?? { casa: true }, cli, 'Destino', sv.entrega);
@@ -748,8 +849,7 @@ export class Central extends DurableObject<Env> {
       if (sv.descricao && descricao.length < 3) return erro(`Informe: ${sv.descricao.rotulo.toLowerCase()}.`);
       const agendado = !!b.agendado;
       if (!agendado && this.um(`SELECT id FROM corridas WHERE cliente_id=? AND agendado=0 AND status IN ${OCUPAM}`, cli.id)) return erro('Você já tem um frete em andamento.', 409);
-      const cot = this.cotar(sv.id, coleta, entrega, agendado);
-      if (!cot) return erro('Não há rota entre esses endereços.');
+      const cot = await this.cotar(sv.id, coleta, entrega, agendado);
 
       // Viagens: uma agora, uma agendada ou (transporte) vários dias com ida e volta.
       const viagens: { inicio: number; volta: boolean }[] = [];
@@ -1091,6 +1191,7 @@ export class Central extends DurableObject<Env> {
         estornosPendentes: n(`SELECT COALESCE(SUM(reembolso),0) AS n FROM corridas WHERE reembolso > 0 AND reembolsado_em IS NULL`),
         estornosPendentesQtd: n(`SELECT COUNT(*) AS n FROM corridas WHERE reembolso > 0 AND reembolsado_em IS NULL`),
         avisosNaoLidos: n(`SELECT COUNT(*) AS n FROM avisos WHERE lido=0`),
+        lojistasPendentes: n(`SELECT COUNT(*) AS n FROM clientes WHERE tipo='lojista' AND status='pendente'`),
         avaliacoesNaoLidas: n(`SELECT COUNT(*) AS n FROM avaliacoes WHERE lida=0`),
         notaMedia: Math.round(n(`SELECT COALESCE(AVG(nota),0) AS n FROM avaliacoes`) * 10) / 10,
         gorjetasHoje: n(`SELECT COALESCE(SUM(valor),0) AS n FROM gorjetas WHERE status='paga' AND pago_em >= ?`, iso(Date.parse(dataLocal(agora) + 'T03:00:00Z'))),
@@ -1146,9 +1247,20 @@ export class Central extends DurableObject<Env> {
           (SELECT COUNT(*) FROM corridas c WHERE c.motorista_id=motoristas.id AND c.status IN ('em_andamento','entregue')) AS corridas
           FROM motoristas ORDER BY (status='pendente') DESC, nome`).map((m) => ({ ...m, ...this.saldo(m.id), ...this.notaMotorista(m.id) })),
       );
+    if (metodo === 'GET' && p === '/v2/admin/lojistas')
+      return json(this.q(`SELECT id, nome, cpf, telefone, endereco, lat, lon, loja_nome, cnpj, status, criado_em,
+        (SELECT COUNT(*) FROM corridas c WHERE c.cliente_id=clientes.id AND c.pago_em IS NOT NULL) AS corridas
+        FROM clientes WHERE tipo='lojista' ORDER BY (status='pendente') DESC, loja_nome`));
+    const ljm = p.match(/^\/v2\/admin\/lojistas\/([\w-]+)\/status$/);
+    if (metodo === 'POST' && ljm) {
+      const b = await this.corpo<{ status?: string }>(req);
+      if (!['aprovado', 'bloqueado', 'pendente'].includes(String(b.status))) return erro('Status inválido.');
+      this.sql.exec(`UPDATE clientes SET status=? WHERE id=? AND tipo='lojista'`, b.status, ljm[1]);
+      return json({ ok: true });
+    }
     if (metodo === 'GET' && p === '/v2/admin/clientes')
       return json(this.q(`SELECT id, nome, cpf, telefone, endereco, lat, lon, bloqueado, criado_em, foto,
-        (SELECT COUNT(*) FROM corridas c WHERE c.cliente_id=clientes.id AND c.pago_em IS NOT NULL) AS corridas FROM clientes ORDER BY criado_em DESC LIMIT 500`));
+        (SELECT COUNT(*) FROM corridas c WHERE c.cliente_id=clientes.id AND c.pago_em IS NOT NULL) AS corridas FROM clientes WHERE tipo='cliente' ORDER BY criado_em DESC LIMIT 500`));
     if (metodo === 'GET' && p === '/v2/admin/saques')
       return json(this.q(`SELECT s.*, m.nome AS motorista_nome, m.telefone AS motorista_telefone FROM saques s JOIN motoristas m ON m.id=s.motorista_id ORDER BY (s.status='solicitado') DESC, s.criado_em DESC LIMIT 200`));
     const sm = p.match(/^\/v2\/admin\/saques\/([\w-]+)\/(pagar|recusar)$/);
@@ -1209,6 +1321,7 @@ export class Central extends DurableObject<Env> {
       if (!Array.isArray(cfg.servicosAtivos) || cfg.servicosAtivos.some((x) => !SERVICOS.some((s) => s.id === x))) return erro('Serviços inválidos.');
       if (!Array.isArray(cfg.categoriasAtivas) || cfg.categoriasAtivas.some((x) => !CATEGORIAS.some((c) => c.id === x))) return erro('Categorias inválidas.');
       cfg.outroEnderecoLoja = !!cfg.outroEnderecoLoja;
+      if (!Array.isArray(cfg.cidadesAtivas) || !cfg.cidadesAtivas.length || cfg.cidadesAtivas.some((x) => !CIDADES.some((c) => c.id === x))) return erro('Cidades inválidas.');
       this.salvarConfig(cfg);
       return json(cfg);
     }
@@ -1227,7 +1340,7 @@ export class Central extends DurableObject<Env> {
       if (l.nome.length < 2) return erro('Informe o nome.');
       if (l.endereco.length < 6) return erro('Informe o endereço.');
       if (!Number.isFinite(l.lat) || !Number.isFinite(l.lon)) return erro('Marque o local no mapa.');
-      if (distanciaDoMapa(l) > AREA_M) return erro('Local fora da área atendida.');
+      if (!cidadeDe(l)) return erro('Local fora da região atendida.');
       const id = lm[1] ?? novoId(l.categoria);
       this.sql.exec(
         `INSERT INTO locais (id, categoria, nome, endereco, lat, lon, ativo, criado_em) VALUES (?,?,?,?,?,?,?,?)

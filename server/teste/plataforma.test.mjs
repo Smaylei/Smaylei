@@ -292,7 +292,9 @@ test('serviços: locais por categoria, só buscar (cliente confirma o recebiment
   await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { aberto: true, comissaoMotoristaPct: 80 } });
   // Lançamento: só mercados. O resto fica pronto, esperando o Admin liberar.
   const ini = (await call('/v2/config')).d;
-  assert.deepEqual(ini.servicosAtivos, ['comigo', 'ir', 'buscar']);
+  assert.deepEqual(ini.servicosAtivos, ['comigo', 'ir', 'buscar', 'loja_entrega', 'loja_cliente']);
+  assert.deepEqual(ini.cidadesAtivas, ['guaramirim', 'jaragua', 'schroeder', 'massaranduba', 'joinville']);
+  assert.ok(ini.locais.some((l) => l.cidade === 'joinville'));
   assert.deepEqual(ini.categoriasAtivas, ['mercado']);
   assert.ok(ini.locais.every((l) => l.categoria === 'mercado'));
   const c0 = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Davi Melo', cpf: '935.411.347-80', endereco: 'Rua W, 1, Centro', lat: -26.4750, lon: -49.0040 } });
@@ -305,7 +307,7 @@ test('serviços: locais por categoria, só buscar (cliente confirma o recebiment
   assert.equal((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { servicosAtivos: ['voar'] } })).s, 400);
   await call('/v2/admin/config', {
     metodo: 'PUT', token: ADM,
-    corpo: { servicosAtivos: ['comigo', 'ir', 'buscar', 'encomenda', 'transporte', 'borracharia'], categoriasAtivas: ['mercado', 'padaria', 'farmacia', 'gas_bebidas', 'festa', 'mecanico', 'borracharia'], outroEnderecoLoja: true },
+    corpo: { servicosAtivos: ['comigo', 'ir', 'buscar', 'encomenda', 'transporte', 'borracharia', 'loja_entrega', 'loja_cliente'], categoriasAtivas: ['mercado', 'padaria', 'farmacia', 'gas_bebidas', 'festa', 'mecanico', 'borracharia'], outroEnderecoLoja: true },
   });
   const cfg = (await call('/v2/config')).d;
   assert.ok(cfg.locais.some((l) => l.categoria === 'farmacia'));
@@ -344,9 +346,9 @@ test('serviços: locais por categoria, só buscar (cliente confirma o recebiment
   await call('/v2/eu/livre', { metodo: 'POST', token: motorista });
 
   // encomenda: endereço livre, fora da área é recusado
-  const fora = await call('/v2/corridas', { metodo: 'POST', token: cli2, corpo: { servico: 'encomenda', coleta: { endereco: 'Rua das Flores, 10, Joinville', lat: -26.30, lon: -48.85 }, descricao: 'Caixa', agendado: false } });
+  const fora = await call('/v2/corridas', { metodo: 'POST', token: cli2, corpo: { servico: 'encomenda', coleta: { endereco: 'Rua XV de Novembro, 10, Curitiba', lat: -25.43, lon: -49.27 }, descricao: 'Caixa', agendado: false } });
   assert.equal(fora.s, 400);
-  assert.match(fora.d.erro, /fora da área/);
+  assert.match(fora.d.erro, /fora da região/);
   const enc = await call('/v2/corridas', { metodo: 'POST', token: cli2, corpo: { servico: 'encomenda', coleta: { endereco: 'Rua Roberto Ziemann, 100, Centro', lat: -26.4720, lon: -48.9960 }, descricao: 'Caixa média, falar com João', agendado: false } });
   assert.equal(enc.s, 200, JSON.stringify(enc.d));
   assert.equal(enc.d.coleta.endereco, 'Rua Roberto Ziemann, 100, Centro');
@@ -407,4 +409,54 @@ test('carro na oficina: vários dias com ida e volta num pagamento só; volta tr
   const m1 = await call('/v2/corridas', { metodo: 'POST', token: cli3, corpo: { servico: 'transporte', coleta: { casa: true }, entrega: { localId: mec.id }, agendado: true, inicio: dias[0].horarios[2].inicio } });
   assert.equal(m1.s, 200, JSON.stringify(m1.d));
   assert.equal(m1.d.pacote, null);
+});
+
+test('região: cidades vizinhas, cotação pelo servidor e lojista (aprovação, só serviços de loja)', async () => {
+  // Jaraguá do Sul: cliente e pedido aceitos; fora da região, recusado
+  const c = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Eva Kroll', cpf: '86253618032', endereco: 'Rua Reinoldo Rau, 660, Centro', lat: -26.4860, lon: -49.0660 } });
+  assert.equal(c.s, 200, JSON.stringify(c.d));
+  const cli = c.d.token;
+  const merc = (await call('/v2/config')).d.locais.find((l) => l.cidade === 'jaragua' && l.categoria === 'mercado');
+  const cot = await call('/v2/cotacoes', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', agendado: true, base: { lat: -26.4860, lon: -49.0660 }, pontos: [{ id: merc.id, lat: merc.lat, lon: merc.lon }] } });
+  assert.equal(cot.s, 200, JSON.stringify(cot.d));
+  assert.ok(cot.d[merc.id].valor > 0);
+  const p = await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', coleta: { localId: merc.id }, entrega: { casa: true }, agendado: true, inicio: (await call('/v2/disponibilidade')).d.dias[2].horarios[1].inicio } });
+  assert.equal(p.s, 200, JSON.stringify(p.d));
+  assert.equal(p.d.valor, cot.d[merc.id].valor); // o preço mostrado é o cobrado
+  await call(`/v2/corridas/${p.d.id}/cancelar`, { metodo: 'POST', token: cli });
+  const fora = await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', coleta: { localId: merc.id }, entrega: { endereco: 'Rua XV, 1, Curitiba', lat: -25.43, lon: -49.27 }, agendado: false } });
+  assert.match(fora.d.erro, /fora da região/);
+  // Admin desliga Joinville: some da lista e o endereço passa a ser recusado
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { cidadesAtivas: ['guaramirim', 'jaragua', 'schroeder', 'massaranduba'] } });
+  assert.ok(!(await call('/v2/config')).d.locais.some((l) => l.cidade === 'joinville'));
+  const jv = await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', coleta: { localId: merc.id }, entrega: { endereco: 'Rua do Príncipe, 100, Centro', lat: -26.3040, lon: -48.8460 }, agendado: false } });
+  assert.match(jv.d.erro, /ainda não atendemos Joinville/);
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { cidadesAtivas: ['guaramirim', 'jaragua', 'schroeder', 'massaranduba', 'joinville'] } });
+  // rota para o mapa (sem OSRM aqui: estimativa)
+  const r = await call('/v2/rota?de=-26.48,-49.06&para=-26.47,-49.00', { token: cli });
+  assert.ok(r.d.km > 0 && r.d.caminho.length >= 2);
+
+  // Lojista: cadastra, fica pendente, Admin aprova
+  const lj = await call('/v2/lojistas', { metodo: 'POST', corpo: { lojaNome: 'Mercado Bom Preço', cnpj: '12.345.678/0001-95', nome: 'Rui Bom', cpf: '529.982.247-25', telefone: '47 99999-1111', endereco: 'Rua 28 de Agosto, 1500, Centro', lat: -26.4740, lon: -49.0000 } });
+  assert.equal(lj.s, 200, JSON.stringify(lj.d));
+  assert.match(await ultimoAviso(), /NOVO LOJISTA/);
+  const tk = lj.d.token;
+  assert.equal((await call('/v2/eu', { token: tk })).d.tipo, 'lojista');
+  const pedidoLoja = { servico: 'loja_entrega', coleta: { casa: true }, entrega: { nome: 'Maria', endereco: 'Rua Y, 20, Centro', lat: -26.4790, lon: -48.9900 }, descricao: 'Maria, 47 98888-0000, 3 sacolas', agendado: false };
+  assert.match((await call('/v2/corridas', { metodo: 'POST', token: tk, corpo: pedidoLoja })).d.erro, /em análise/);
+  const lista = (await call('/v2/admin/lojistas', { token: ADM })).d;
+  assert.equal(lista[0].status, 'pendente');
+  assert.equal((await call('/v2/admin/resumo', { token: ADM })).d.lojistasPendentes, 1);
+  await call(`/v2/admin/lojistas/${lista[0].id}/status`, { metodo: 'POST', token: ADM, corpo: { status: 'aprovado' } });
+  assert.equal((await call('/v2/corridas', { metodo: 'POST', token: tk, corpo: { ...pedidoLoja, servico: 'comigo' } })).s, 403); // serviço de cliente
+  assert.equal((await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { ...pedidoLoja, coleta: { localId: merc.id } } })).s, 403); // serviço de loja
+  await online(motorista);
+  const ok = await call('/v2/corridas', { metodo: 'POST', token: tk, corpo: pedidoLoja });
+  assert.equal(ok.s, 200, JSON.stringify(ok.d));
+  assert.equal(ok.d.coleta.nome, 'Mercado Bom Preço');
+  assert.equal(ok.d.entrega.nome, 'Maria');
+  await pagar(ok.d.id);
+  const of = (await call('/v2/ofertas', { token: motorista })).d.find((o) => o.id === ok.d.id);
+  assert.equal(of.solicitante, 'Mercado Bom Preço (loja)');
+  assert.ok(!(await call('/v2/admin/clientes', { token: ADM })).d.some((x) => x.id === lista[0].id));
 });

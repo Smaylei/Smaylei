@@ -1,4 +1,5 @@
 // Serviços oferecidos e categorias de locais. Compartilhado entre o app e o servidor.
+import type { CidadeId } from './cidades';
 import { estimarIdaEVolta, precoFrete, precoSugerido, type Tarifa, type Trajeto, type Urgencia } from '../services/preco';
 
 // MOVI — "Sua cidade em movimento." Três linhas de serviço (Documento Conceitual):
@@ -11,7 +12,7 @@ export type ModalidadeId = 'go' | 'leva' | 'combo';
 export const MODALIDADES: { id: ModalidadeId; nome: string; descricao: string }[] = [
   { id: 'combo', nome: 'MOVI COMBO', descricao: 'Você e suas compras' },
   { id: 'go', nome: 'MOVI GO', descricao: 'Levamos você' },
-  { id: 'leva', nome: 'MOVI LEVA', descricao: 'Buscamos e entregamos para você' },
+  { id: 'leva', nome: 'MOVI LEVA', descricao: 'Buscamos e entregamos' },
 ];
 
 export type CategoriaId = 'mercado' | 'padaria' | 'farmacia' | 'gas_bebidas' | 'festa' | 'mecanico' | 'borracharia';
@@ -28,7 +29,9 @@ export const CATEGORIAS: { id: CategoriaId; nome: string; icone: string }[] = [
 
 export const LOJAS: CategoriaId[] = ['mercado', 'padaria', 'farmacia', 'gas_bebidas', 'festa'];
 
-export type ServicoId = 'comigo' | 'ir' | 'buscar' | 'encomenda' | 'transporte' | 'borracharia';
+export type ServicoId = 'comigo' | 'ir' | 'buscar' | 'encomenda' | 'transporte' | 'borracharia' | 'loja_entrega' | 'loja_cliente';
+/** Quem pede: o cliente (pessoa) ou o lojista (a loja pede para o cliente dela). */
+export type Publico = 'cliente' | 'lojista';
 
 /** Onde fica cada ponta da viagem: a casa do cliente, um local da lista (categorias) ou um endereço livre. */
 export type Ponta = { casa?: boolean; categorias?: CategoriaId[]; livre?: boolean; gps?: boolean; rotulo: string };
@@ -36,6 +39,7 @@ export type Ponta = { casa?: boolean; categorias?: CategoriaId[]; livre?: boolea
 export type Servico = {
   id: ServicoId;
   modalidade: ModalidadeId;
+  publico: Publico;
   titulo: string;
   sub: string;
   icone: string;
@@ -55,6 +59,7 @@ export type Servico = {
 export const SERVICOS: Servico[] = [
   {
     id: 'comigo',
+    publico: 'cliente',
     modalidade: 'combo',
     titulo: 'Estou com as compras',
     sub: 'Já comprei e quero ir para casa com as compras',
@@ -65,6 +70,7 @@ export const SERVICOS: Servico[] = [
   },
   {
     id: 'ir',
+    publico: 'cliente',
     modalidade: 'go',
     titulo: 'Quero ir ao mercado',
     sub: 'Buscamos você em casa e levamos até a loja',
@@ -76,6 +82,7 @@ export const SERVICOS: Servico[] = [
   },
   {
     id: 'buscar',
+    publico: 'cliente',
     modalidade: 'leva',
     titulo: 'Só buscar minhas compras',
     sub: 'O motorista retira e entrega na sua casa',
@@ -88,6 +95,7 @@ export const SERVICOS: Servico[] = [
   },
   {
     id: 'encomenda',
+    publico: 'cliente',
     modalidade: 'leva',
     titulo: 'Buscar uma encomenda',
     sub: 'Doces de festa, pedidos prontos e outras retiradas: diga o que é e onde está',
@@ -99,6 +107,7 @@ export const SERVICOS: Servico[] = [
   },
   {
     id: 'transporte',
+    publico: 'cliente',
     modalidade: 'go',
     titulo: 'Carro na oficina',
     sub: 'Transporte para o trabalho todos os dias e para buscar o carro',
@@ -110,6 +119,7 @@ export const SERVICOS: Servico[] = [
   },
   {
     id: 'borracharia',
+    publico: 'cliente',
     modalidade: 'go',
     titulo: 'Borracharia',
     sub: 'Buscamos você e o pneu, levamos à borracharia e trazemos de volta',
@@ -119,6 +129,31 @@ export const SERVICOS: Servico[] = [
     entrega: { categorias: ['borracharia'], livre: true, rotulo: 'Qual borracharia?' },
     retorno: true,
     aviso: 'Leva e traz você e o pneu. O motorista não ajuda na troca do pneu.',
+  },
+  // ----- lojista: a loja pede o transporte das compras (e do cliente) dela -----
+  {
+    id: 'loja_entrega',
+    publico: 'lojista',
+    modalidade: 'leva',
+    titulo: 'Entregar compras',
+    sub: 'O motorista retira na loja e leva até a casa do seu cliente',
+    icone: '📦',
+    clienteNaColeta: true,
+    coleta: { casa: true, rotulo: 'Retirar na loja' },
+    entrega: { livre: true, rotulo: 'Endereço do cliente' },
+    descricao: { rotulo: 'Cliente e pedido', exemplo: 'Ex.: Maria, (47) 99999-0000, pedido 123, 4 sacolas' },
+  },
+  {
+    id: 'loja_cliente',
+    publico: 'lojista',
+    modalidade: 'combo',
+    titulo: 'Levar cliente e compras',
+    sub: 'Seu cliente vai para casa junto com as compras',
+    icone: '🛍️',
+    clienteNaColeta: true,
+    coleta: { casa: true, rotulo: 'Embarque na loja' },
+    entrega: { livre: true, rotulo: 'Endereço do cliente' },
+    descricao: { rotulo: 'Nome e telefone do cliente', exemplo: 'Ex.: João, (47) 98888-0000' },
   },
 ];
 
@@ -138,12 +173,19 @@ export function precoServico(r: Trajeto, cfg: ConfigPreco, servico: ServicoId, a
 }
 
 /** O que está liberado para os clientes (Admin → Serviços). No lançamento: só mercados. */
-export type Liberacao = { servicosAtivos: ServicoId[]; categoriasAtivas: CategoriaId[]; outroEnderecoLoja: boolean };
-export const LIBERACAO_PADRAO: Liberacao = { servicosAtivos: ['comigo', 'ir', 'buscar'], categoriasAtivas: ['mercado'], outroEnderecoLoja: false };
+export type Liberacao = { servicosAtivos: ServicoId[]; categoriasAtivas: CategoriaId[]; outroEnderecoLoja: boolean; cidadesAtivas: CidadeId[] };
+export const LIBERACAO_PADRAO: Liberacao = {
+  servicosAtivos: ['comigo', 'ir', 'buscar', 'loja_entrega', 'loja_cliente'],
+  categoriasAtivas: ['mercado'],
+  outroEnderecoLoja: false,
+  // Região liberada para teste; o Admin desliga as cidades que ainda não atende.
+  cidadesAtivas: ['guaramirim', 'jaragua', 'schroeder', 'massaranduba', 'joinville'],
+};
 
 const ehLoja = (p: Ponta) => !!p.categorias?.some((c) => LOJAS.includes(c));
 /** Categorias que o cliente vê nesta ponta (só as liberadas no Admin). */
 export const categoriasVisiveis = (p: Ponta, lib: Liberacao) => (p.categorias ?? []).filter((c) => lib.categoriasAtivas.includes(c));
 /** "Outro endereço": livre na casa/trabalho/oficina; numa loja, só se o Admin permitir. */
 export const livrePermitido = (p: Ponta, lib: Liberacao) => !!p.livre && (!ehLoja(p) || lib.outroEnderecoLoja);
-export const servicosLiberados = (lib: Liberacao) => SERVICOS.filter((s) => lib.servicosAtivos.includes(s.id));
+export const servicosLiberados = (lib: Liberacao, publico: Publico = 'cliente') =>
+  SERVICOS.filter((s) => s.publico === publico && lib.servicosAtivos.includes(s.id));
