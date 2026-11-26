@@ -5,7 +5,11 @@ import { htmlMapa } from './mapaHtml';
 import { cores } from './tema';
 
 export type EstadoMapa = {
-  modo: 'escolher' | 'rota';
+  modo: 'escolher' | 'rota' | 'frota';
+  /** Painel Admin: todos os motoristas (livre, em corrida, offline). */
+  motoristas?: { id: string; nome: string; lat: number; lon: number; moto?: boolean; estado: 'livre' | 'corrida' | 'offline' }[];
+  /** Painel Admin: centraliza neste ponto (motorista escolhido na lista). */
+  foco?: { lat: number; lon: number } | null;
   casa: { lat: number; lon: number } | null;
   mercados: { id: string; curto: string; lat: number; lon: number }[];
   sel?: string | null;
@@ -19,13 +23,14 @@ export type EstadoMapa = {
 type Props = {
   estado: EstadoMapa;
   onEscolher?: (p: { lat: number; lon: number }) => void;
+  onMotorista?: (id: string) => void;
   style?: ViewStyle;
 };
 
 let htmlCache: string | null = null;
 
 /** Mapa OpenStreetMap (MapLibre + OpenFreeMap) dentro de uma WebView: sem Google e sem chave de API. */
-export default function MapaRuas({ estado, onEscolher, style }: Props) {
+export default function MapaRuas({ estado, onEscolher, onMotorista, style }: Props) {
   const ref = useRef<{ injectJavaScript: (js: string) => void } | null>(null);
   const pronto = useRef(false);
   const fonte = useMemo(() => ({ html: (htmlCache ??= htmlMapa()), baseUrl: 'https://movi.app/' }), []);
@@ -42,6 +47,7 @@ export default function MapaRuas({ estado, onEscolher, style }: Props) {
         pronto.current = true;
         ref.current?.injectJavaScript(`window.mfEstado(${json});true;`);
       } else if (msg.tipo === 'pin') onEscolher?.({ lat: msg.lat, lon: msg.lon });
+      else if (msg.tipo === 'motorista') onMotorista?.(msg.id);
     } catch {
       // mensagem desconhecida
     }

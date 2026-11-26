@@ -82,6 +82,7 @@ export default function Layout() {
               <Stack.Screen name="locais-admin" options={{ title: 'Locais' }} />
               <Stack.Screen name="servicos-admin" options={{ title: 'Serviços e cidades' }} />
               <Stack.Screen name="lojistas-admin" options={{ title: 'Lojistas' }} />
+            <Stack.Screen name="mapa-admin" options={{ title: 'Mapa ao vivo' }} />
               <Stack.Screen name="ajustes" options={{ title: 'Ajustes' }} />
               <Stack.Screen name="tarifas" options={{ title: 'Tarifas' }} />
             </Stack>

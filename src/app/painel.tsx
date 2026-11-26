@@ -150,6 +150,9 @@ export default function Painel() {
         <Numero rotulo="Retido (antifraude)" valor={formatarReais(res.retido)} />
       </View>
 
+      <Pressable style={[s.atalho, { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', borderColor: '#2DB36F', borderWidth: 1 }]} onPress={() => router.push('/mapa-admin')}>
+        <Text style={s.atalhoTexto}>🗺️ Mapa ao vivo · {res.motoristasOnline} motorista(s) online agora</Text>
+      </Pressable>
       <View style={s.atalhos}>
         <Pressable style={s.atalho} onPress={() => router.push('/motoristas-admin')}>
           <Text style={s.atalhoTexto}>🚗 Motoristas{res.motoristasPendentes ? ` · ${res.motoristasPendentes} para aprovar` : ''}</Text>

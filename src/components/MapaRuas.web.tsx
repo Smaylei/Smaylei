@@ -6,19 +6,21 @@ import { cores } from './tema';
 
 export type { EstadoMapa } from './MapaRuas';
 
-type Props = { estado: EstadoMapa; onEscolher?: (p: { lat: number; lon: number }) => void; style?: object };
+type Props = { estado: EstadoMapa; onEscolher?: (p: { lat: number; lon: number }) => void; onMotorista?: (id: string) => void; style?: object };
 
 /** Versão navegador (painel Admin web): o mesmo mapa num iframe. */
-export default function MapaRuas({ estado, onEscolher, style }: Props) {
+export default function MapaRuas({ estado, onEscolher, onMotorista, style }: Props) {
   const ref = useRef<HTMLIFrameElement | null>(null);
   const pronto = useRef(false);
   const html = useMemo(() => htmlMapa(), []);
   const json = JSON.stringify(estado);
   const ultimo = useRef(json);
   const escolher = useRef(onEscolher);
+  const motorista = useRef(onMotorista);
   useEffect(() => {
     escolher.current = onEscolher;
-  }, [onEscolher]);
+    motorista.current = onMotorista;
+  }, [onEscolher, onMotorista]);
 
   // O iframe fica isolado (sandbox): o MapLibre só carrega os tiles assim. A conversa é por mensagens.
   const enviar = () => ref.current?.contentWindow?.postMessage(JSON.stringify({ tipo: 'estado', estado: JSON.parse(ultimo.current) }), '*');
@@ -37,6 +39,7 @@ export default function MapaRuas({ estado, onEscolher, style }: Props) {
           pronto.current = true;
           enviar();
         } else if (msg.tipo === 'pin') escolher.current?.({ lat: msg.lat, lon: msg.lon });
+        else if (msg.tipo === 'motorista') motorista.current?.(msg.id);
       } catch {
         // ignora
       }

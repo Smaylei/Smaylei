@@ -16,6 +16,10 @@ html,body,#m{margin:0;height:100%;background:${cores.fundo};font-family:system-u
 .casa{width:34px;height:34px;border-radius:17px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 2px 8px rgba(0,0,0,.6);border:3px solid ${cores.primaria}}
 .loja{width:max-content;padding:4px 9px;border-radius:12px;background:${cores.cartao};color:#fff;font-size:12px;font-weight:700;border:1.5px solid #3a3f46;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.5)}
 .loja.sel{background:${cores.primaria};border-color:${cores.primaria}}
+.frota{display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer}
+.frota .ic{width:34px;height:34px;border-radius:17px;display:flex;align-items:center;justify-content:center;font-size:18px;border:3px solid #fff;box-shadow:0 2px 10px rgba(0,0,0,.6)}
+.frota .nm{width:max-content;padding:1px 7px;border-radius:8px;background:rgba(10,11,13,.85);color:#fff;font-size:11px;font-weight:700;white-space:nowrap}
+.frota.livre .ic{background:#2DB36F}.frota.corrida .ic{background:#F27B1A}.frota.offline .ic{background:#5b636b;opacity:.75}.frota.offline .nm{opacity:.7}
 .carro{width:38px;height:38px;border-radius:19px;background:${cores.primaria};display:flex;align-items:center;justify-content:center;font-size:20px;border:3px solid #fff;box-shadow:0 2px 10px rgba(0,0,0,.6)}
 .aviso{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:${cores.suave};text-align:center;padding:20px}
 .maplibregl-ctrl-attrib{font-size:10px}
@@ -30,7 +34,9 @@ var map=new maplibregl.Map({container:'m',style:'${ESTILO_MAPA}',center:[-48.998
 map.touchZoomRotate.disableRotation();window.mfMapa=map;map.on('error',function(e){console.log('mapa erro',e&&e.error&&e.error.message);});
 map.addControl(new maplibregl.NavigationControl({showCompass:false}),'top-right');
 var vazio={type:'FeatureCollection',features:[]};
-var mCasa=null,mks={},carro=null,de=null,para=null,t0=0,chave='',centro='';
+var mCasa=null,mks={},carro=null,de=null,para=null,t0=0,chave='',centro='',frota={},foco='';
+// Frota (painel Admin): cada motorista desliza da posição anterior para a nova.
+function mover(f,p){var a=f.m.getLngLat(),ini=[a.lng,a.lat],t=performance.now();(function passo(){var k=Math.min(1,(performance.now()-t)/2500);f.m.setLngLat([ini[0]+(p[0]-ini[0])*k,ini[1]+(p[1]-ini[1])*k]);if(k<1)requestAnimationFrame(passo);})();}
 function el(c,h){var d=document.createElement('div');d.className=c;d.innerHTML=h;return d;}
 function linha(p){return{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:p.map(function(x){return[x[1],x[0]];})}};}
 function anima(){var k=Math.min(1,(performance.now()-t0)/2500);var e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;carro.setLngLat([de[0]+(para[0]-de[0])*e,de[1]+(para[1]-de[1])*e]);if(k<1)requestAnimationFrame(anima);}
@@ -49,6 +55,20 @@ function aplicar(){
     if(!carro){carro=new maplibregl.Marker({element:el('carro',e.motorista.moto?'🏍️':'🚗')}).setLngLat(p).addTo(map);para=p;}
     else if(!para||para[0]!==p[0]||para[1]!==p[1]){var a=carro.getLngLat();de=[a.lng,a.lat];para=p;t0=performance.now();requestAnimationFrame(anima);}}
   else if(carro){carro.remove();carro=null;para=null;}
+  var vistos={},ativos=[];
+  (e.motoristas||[]).forEach(function(m){vistos[m.id]=1;var p=[m.lon,m.lat];var f=frota[m.id];
+    if(!f){var d=el('frota '+m.estado,'<div class="ic">'+(m.moto?'🏍️':'🚗')+'</div><div class="nm"></div>');d.onclick=function(){enviar({tipo:'motorista',id:m.id});};f=frota[m.id]={m:new maplibregl.Marker({element:d,anchor:'center'}).setLngLat(p).addTo(map),p:p};}
+    var d2=f.m.getElement();d2.className='frota '+m.estado;d2.querySelector('.nm').textContent=m.nome;d2.style.zIndex=m.estado==='offline'?1:3;
+    if(f.p[0]!==p[0]||f.p[1]!==p[1]){f.p=p;mover(f,p);}
+    pts.push(p);if(m.estado!=='offline')ativos.push(p);});
+  Object.keys(frota).forEach(function(k){if(!vistos[k]){frota[k].m.remove();delete frota[k];}});
+  if(e.modo==='frota'){
+    var fk=e.foco?e.foco.lat+','+e.foco.lon:'';
+    if(fk&&fk!==foco){foco=fk;map.flyTo({center:[e.foco.lon,e.foco.lat],zoom:15});return;}
+    if(ativos.length)pts=ativos;
+    if(!chave&&pts.length){chave='x';if(pts.length===1)map.jumpTo({center:pts[0],zoom:14});else{var bb=new maplibregl.LngLatBounds(pts[0],pts[0]);pts.forEach(function(q){bb.extend(q);});map.fitBounds(bb,{padding:70,maxZoom:15,duration:0});}}
+    return;
+  }
   var c=e.centro?e.centro.lat+','+e.centro.lon:'';
   if(c&&c!==centro&&!e.casa){centro=c;map.jumpTo({center:[e.centro.lon,e.centro.lat],zoom:13});}
   // Enquadra quando mudam os pontos (no modo escolher, só na primeira vez).

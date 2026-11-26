@@ -59,6 +59,9 @@ export type Resumo = {
 export type CorridaAdmin = {
   id: string;
   status: Status;
+  motorista_id: string | null;
+  coleta_lat: number | null;
+  coleta_lon: number | null;
   agendado: number;
   inicio: string;
   fim: string;
@@ -107,6 +110,8 @@ export type MotoristaAdmin = {
   cor: string | null;
   status: 'pendente' | 'aprovado' | 'bloqueado';
   online: number;
+  lat: number | null;
+  lon: number | null;
   loc_em: string | null;
   criado_em: string;
   selfie: string | null;
