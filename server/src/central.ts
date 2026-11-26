@@ -27,6 +27,7 @@ import {
   livrePermitido,
   MOTO_PADRAO,
   MARCA,
+  fatorMoto,
   precoServico,
   servicoPorId,
   SERVICOS,
@@ -277,7 +278,9 @@ export class Central extends DurableObject<Env> {
 
   config(): Config {
     const l = this.um<{ valor: string }>(`SELECT valor FROM config WHERE chave='geral'`);
-    return { ...CONFIG_PADRAO, ...(l ? JSON.parse(l.valor) : {}) };
+    // motoAcrescimoPct (antigo): trocado por motoRepassePct (o motoboy recebe X% da tabela).
+    const { motoAcrescimoPct: _antigo, ...salvo } = (l ? JSON.parse(l.valor) : {}) as Partial<Config> & { motoAcrescimoPct?: number };
+    return { ...CONFIG_PADRAO, ...salvo };
   }
   private salvarConfig(c: Config) {
     this.sql.exec(`INSERT INTO config (chave, valor) VALUES ('geral', ?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor`, JSON.stringify(c));
@@ -732,7 +735,8 @@ export class Central extends DurableObject<Env> {
         esperaPagamentoMin: cfg.esperaPagamentoMin, esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, comissaoMotoristaPct: cfg.comissaoMotoristaPct, aberto: cfg.aberto,
         esperaBorrachariaMin: cfg.esperaBorrachariaMin,
         servicosAtivos: cfg.servicosAtivos, categoriasAtivas: cfg.categoriasAtivas, outroEnderecoLoja: cfg.outroEnderecoLoja,
-        cidadesAtivas: cfg.cidadesAtivas, motoAtivo: cfg.motoAtivo, motoServicos: cfg.motoServicos, motoMinimo: cfg.motoMinimo, motoKmIncluso: cfg.motoKmIncluso, motoPorKm: cfg.motoPorKm, motoAcrescimoPct: cfg.motoAcrescimoPct,
+        cidadesAtivas: cfg.cidadesAtivas, motoAtivo: cfg.motoAtivo, motoServicos: cfg.motoServicos, motoMinimo: cfg.motoMinimo, motoKmIncluso: cfg.motoKmIncluso, motoPorKm: cfg.motoPorKm, motoRepassePct: cfg.motoRepassePct,
+        motoAcrescimoPct: r2((fatorMoto(cfg) - 1) * 100), // APKs antigos calculam com o acréscimo
         deslocamentoPadraoKm: cfg.deslocamentoPadraoKm,
         locais: this.locais().filter((l) => cfg.categoriasAtivas.includes(l.categoria as never) && !!l.cidade && cfg.cidadesAtivas.includes(l.cidade)),
       });
@@ -1475,7 +1479,7 @@ export class Central extends DurableObject<Env> {
       if (!Array.isArray(cfg.servicosAtivos) || cfg.servicosAtivos.some((x) => !SERVICOS.some((s) => s.id === x))) return erro('Serviços inválidos.');
       if (!Array.isArray(cfg.categoriasAtivas) || cfg.categoriasAtivas.some((x) => !CATEGORIAS.some((c) => c.id === x))) return erro('Categorias inválidas.');
       cfg.outroEnderecoLoja = !!cfg.outroEnderecoLoja;
-      if (!(cfg.motoMinimo >= 1 && cfg.motoMinimo <= 200 && cfg.motoKmIncluso >= 0 && cfg.motoKmIncluso <= 30 && cfg.motoPorKm >= 0 && cfg.motoPorKm <= 50 && cfg.motoAcrescimoPct >= 0 && cfg.motoAcrescimoPct <= 200))
+      if (!(cfg.motoMinimo >= 1 && cfg.motoMinimo <= 200 && cfg.motoKmIncluso >= 0 && cfg.motoKmIncluso <= 30 && cfg.motoPorKm >= 0 && cfg.motoPorKm <= 50 && cfg.motoRepassePct >= 50 && cfg.motoRepassePct <= 200))
         return erro('Tabela da moto inválida.');
       if (!Array.isArray(cfg.motoServicos) || cfg.motoServicos.some((x) => !SERVICOS.some((s) => s.id === x))) return erro('Serviços de moto inválidos.');
       if (!(cfg.deslocamentoPadraoKm >= 0 && cfg.deslocamentoPadraoKm <= cfg.deslocamentoMaxKm && cfg.deslocamentoMaxKm <= 50)) return erro('Deslocamento inválido.');

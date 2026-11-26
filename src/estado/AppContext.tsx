@@ -9,7 +9,7 @@ import { carregarEndereco, salvarEndereco, type Endereco } from '../services/cad
 import { URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../services/preco';
 import { MODO, SOLICITANTE } from '../variante';
 
-type Config = Liberacao & ConfigMoto & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin: number };
+type Config = Liberacao & ConfigMoto & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin: number; comissaoMotoristaPct: number };
 
 /** Cadastro no servidor de quem pede (cliente ou loja). */
 export type Eu = { tipo: 'cliente' | 'lojista'; nome: string; temSenha?: boolean; status?: 'pendente' | 'aprovado' | 'bloqueado'; lojaNome?: string; cidade?: CidadeId | null };
@@ -38,7 +38,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [casa, setCasa] = useState<Endereco | null>(null);
   const [temConta, setTemConta] = useState(false);
   const [eu, setEu] = useState<Eu | null>(null);
-  const [config, setConfig] = useState<Config>({ tarifas: TARIFAS_PADRAO, margem: 0, urgencia: URGENCIA_PADRAO, esperaBorrachariaMin: 20, ...LIBERACAO_PADRAO, ...MOTO_PADRAO });
+  const [config, setConfig] = useState<Config>({
+    tarifas: TARIFAS_PADRAO,
+    margem: 0,
+    urgencia: URGENCIA_PADRAO,
+    esperaBorrachariaMin: 20,
+    comissaoMotoristaPct: 80,
+    ...LIBERACAO_PADRAO,
+    ...MOTO_PADRAO,
+  });
   const [locais, setLocais] = useState<Local[]>(LOCAIS_INICIAIS.filter((l) => l.categoria === 'mercado'));
 
   // Tarifas, serviços, cidades e locais vêm do servidor: qualquer mudança no Admin vale aqui também.
@@ -53,6 +61,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             margem: c.margem ?? 0,
             urgencia: c.urgencia ?? URGENCIA_PADRAO,
             esperaBorrachariaMin: c.esperaBorrachariaMin ?? 20,
+            comissaoMotoristaPct: c.comissaoMotoristaPct ?? 80,
             servicosAtivos: c.servicosAtivos ?? LIBERACAO_PADRAO.servicosAtivos,
             categoriasAtivas: c.categoriasAtivas ?? LIBERACAO_PADRAO.categoriasAtivas,
             outroEnderecoLoja: c.outroEnderecoLoja ?? LIBERACAO_PADRAO.outroEnderecoLoja,
@@ -62,7 +71,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             motoMinimo: c.motoMinimo ?? MOTO_PADRAO.motoMinimo,
             motoKmIncluso: c.motoKmIncluso ?? MOTO_PADRAO.motoKmIncluso,
             motoPorKm: c.motoPorKm ?? MOTO_PADRAO.motoPorKm,
-            motoAcrescimoPct: c.motoAcrescimoPct ?? MOTO_PADRAO.motoAcrescimoPct,
+            motoRepassePct: c.motoRepassePct ?? MOTO_PADRAO.motoRepassePct,
           });
         if (c?.locais) setLocais((antes) => (JSON.stringify(antes) === JSON.stringify(c.locais) ? antes : c.locais!));
       })
@@ -117,9 +126,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await salvarEndereco(e, SOLICITANTE).catch(() => {});
   }, []);
 
-  return (
-    <AppCtx.Provider value={{ carregado, casa, temConta, eu, salvarCasa, recarregarEu, config, locais, recarregarConfig }}>{children}</AppCtx.Provider>
-  );
+  return <AppCtx.Provider value={{ carregado, casa, temConta, eu, salvarCasa, recarregarEu, config, locais, recarregarConfig }}>{children}</AppCtx.Provider>;
 }
 
 export function useApp() {

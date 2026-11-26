@@ -32,7 +32,7 @@ export type ConfigServidor = {
   motoMinimo: number;
   motoKmIncluso: number;
   motoPorKm: number;
-  motoAcrescimoPct: number;
+  motoRepassePct: number;
   deslocamentoPadraoKm: number;
   deslocamentoMaxKm: number;
 };

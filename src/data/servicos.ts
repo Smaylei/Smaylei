@@ -170,16 +170,29 @@ export const VEICULOS: { id: Veiculo; nome: string; icone: string }[] = [
  * valor mínimo que cobre os primeiros km + valor por km excedente (km totais: moto até a coleta +
  * coleta até o destino). Padrão: R$ 9,00 até 2 km + R$ 1,80 por km acima de 2 km.
  */
-export type ConfigMoto = { motoAtivo: boolean; motoServicos: ServicoId[]; motoMinimo: number; motoKmIncluso: number; motoPorKm: number; motoAcrescimoPct: number };
-export const MOTO_PADRAO: ConfigMoto = { motoAtivo: true, motoServicos: ['buscar', 'encomenda', 'loja_entrega'], motoMinimo: 9, motoKmIncluso: 2, motoPorKm: 1.8, motoAcrescimoPct: 20 };
+export type ConfigMoto = { motoAtivo: boolean; motoServicos: ServicoId[]; motoMinimo: number; motoKmIncluso: number; motoPorKm: number; motoRepassePct: number };
+export const MOTO_PADRAO: ConfigMoto = {
+  motoAtivo: true,
+  motoServicos: ['buscar', 'encomenda', 'loja_entrega'],
+  motoMinimo: 9,
+  motoKmIncluso: 2,
+  motoPorKm: 1.8,
+  motoRepassePct: 95,
+};
 
+/** Comissão do motorista (% do que o cliente paga) usada no preço da moto. */
+type ComComissao = { comissaoMotoristaPct: number };
+/**
+ * O motoboy recebe motoRepassePct% da tabela (padrão 95%). Como ele fica com a comissão sobre o que o cliente
+ * paga (padrão 80%), o cliente paga tabela × 95 ÷ 80 (= tabela + 18,75%). Sem urgência aqui.
+ */
+export const fatorMoto = (cfg: ConfigMoto & ComComissao) => cfg.motoRepassePct / Math.max(1, cfg.comissaoMotoristaPct);
+export const precoMoto = (km: number, cfg: ConfigMoto & ComComissao) => Math.round(tarifaMoto(km, cfg) * fatorMoto(cfg) * 100) / 100;
 /** Tabela divulgada da moto para uma distância total (sem o acréscimo da plataforma e sem urgência). */
-/** O cliente paga a tabela + o acréscimo da plataforma (padrão 20%); o motoboy recebe a comissão sobre o total. */
-export const precoMoto = (km: number, cfg: ConfigMoto) => Math.round(tarifaMoto(km, cfg) * (1 + cfg.motoAcrescimoPct / 100) * 100) / 100;
 export const tarifaMoto = (km: number, cfg: ConfigMoto) => Math.round((cfg.motoMinimo + Math.max(0, km - cfg.motoKmIncluso) * cfg.motoPorKm) * 100) / 100;
 export const aceitaMoto = (servico: ServicoId, cfg: ConfigMoto) => cfg.motoAtivo && cfg.motoServicos.includes(servico);
 
-export type ConfigPreco = ConfigMoto & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin?: number };
+export type ConfigPreco = ConfigMoto & ComComissao & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin?: number };
 
 /** Percurso cobrado: do motorista até a coleta (deslocamento) e da coleta até o destino (viagem). */
 export type Percurso = { kmDesloc: number; minDesloc: number; kmViagem: number; minViagem: number };
@@ -193,7 +206,10 @@ export function precoServico(p: Percurso, cfg: ConfigPreco, servico: ServicoId, 
   if (veiculo === 'moto') return precoFrete(precoMoto(p.kmDesloc + p.kmViagem, cfg), agendado, cfg.urgencia);
   const espera = servico === 'borracharia' ? (cfg.esperaBorrachariaMin ?? 20) : 0;
   const t = { kmIda: p.kmDesloc, minIda: p.minDesloc + espera, kmVolta: p.kmViagem, minVolta: p.minViagem };
-  const sugerido = precoSugerido(cfg.tarifas.map((x) => estimarIdaEVolta(t, x)), cfg.margem);
+  const sugerido = precoSugerido(
+    cfg.tarifas.map((x) => estimarIdaEVolta(t, x)),
+    cfg.margem,
+  );
   return precoFrete(sugerido, agendado, cfg.urgencia);
 }
 
@@ -212,5 +228,4 @@ const ehLoja = (p: Ponta) => !!p.categorias?.some((c) => LOJAS.includes(c));
 export const categoriasVisiveis = (p: Ponta, lib: Liberacao) => (p.categorias ?? []).filter((c) => lib.categoriasAtivas.includes(c));
 /** "Outro endereço": livre na casa/trabalho/oficina; numa loja, só se o Admin permitir. */
 export const livrePermitido = (p: Ponta, lib: Liberacao) => !!p.livre && (!ehLoja(p) || lib.outroEnderecoLoja);
-export const servicosLiberados = (lib: Liberacao, publico: Publico = 'cliente') =>
-  SERVICOS.filter((s) => s.publico === publico && lib.servicosAtivos.includes(s.id));
+export const servicosLiberados = (lib: Liberacao, publico: Publico = 'cliente') => SERVICOS.filter((s) => s.publico === publico && lib.servicosAtivos.includes(s.id));
