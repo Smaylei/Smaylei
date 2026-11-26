@@ -1,0 +1,9 @@
+// Painel MOVI Admin (navegador do computador): Worker que serve o build web do Expo.
+// Gerar:    APP_VARIANT=admin npx expo export --platform web --output-dir dist-admin && node admin-web/gerar.mjs
+// Publicar: npx wrangler deploy --config admin-web/wrangler.jsonc
+{
+  "name": "movi-admin",
+  "main": ".build/worker.mjs",
+  "compatibility_date": "2026-11-01",
+  "no_bundle": true
+}

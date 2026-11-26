@@ -1,6 +1,7 @@
 import { Redirect, router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { BotaoInicio, MarcaTopo } from '../components/Marca';
 import { cores, raio, sombra } from '../components/tema';
 import { useAgenda } from '../hooks/useAgendaCelular';
 import { api, ErroApi, ROTULO_STATUS, type CorridaMotorista } from '../services/api';
@@ -119,7 +120,8 @@ export default function Motorista() {
     <ScrollView contentContainerStyle={s.conteudo} refreshControl={<RefreshControl refreshing={false} onRefresh={atualizar} />}>
       <Stack.Screen
         options={{
-          title: 'MOVI Motorista',
+          headerTitle: () => <MarcaTopo />,
+          headerLeft: () => <BotaoInicio />,
           headerRight: () => (
             <Pressable onPress={() => router.push('/agenda-motorista')} hitSlop={10}>
               <Text style={{ color: cores.primaria, fontWeight: '700', fontSize: 15 }}>Agenda</Text>

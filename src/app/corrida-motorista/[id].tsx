@@ -6,7 +6,7 @@ import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, T
 import MapaRuas, { type EstadoMapa } from '../../components/MapaRuas';
 import { cores, raio, sombra } from '../../components/tema';
 import { api, ROTULO_STATUS, type CorridaMotorista } from '../../services/api';
-import { rotaAte } from '../../services/eta';
+import { useRota } from '../../services/eta';
 import { enviarPosicao, posicaoAtual } from '../../services/localizacao';
 import { formatarReais } from '../../services/preco';
 
@@ -81,13 +81,8 @@ export default function CorridaMotoristaTela() {
   const coleta = c ? coletaDe(c) : null;
   const entrega = c ? entregaDe(c) : null;
   const destino = indoAoCliente ? entrega : coleta;
-  const latEta = eu ? Math.round(eu.lat * 1e3) / 1e3 : null;
-  const lonEta = eu ? Math.round(eu.lon * 1e3) / 1e3 : null;
-  const eta = useMemo(
-    () => (latEta != null && lonEta != null && destino ? rotaAte({ lat: latEta, lon: lonEta }, { lat: destino.lat, lon: destino.lon }) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [latEta, lonEta, destino?.lat, destino?.lon],
-  );
+  // Rota de carro (OSRM pelo servidor), recalculada a cada ~100 m.
+  const eta = useRota(eu, destino);
   const estadoMapa: EstadoMapa | null = useMemo(
     () =>
       entrega && coleta

@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { cores, raio, sombra } from '../components/tema';
 import { useAgenda, type EventoAgenda } from '../hooks/useAgendaCelular';
+import { Marca } from '../components/Marca';
 import { servicoPorId } from '../data/servicos';
 import * as Admin from '../services/admin';
 import { ErroApi, ROTULO_STATUS } from '../services/api';
@@ -100,8 +101,11 @@ export default function Painel() {
     return (
       <View style={s.login}>
         <Stack.Screen options={{ title: 'MOVI Admin' }} />
+        <View style={{ alignItems: 'center', marginBottom: 24 }}>
+          <Marca perfil="admin" largura={260} />
+        </View>
         <Text style={s.titulo}>Entrar</Text>
-        <Text style={s.sub}>Use a senha ADMIN_TOKEN cadastrada na Cloudflare.</Text>
+        <Text style={s.sub}>Use a senha de administrador (ADMIN_TOKEN cadastrada na Cloudflare). Neste computador ela fica salva até você tocar em Sair.</Text>
         <TextInput style={s.input} value={senha} onChangeText={setSenha} secureTextEntry placeholder="Senha" autoCapitalize="none" />
         <Pressable style={s.botao} onPress={() => acao(() => Admin.entrar(senha.trim()))}>
           {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Entrar</Text>}
@@ -153,16 +157,19 @@ export default function Painel() {
         <Pressable style={s.atalho} onPress={() => router.push('/clientes-admin')}>
           <Text style={s.atalhoTexto}>👤 Clientes</Text>
         </Pressable>
+        <Pressable style={[s.atalho, res.lojistasPendentes > 0 && s.atalhoAlerta]} onPress={() => router.push('/lojistas-admin')}>
+          <Text style={s.atalhoTexto}>🏪 Lojistas{res.lojistasPendentes ? ` · ${res.lojistasPendentes} para aprovar` : ''}</Text>
+        </Pressable>
       </View>
       <View style={s.atalhos}>
         <Pressable style={s.atalho} onPress={() => router.push('/servicos-admin')}>
-          <Text style={s.atalhoTexto}>🚦 Serviços liberados{res.config?.servicosAtivos ? ` · ${res.config.servicosAtivos.length} de 6` : ''}</Text>
+          <Text style={s.atalhoTexto}>🚦 Serviços e cidades{res.config?.servicosAtivos ? ` · ${res.config.servicosAtivos.length} de 6` : ''}</Text>
         </Pressable>
         <Pressable style={s.atalho} onPress={() => router.push('/locais-admin')}>
           <Text style={s.atalhoTexto}>🏪 Locais</Text>
         </Pressable>
       </View>
-      <Pressable style={[s.atalho, { flex: 0 }, res.avaliacoesNaoLidas > 0 && s.atalhoAlerta]} onPress={() => router.push('/avaliacoes-admin')}>
+      <Pressable style={[s.atalho, { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' }, res.avaliacoesNaoLidas > 0 && s.atalhoAlerta]} onPress={() => router.push('/avaliacoes-admin')}>
         <Text style={s.atalhoTexto}>
           ⭐ Avaliações e sugestões{res.notaMedia ? ` · média ${res.notaMedia.toFixed(1).replace('.', ',')}` : ''}
           {res.avaliacoesNaoLidas ? ` · ${res.avaliacoesNaoLidas} nova${res.avaliacoesNaoLidas > 1 ? 's' : ''}` : ''}
@@ -281,7 +288,7 @@ function Mini({ texto, onPress, perigo }: { texto: string; onPress: () => void; 
 
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 10 },
-  login: { padding: 24, gap: 10, marginTop: 30 },
+  login: { padding: 24, gap: 10, marginTop: 30, width: '100%', maxWidth: 460, alignSelf: 'center' },
   titulo: { fontSize: 24, fontWeight: '700', color: cores.texto },
   sub: { fontSize: 14, color: cores.suave },
   input: { backgroundColor: cores.cartao, ...sombra, borderRadius: raio, padding: 14, fontSize: 16, color: cores.texto },

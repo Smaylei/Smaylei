@@ -16,3 +16,6 @@ export const URL_RETORNO_PAGAMENTO: string | null = null;
  * Enquanto for null, o app gera o link direto na InfinitePay (sem confirmação automática).
  */
 export const API_PAGAMENTOS: string | null = 'https://mercado-frete-pagamentos.mercado-frete-pagamentos.workers.dev';
+
+/** Painel Admin (só no navegador do computador). */
+export const ADMIN_WEB = 'https://movi-admin.mercado-frete-pagamentos.workers.dev';

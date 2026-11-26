@@ -2,16 +2,19 @@ import type { ServicoId } from '../data/servicos';
 // Cliente da API do servidor (server/src/central.ts), usado pelos três apps.
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 import { API_PAGAMENTOS } from '../config';
 
 export const API = API_PAGAMENTOS ?? '';
 
-export type Papel = 'cliente' | 'motorista' | 'admin';
-const CHAVE: Record<Papel, string> = { cliente: 'token_cliente', motorista: 'token_motorista', admin: 'admin_token' };
+export type Papel = 'cliente' | 'motorista' | 'lojista' | 'admin';
+const CHAVE: Record<Papel, string> = { cliente: 'token_cliente', motorista: 'token_motorista', lojista: 'token_lojista', admin: 'admin_token' };
 
-export const lerToken = (p: Papel) => SecureStore.getItemAsync(CHAVE[p]);
-export const guardarToken = (p: Papel, t: string) => SecureStore.setItemAsync(CHAVE[p], t);
-export const apagarToken = (p: Papel) => SecureStore.deleteItemAsync(CHAVE[p]);
+// No navegador (painel Admin web) não há SecureStore: guarda no navegador do computador.
+const web = Platform.OS === 'web';
+export const lerToken = async (p: Papel) => (web ? (globalThis.localStorage?.getItem(CHAVE[p]) ?? null) : SecureStore.getItemAsync(CHAVE[p]));
+export const guardarToken = async (p: Papel, t: string) => (web ? globalThis.localStorage?.setItem(CHAVE[p], t) : SecureStore.setItemAsync(CHAVE[p], t));
+export const apagarToken = async (p: Papel) => (web ? globalThis.localStorage?.removeItem(CHAVE[p]) : SecureStore.deleteItemAsync(CHAVE[p]));
 
 export class ErroApi extends Error {
   constructor(

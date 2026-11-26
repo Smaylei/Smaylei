@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "br.com.mercadofrete.app",
@@ -15,10 +15,10 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#2E8A5E",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#0A0B0D",
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundImage": "./assets/adaptive-icon-background.png",
+        "monochromeImage": "./assets/adaptive-icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "br.com.mercadofrete.app",
@@ -47,14 +47,15 @@
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",
-          "imageWidth": 180,
+          "imageWidth": 220,
           "resizeMode": "contain",
-          "backgroundColor": "#FFFFFF"
+          "backgroundColor": "#0A0B0D"
         }
       ],
       "expo-router",
       "expo-secure-store"
     ],
-    "scheme": "mercadofrete"
+    "scheme": "mercadofrete",
+    "backgroundColor": "#0A0B0D"
   }
 }

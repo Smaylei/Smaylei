@@ -2,6 +2,7 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { cores, raio, sombra } from '../components/tema';
+import { CIDADES } from '../data/cidades';
 import { CATEGORIAS, MODALIDADES, SERVICOS, type CategoriaId, type Liberacao, type ServicoId } from '../data/servicos';
 import * as Admin from '../services/admin';
 
@@ -16,7 +17,7 @@ export default function ServicosAdmin() {
   const carregar = useCallback(async () => {
     try {
       const c = (await Admin.resumo()).config;
-      setLib({ servicosAtivos: c.servicosAtivos, categoriasAtivas: c.categoriasAtivas, outroEnderecoLoja: c.outroEnderecoLoja });
+      setLib({ servicosAtivos: c.servicosAtivos, categoriasAtivas: c.categoriasAtivas, outroEnderecoLoja: c.outroEnderecoLoja, cidadesAtivas: c.cidadesAtivas });
     } catch (e) {
       Alert.alert('Erro', (e as Error).message);
     }
@@ -58,7 +59,7 @@ export default function ServicosAdmin() {
             {m.nome} <Text style={s.desc}>· {m.descricao}</Text>
           </Text>
           {SERVICOS.filter((sv) => sv.modalidade === m.id).map((sv) => (
-            <Linha key={sv.id} titulo={`${sv.icone} ${sv.titulo}`} sub={sv.sub} valor={lib.servicosAtivos.includes(sv.id)} onChange={() => alternarServico(sv.id)} bloqueado={salvando} />
+            <Linha key={sv.id} titulo={`${sv.icone} ${sv.titulo}${sv.publico === 'lojista' ? ' (lojista)' : ''}`} sub={sv.sub} valor={lib.servicosAtivos.includes(sv.id)} onChange={() => alternarServico(sv.id)} bloqueado={salvando} />
           ))}
         </View>
       ))}
@@ -76,6 +77,23 @@ export default function ServicosAdmin() {
           onChange={() => salvar({ ...lib, outroEnderecoLoja: !lib.outroEnderecoLoja })}
           bloqueado={salvando}
         />
+      </View>
+      <View style={s.cartao}>
+        <Text style={s.titulo}>Cidades atendidas</Text>
+        <Text style={s.desc}>Endereços e locais das cidades desligadas somem do app e são recusados.</Text>
+        {CIDADES.map((c) => (
+          <Linha
+            key={c.id}
+            titulo={`📍 ${c.nome}`}
+            valor={lib.cidadesAtivas.includes(c.id)}
+            onChange={() =>
+              lib.cidadesAtivas.includes(c.id) && lib.cidadesAtivas.length === 1
+                ? Alert.alert('Cidades', 'Deixe pelo menos uma cidade ligada.')
+                : salvar({ ...lib, cidadesAtivas: lib.cidadesAtivas.includes(c.id) ? lib.cidadesAtivas.filter((x) => x !== c.id) : [...lib.cidadesAtivas, c.id] })
+            }
+            bloqueado={salvando}
+          />
+        ))}
       </View>
       <Text style={s.nota}>
         Antes de liberar passageiros, gás ou bebidas, confira as exigências legais, de segurança e seguro de cada modalidade (Documento Conceitual, nota operacional).

@@ -5,10 +5,10 @@ import MapaRuas, { type EstadoMapa } from '../components/MapaRuas';
 import { cores, raio, sombra } from '../components/tema';
 import { CATEGORIAS, type CategoriaId } from '../data/servicos';
 import * as Admin from '../services/admin';
-import { acharRua } from '../services/grafo';
+import { cidadeDe, CIDADES, nomeCidade, type CidadeId } from '../data/cidades';
 import { geocodificar } from '../services/rota';
 
-type Edicao = { id?: string; categoria: CategoriaId; nome: string; endereco: string; pin: { lat: number; lon: number } | null };
+type Edicao = { id?: string; categoria: CategoriaId; nome: string; endereco: string; pin: { lat: number; lon: number } | null; cidade?: CidadeId };
 
 /** Locais que aparecem para os clientes, por categoria. Tudo que muda aqui vale na hora nos apps. */
 export default function LocaisAdmin() {
@@ -46,7 +46,7 @@ export default function LocaisAdmin() {
     if (!ed?.pin) return;
     setOcupado(true);
     try {
-      await Admin.salvarLocal({ id: ed.id, categoria: ed.categoria, nome: ed.nome.trim(), endereco: ed.endereco.trim(), lat: ed.pin.lat, lon: ed.pin.lon });
+      await Admin.salvarLocal({ id: ed.id, categoria: ed.categoria, nome: ed.nome.trim(), endereco: ed.endereco.trim(), lat: ed.pin.lat, lon: ed.pin.lon, cidade: ed.cidade ?? cidadeDe(ed.pin) });
       setCat(ed.categoria);
       setEd(null);
       carregar();
@@ -102,8 +102,10 @@ export default function LocaisAdmin() {
         <View key={l.id} style={[s.cartao, !l.ativo && { opacity: 0.55 }]}>
           <View style={{ flex: 1 }}>
             <Text style={s.nome}>{l.nome}</Text>
-            <Text style={s.endereco}>{l.endereco.split(', Guaramirim')[0]}</Text>
-            <Pressable onPress={() => setEd({ id: l.id, categoria: l.categoria as CategoriaId, nome: l.nome, endereco: l.endereco, pin: { lat: l.lat, lon: l.lon } })}>
+            <Text style={s.endereco}>
+              {l.endereco.split(/, (Guaramirim|Jaraguá do Sul|Schroeder|Massaranduba|Joinville)/)[0]} · {nomeCidade(l.cidade ?? cidadeDe(l))}
+            </Text>
+            <Pressable onPress={() => setEd({ id: l.id, categoria: l.categoria as CategoriaId, nome: l.nome, endereco: l.endereco, pin: { lat: l.lat, lon: l.lon }, cidade: l.cidade ?? undefined })}>
               <Text style={s.link}>Editar</Text>
             </Pressable>
           </View>
@@ -117,12 +119,14 @@ export default function LocaisAdmin() {
 
 function Formulario({ ed, setEd, ocupado, onSalvar, onApagar }: { ed: Edicao; setEd: (e: Edicao | null) => void; ocupado: boolean; onSalvar: () => void; onApagar?: () => void }) {
   const [buscando, setBuscando] = useState(false);
-  const rua = useMemo(() => acharRua(ed.endereco), [ed.endereco]);
-  const estado: EstadoMapa = useMemo(() => ({ modo: 'escolher', casa: ed.pin, rua, mercados: [] }), [ed.pin, rua]);
+  const cidade: CidadeId = ed.cidade ?? ((ed.pin && cidadeDe(ed.pin)) || 'guaramirim');
+  const setCidade = (c: CidadeId) => setEd({ ...ed, cidade: c });
+  const centro = CIDADES.find((c) => c.id === cidade)?.centro ?? null;
+  const estado: EstadoMapa = useMemo(() => ({ modo: 'escolher', casa: ed.pin, centro, mercados: [] }), [ed.pin, centro]);
 
   async function achar() {
     setBuscando(true);
-    const p = await geocodificar(/guaramirim/i.test(ed.endereco) ? ed.endereco : `${ed.endereco}, Guaramirim - SC`).catch(() => null);
+    const p = await geocodificar(ed.endereco, cidade).catch(() => null);
     setBuscando(false);
     if (p) setEd({ ...ed, pin: p });
     else Alert.alert('Endereço', 'Não achei. Toque no mapa no ponto certo.');
@@ -138,6 +142,13 @@ function Formulario({ ed, setEd, ocupado, onSalvar, onApagar }: { ed: Edicao; se
             <Text style={[s.chipTexto, ed.categoria === c.id && { color: cores.primaria }]}>
               {c.icone} {c.nome}
             </Text>
+          </Pressable>
+        ))}
+      </View>
+      <View style={s.chips}>
+        {CIDADES.map((c) => (
+          <Pressable key={c.id} style={[s.chip, cidade === c.id && s.chipAtivo]} onPress={() => setCidade(c.id)}>
+            <Text style={[s.chipTexto, cidade === c.id && { color: cores.primaria }]}>{c.nome}</Text>
           </Pressable>
         ))}
       </View>

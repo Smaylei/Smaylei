@@ -4,14 +4,14 @@ import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { cores, sombra } from '../../components/tema';
 import { api, type Mensagem } from '../../services/api';
-import { VARIANTE } from '../../variante';
+import { SOLICITANTE, VARIANTE } from '../../variante';
 
 const NOME = { cliente: 'Cliente', motorista: 'Motorista', suporte: 'Suporte' } as const;
 
 /** Chat interno da corrida: cliente, motorista da vez e suporte (Admin). Mesmo componente nos três apps. */
 export default function Chat() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const papel = VARIANTE === 'motorista' ? 'motorista' : VARIANTE === 'admin' ? 'admin' : 'cliente';
+  const papel = VARIANTE === 'motorista' ? 'motorista' : VARIANTE === 'admin' ? 'admin' : SOLICITANTE;
   const eu = papel === 'admin' ? 'suporte' : papel;
   const rota = papel === 'admin' ? `/v2/admin/corridas/${id}/mensagens` : `/v2/corridas/${id}/mensagens`;
   const insets = useSafeAreaInsets();

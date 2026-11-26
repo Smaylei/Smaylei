@@ -4,6 +4,7 @@ import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'r
 import WebView, { type WebViewNavigation } from 'react-native-webview';
 import { cores } from '../../components/tema';
 import { API, api, type CorridaCliente, type Gorjeta } from '../../services/api';
+import { SOLICITANTE } from '../../variante';
 import { formatarReais } from '../../services/preco';
 
 /**
@@ -25,10 +26,10 @@ export default function Checkout() {
     try {
       let atual: Cobranca;
       if (ehGorjeta) {
-        const g = await api<Gorjeta>('cliente', `/v2/gorjetas/${id}`);
+        const g = await api<Gorjeta>(SOLICITANTE, `/v2/gorjetas/${id}`);
         atual = { titulo: 'Gorjeta para o motorista', valor: g.valor, checkoutUrl: g.status === 'pendente' ? g.checkoutUrl : null, pendente: g.status === 'pendente' };
       } else {
-        const cc = await api<CorridaCliente>('cliente', `/v2/corridas/${id}`);
+        const cc = await api<CorridaCliente>(SOLICITANTE, `/v2/corridas/${id}`);
         atual = {
           titulo: cc.pacote ? `${cc.servicoTitulo} · ${cc.pacote.viagens} viagens` : (cc.servicoTitulo ?? cc.mercadoNome),
           valor: cc.pacote?.valor ?? cc.valor,
@@ -123,7 +124,7 @@ export default function Checkout() {
             ? router.canGoBack()
               ? router.back()
               : router.replace(corrida ? `/corrida/${corrida}` : '/')
-            : api('cliente', `/v2/corridas/${id}/cancelar`, { method: 'POST' })
+            : api(SOLICITANTE, `/v2/corridas/${id}/cancelar`, { method: 'POST' })
                 .catch(() => {})
                 .finally(() => router.replace('/'))
         }
@@ -139,7 +140,7 @@ const s = StyleSheet.create({
   cadeado: { fontSize: 24 },
   topoTitulo: { fontSize: 15, fontWeight: '700', color: cores.texto },
   topoSub: { fontSize: 12, color: cores.suave },
-  sobre: { position: 'absolute', top: 70, left: 0, right: 0, bottom: 50, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(246,247,245,0.94)', gap: 10 },
+  sobre: { position: 'absolute', top: 70, left: 0, right: 0, bottom: 50, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(10,11,13,0.92)', gap: 10 },
   sobreTexto: { color: cores.texto, fontSize: 15 },
   erro: { color: cores.erro, fontSize: 14, padding: 16 },
   cancelar: { padding: 14, alignItems: 'center', borderTopWidth: 1, borderTopColor: cores.borda, backgroundColor: cores.cartao },

@@ -1,7 +1,8 @@
+import type { CidadeId } from './cidades';
 import type { CategoriaId } from './servicos';
 import { MERCADOS } from './mercados';
 
-export type Local = { id: string; categoria: CategoriaId; nome: string; endereco: string; lat: number; lon: number };
+export type Local = { id: string; categoria: CategoriaId; nome: string; endereco: string; lat: number; lon: number; cidade?: CidadeId | null };
 
 const CIDADE = 'Guaramirim - SC';
 

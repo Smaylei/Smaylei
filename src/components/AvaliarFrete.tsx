@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { api, type CorridaCliente, type Gorjeta } from '../services/api';
+import { SOLICITANTE } from '../variante';
 import { formatarReais } from '../services/preco';
 import { cores, raio, sombra } from './tema';
 
@@ -39,11 +40,11 @@ export default function AvaliarFrete({ c, onAtualizar }: { c: CorridaCliente; on
     setEnviando(true);
     try {
       if (!avaliado) {
-        const atual = await api<CorridaCliente>('cliente', `/v2/corridas/${c.id}/avaliar`, { method: 'POST', corpo: { nota, sugestao: sugestao.trim() || undefined } });
+        const atual = await api<CorridaCliente>(SOLICITANTE, `/v2/corridas/${c.id}/avaliar`, { method: 'POST', corpo: { nota, sugestao: sugestao.trim() || undefined } });
         onAtualizar(atual);
       }
       if (valorGorjeta > 0) {
-        const g = await api<Gorjeta>('cliente', `/v2/corridas/${c.id}/gorjeta`, { method: 'POST', corpo: { valor: valorGorjeta } });
+        const g = await api<Gorjeta>(SOLICITANTE, `/v2/corridas/${c.id}/gorjeta`, { method: 'POST', corpo: { valor: valorGorjeta } });
         router.push({ pathname: '/checkout/[id]', params: { id: g.id, tipo: 'gorjeta', corrida: c.id } });
       }
     } catch (e) {

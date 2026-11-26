@@ -1,3 +1,4 @@
+import type { CidadeId } from '../data/cidades';
 import type { CategoriaId, ServicoId } from '../data/servicos';
 // Chamadas do App Admin (rotas /v2/admin no servidor). A senha é o ADMIN_TOKEN da Cloudflare.
 import { api, apagarToken, guardarToken, type Disponibilidade, type Status } from './api';
@@ -24,6 +25,7 @@ export type ConfigServidor = {
   servicosAtivos: ServicoId[];
   categoriasAtivas: CategoriaId[];
   outroEnderecoLoja: boolean;
+  cidadesAtivas: CidadeId[];
 };
 
 export type Resumo = {
@@ -38,6 +40,7 @@ export type Resumo = {
   estornosPendentes: number;
   estornosPendentesQtd: number;
   avisosNaoLidos: number;
+  lojistasPendentes: number;
   avaliacoesNaoLidas: number;
   notaMedia: number;
   gorjetasHoje: number;
@@ -190,8 +193,15 @@ export type Avaliacoes = { media: number | null; total: number; comSugestao: num
 export const avaliacoes = () => api<Avaliacoes>('admin', '/v2/admin/avaliacoes');
 export const avaliacoesLidas = () => api('admin', '/v2/admin/avaliacoes/lidas', { method: 'POST' });
 
-export type LocalAdmin = { id: string; categoria: string; nome: string; endereco: string; lat: number; lon: number; ativo: boolean };
+export type LocalAdmin = { id: string; categoria: string; nome: string; endereco: string; lat: number; lon: number; ativo: boolean; cidade?: CidadeId | null };
 export const locais = () => api<LocalAdmin[]>('admin', '/v2/admin/locais');
 export const salvarLocal = (l: Partial<LocalAdmin>) =>
   api<LocalAdmin>('admin', l.id ? `/v2/admin/locais/${l.id}` : '/v2/admin/locais', { method: l.id ? 'PUT' : 'POST', corpo: l });
 export const apagarLocal = (id: string) => api('admin', `/v2/admin/locais/${id}`, { method: 'DELETE' });
+
+export type LojistaAdmin = {
+  id: string; nome: string; cpf: string; telefone: string | null; endereco: string; lat: number; lon: number;
+  loja_nome: string; cnpj: string | null; status: 'pendente' | 'aprovado' | 'bloqueado'; criado_em: string; corridas: number;
+};
+export const lojistas = () => api<LojistaAdmin[]>('admin', '/v2/admin/lojistas');
+export const statusLojista = (id: string, status: LojistaAdmin['status']) => api('admin', `/v2/admin/lojistas/${id}/status`, { method: 'POST', corpo: { status } });

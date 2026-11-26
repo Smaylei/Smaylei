@@ -1,75 +1,43 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
-// Um projeto, três apps (APP_VARIANT):
-//   (padrão)   → "MOVI"             app do cliente
-//   motorista  → "MOVI Motorista"   app do motorista parceiro
-//   admin      → "MOVI Admin"       app de gestão
-// (Os identificadores br.com.mercadofrete.* continuam os mesmos: o app atualiza por cima, sem perder o cadastro.)
-type Variante = 'cliente' | 'motorista' | 'admin';
+// MOVI — um app só. Ao abrir, a pessoa escolhe: Cliente, Motorista ou Lojista (e volta pelo "Início").
+// O painel Admin roda no navegador do computador: APP_VARIANT=admin npx expo export --platform web
+// (os identificadores br.com.mercadofrete.* continuam: o app atualiza por cima, sem perder o cadastro.)
+type Variante = 'app' | 'admin';
 
-const CAMERA = 'A câmera é usada para a sua foto de identificação.';
-const AGENDA = 'Os fretes aceitos entram na sua agenda, com lembrete 15 minutos antes.';
+const CAMERA = 'A câmera é usada para a sua foto de identificação e, no caso de motoristas, para a CNH.';
+const AGENDA = 'As corridas aceitas entram na sua agenda, com lembrete 15 minutos antes.';
 
 export default ({ config }: ConfigContext): ExpoConfig => {
-  const v: Variante = process.env.APP_VARIANT === 'admin' ? 'admin' : process.env.APP_VARIANT === 'motorista' ? 'motorista' : 'cliente';
-  const base = { ...config, extra: { ...config.extra, variante: v } } as ExpoConfig;
+  const v: Variante = process.env.APP_VARIANT === 'admin' ? 'admin' : 'app';
+  const base = { ...config, extra: { ...config.extra, variante: v === 'admin' ? 'admin' : 'cliente' } } as ExpoConfig;
   const plugins = (base.plugins ?? []).filter((p) => (Array.isArray(p) ? p[0] : p) !== 'expo-location');
-  const semAgenda = ['android.permission.READ_CALENDAR', 'android.permission.WRITE_CALENDAR'];
-  const camera: [string, object] = ['expo-image-picker', { cameraPermission: CAMERA, photosPermission: 'Para escolher uma foto já tirada.', microphonePermission: false }];
 
-  if (v === 'cliente')
-    return {
-      ...base,
-      plugins: [...plugins, ['expo-location', { locationWhenInUsePermission: 'Usamos sua localização para marcar o endereço de entrega.' }], camera],
-      android: { ...base.android, blockedPermissions: [...(base.android?.blockedPermissions ?? []), ...semAgenda] },
-    };
-
-  if (v === 'motorista')
-    return {
-      ...base,
-      name: 'MOVI Motorista',
-      scheme: 'mercadofretemotorista',
-      icon: './assets/motorista-icon.png',
-      ios: {
-        ...base.ios,
-        bundleIdentifier: 'br.com.mercadofrete.motorista',
-        infoPlist: { ...base.ios?.infoPlist, UIBackgroundModes: ['location', 'fetch'] },
-      },
-      android: {
-        ...base.android,
-        package: 'br.com.mercadofrete.motorista',
-        adaptiveIcon: { ...base.android?.adaptiveIcon, backgroundColor: '#3D6FD1', backgroundImage: './assets/motorista-icon-background.png' },
-        permissions: [...(base.android?.permissions ?? []), 'ACCESS_BACKGROUND_LOCATION', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_LOCATION'],
-      },
-      plugins: [
-        ...plugins,
-        [
-          'expo-location',
-          {
-            locationAlwaysAndWhenInUsePermission: 'Sua posição é enviada enquanto você está online, para receber corridas próximas e o cliente acompanhar a entrega.',
-            locationWhenInUsePermission: 'Sua posição é usada para receber corridas próximas e o cliente acompanhar a entrega.',
-            isAndroidBackgroundLocationEnabled: true,
-            isAndroidForegroundServiceEnabled: true,
-            isIosBackgroundLocationEnabled: true,
-          },
-        ],
-        camera,
-        ['expo-calendar', { calendarPermission: AGENDA, remindersPermission: false }],
-        ['expo-notifications', {}],
-      ],
-    };
+  if (v === 'admin') return { ...base, name: 'MOVI Admin', web: { ...base.web, name: 'MOVI Admin', shortName: 'MOVI Admin', themeColor: '#0A0B0D', backgroundColor: '#0A0B0D' } };
 
   return {
     ...base,
-    name: 'MOVI Admin',
-    scheme: 'mercadofreteadmin',
-    icon: './assets/admin-icon.png',
-    ios: { ...base.ios, bundleIdentifier: 'br.com.mercadofrete.admin' },
+    name: 'MOVI',
+    ios: { ...base.ios, infoPlist: { ...base.ios?.infoPlist, UIBackgroundModes: ['location', 'fetch'] } },
     android: {
       ...base.android,
-      package: 'br.com.mercadofrete.admin',
-      adaptiveIcon: { ...base.android?.adaptiveIcon, backgroundColor: '#5560C4', backgroundImage: './assets/admin-icon-background.png' },
+      permissions: [...(base.android?.permissions ?? []), 'ACCESS_BACKGROUND_LOCATION', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_LOCATION'],
     },
-    plugins: [...plugins, ['expo-calendar', { calendarPermission: AGENDA, remindersPermission: false }], ['expo-notifications', {}]],
+    plugins: [
+      ...plugins,
+      [
+        'expo-location',
+        {
+          locationAlwaysAndWhenInUsePermission: 'No modo Motorista, sua posição é enviada enquanto você está online, para receber corridas e o cliente acompanhar o trajeto.',
+          locationWhenInUsePermission: 'Usamos sua localização para marcar endereços e acompanhar as corridas.',
+          isAndroidBackgroundLocationEnabled: true,
+          isAndroidForegroundServiceEnabled: true,
+          isIosBackgroundLocationEnabled: true,
+        },
+      ],
+      ['expo-image-picker', { cameraPermission: CAMERA, photosPermission: 'Para escolher uma foto já tirada.', microphonePermission: false }],
+      ['expo-calendar', { calendarPermission: AGENDA, remindersPermission: false }],
+      ['expo-notifications', {}],
+    ],
   };
 };

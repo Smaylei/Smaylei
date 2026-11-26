@@ -7,7 +7,8 @@ import MapaRuas, { type EstadoMapa } from '../../components/MapaRuas';
 import { cores, raio, sombra } from '../../components/tema';
 import { useApp } from '../../estado/AppContext';
 import { api, fonteImagem, ROTULO_STATUS, type CorridaCliente } from '../../services/api';
-import { rotaAte } from '../../services/eta';
+import { useRota } from '../../services/eta';
+import { SOLICITANTE } from '../../variante';
 import { formatarReais } from '../../services/preco';
 
 const ATUALIZAR_MS = 3000; // o carro anda no mapa a cada atualização
@@ -23,7 +24,7 @@ export default function Corrida() {
 
   const carregar = useCallback(async () => {
     try {
-      setC(await api<CorridaCliente>('cliente', `/v2/corridas/${id}`));
+      setC(await api<CorridaCliente>(SOLICITANTE, `/v2/corridas/${id}`));
       setErro(null);
     } catch (e) {
       setErro((e as Error).message);
@@ -43,7 +44,7 @@ export default function Corrida() {
 
   const temMotorista = !!c?.motorista?.temFoto;
   useEffect(() => {
-    if (temMotorista) fonteImagem('cliente', `/v2/corridas/${id}/foto-motorista`).then(setFoto);
+    if (temMotorista) fonteImagem(SOLICITANTE, `/v2/corridas/${id}/foto-motorista`).then(setFoto);
   }, [temMotorista, id]);
 
   // Coleta e destino da viagem (versões antigas do servidor: mercado → casa).
@@ -59,19 +60,10 @@ export default function Corrida() {
   const destino = indoParaCasa ? entrega : coleta;
   const latMot = mot?.lat != null ? Math.round(mot.lat * 1e5) / 1e5 : null;
   const lonMot = mot?.lon != null ? Math.round(mot.lon * 1e5) / 1e5 : null;
-  const latEta = latMot != null ? Math.round(latMot * 1e3) / 1e3 : null; // a rota só é recalculada a cada ~100 m
-  const lonEta = lonMot != null ? Math.round(lonMot * 1e3) / 1e3 : null;
-  const eta = useMemo(
-    () => (latEta != null && lonEta != null && destino && ['aceito', 'em_andamento'].includes(c?.status ?? '') ? rotaAte({ lat: latEta, lon: lonEta }, destino) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [latEta, lonEta, destino?.lat, destino?.lon, c?.status],
-  );
+  // Rota de carro (OSRM pelo servidor), recalculada a cada ~100 m do motorista.
+  const eta = useRota(latMot != null && lonMot != null ? { lat: latMot, lon: lonMot } : null, destino, ['aceito', 'em_andamento'].includes(c?.status ?? ''));
   // Da coleta até o destino, enquanto o motorista ainda vai à coleta.
-  const etaCasaDepois = useMemo(
-    () => (coleta && entrega && c?.status === 'aceito' ? rotaAte(coleta, entrega) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [coleta?.lat, coleta?.lon, entrega?.lat, entrega?.lon, c?.status],
-  );
+  const etaCasaDepois = useRota(coleta, entrega, c?.status === 'aceito');
 
   const estadoMapa: EstadoMapa | null = useMemo(() => {
     if (!c || !entrega) return null;
@@ -88,7 +80,7 @@ export default function Corrida() {
   async function confirmarRecebimento() {
     setOcupado(true);
     try {
-      setC(await api<CorridaCliente>('cliente', `/v2/corridas/${id}/confirmar-recebimento`, { method: 'POST' }));
+      setC(await api<CorridaCliente>(SOLICITANTE, `/v2/corridas/${id}/confirmar-recebimento`, { method: 'POST' }));
     } catch (e) {
       Alert.alert('Não foi possível', (e as Error).message);
     } finally {
@@ -99,7 +91,7 @@ export default function Corrida() {
   async function confirmar() {
     setOcupado(true);
     try {
-      setC(await api<CorridaCliente>('cliente', `/v2/corridas/${id}/confirmar-motorista`, { method: 'POST' }));
+      setC(await api<CorridaCliente>(SOLICITANTE, `/v2/corridas/${id}/confirmar-motorista`, { method: 'POST' }));
     } catch (e) {
       Alert.alert('Não foi possível', (e as Error).message);
     } finally {
@@ -123,7 +115,7 @@ export default function Corrida() {
           text: 'Cancelar frete',
           style: 'destructive',
           onPress: () =>
-            api<CorridaCliente>('cliente', `/v2/corridas/${c.id}/cancelar`, { method: 'POST' })
+            api<CorridaCliente>(SOLICITANTE, `/v2/corridas/${c.id}/cancelar`, { method: 'POST' })
               .then(setC)
               .catch((e) => Alert.alert('Não foi possível cancelar', (e as Error).message)),
         },

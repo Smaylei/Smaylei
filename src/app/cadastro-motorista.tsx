@@ -1,7 +1,8 @@
-import { router, useFocusEffect } from 'expo-router';
+import { router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import CampoFoto from '../components/CampoFoto';
+import { BotaoInicio } from '../components/Marca';
 import { cores, raio, sombra } from '../components/tema';
 import { api, enviarFoto, ErroApi, guardarToken, lerToken } from '../services/api';
 import { cpfValido, formatarCpf } from '../services/cpf';
@@ -81,6 +82,7 @@ export default function CadastroMotorista() {
 
   return (
     <ScrollView contentContainerStyle={s.conteudo} keyboardShouldPersistTaps="handled">
+      {!temConta && <Stack.Screen options={{ headerLeft: () => <BotaoInicio /> }} />}
       <Text style={s.intro}>
         {temConta ? 'Complete seus documentos para começar a receber corridas.' : 'Cadastre-se como motorista parceiro. Depois da análise dos documentos, você já pode ficar online.'}
       </Text>

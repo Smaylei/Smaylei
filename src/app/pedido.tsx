@@ -6,20 +6,31 @@ import SeletorPonta, { escolhaCasa, type Escolha } from '../components/SeletorPo
 import { cores, raio, sombra } from '../components/tema';
 import { servicoPorId } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
+import { useCotacoes } from '../hooks/useCotacoes';
 import { api, type CorridaCliente, type Disponibilidade } from '../services/api';
 import { formatarReais } from '../services/preco';
+import { SOLICITANTE } from '../variante';
 
 export default function PedidoTela() {
   const params = useLocalSearchParams<{ servico?: string; modo?: string }>();
   const sv = servicoPorId(params.servico ?? 'comigo');
-  const { casa, cotar, recarregarConfig, config } = useApp();
+  const { casa, recarregarConfig, config } = useApp();
   const insets = useSafeAreaInsets();
   const [agendado, setAgendado] = useState(params.modo === 'agendar' || !!sv.variosDias);
   const [disp, setDisp] = useState<Disponibilidade | null>(null);
   // A casa já vem marcada no lado em que ela é o padrão.
-  const [coleta, setColeta] = useState<Escolha | null>(casa && sv.coleta.casa && !sv.entrega.casa ? escolhaCasa(casa) : casa && sv.coleta.casa && sv.variosDias ? escolhaCasa(casa) : null);
-  const [entrega, setEntrega] = useState<Escolha | null>(casa && sv.entrega.casa && !sv.coleta.casa ? escolhaCasa(casa) : null);
+  const [coleta, setColeta] = useState<Escolha | null>(casa && sv.coleta.casa && !sv.entrega.casa ? escolhaCasa(casa, SOLICITANTE) : casa && sv.coleta.casa && sv.variosDias ? escolhaCasa(casa, SOLICITANTE) : null);
+  const [entrega, setEntrega] = useState<Escolha | null>(casa && sv.entrega.casa && !sv.coleta.casa ? escolhaCasa(casa, SOLICITANTE) : null);
   const [descricao, setDescricao] = useState('');
+  // Se a casa/loja carregar depois de abrir a tela, já deixa marcada no lado padrão.
+  useEffect(() => {
+    if (!casa) return;
+    const t = setTimeout(() => {
+      if (sv.coleta.casa && (!sv.entrega.casa || sv.variosDias)) setColeta((c) => c ?? escolhaCasa(casa, SOLICITANTE));
+      if (sv.entrega.casa && !sv.coleta.casa) setEntrega((e) => e ?? escolhaCasa(casa, SOLICITANTE));
+    }, 0);
+    return () => clearTimeout(t);
+  }, [casa, sv]);
   // agendamento de um dia
   const [diaIdx, setDiaIdx] = useState(0);
   const [inicio, setInicio] = useState<string | null>(null);
@@ -46,9 +57,10 @@ export default function PedidoTela() {
   }, [carregar]);
 
   // Preço de cada opção da lista, com o outro lado já escolhido.
-  const precoColeta = useMemo(() => (entrega ? (p: { lat: number; lon: number }) => cotar(sv.id, p, entrega, agendado) : undefined), [entrega, cotar, sv.id, agendado]);
-  const precoEntrega = useMemo(() => (coleta ? (p: { lat: number; lon: number }) => cotar(sv.id, coleta, p, agendado) : undefined), [coleta, cotar, sv.id, agendado]);
-  const valor = useMemo(() => (coleta && entrega ? cotar(sv.id, coleta, entrega, agendado) : null), [coleta, entrega, cotar, sv.id, agendado]);
+  // Valor calculado pelo servidor (rota OSRM + tarifas do Admin): é o mesmo cobrado no pedido.
+  const destinoCot = useMemo(() => (entrega ? [{ id: 'd', lat: entrega.lat, lon: entrega.lon }] : []), [entrega]);
+  const cot = useCotacoes(sv.id, agendado, coleta, destinoCot);
+  const valor = coleta && entrega ? (cot.d?.valor ?? null) : null;
 
   // Viagens do pedido.
   const horarioDe = (data: string, hora: string | null) => disp?.dias.find((d) => d.data === data)?.horarios.find((h) => h.hora === hora)?.inicio ?? null;
@@ -124,8 +136,8 @@ export default function PedidoTela() {
         </View>
         {sv.aviso && <Text style={s.aviso}>ℹ️ {sv.aviso}</Text>}
 
-        <SeletorPonta ponta={sv.coleta} valor={coleta} onChange={setColeta} preco={precoColeta} />
-        <SeletorPonta ponta={sv.entrega} valor={entrega} onChange={setEntrega} preco={precoEntrega} />
+        <SeletorPonta ponta={sv.coleta} valor={coleta} onChange={setColeta} servico={sv.id} agendado={agendado} base={entrega} />
+        <SeletorPonta ponta={sv.entrega} valor={entrega} onChange={setEntrega} servico={sv.id} agendado={agendado} base={coleta} />
 
         {sv.descricao && (
           <>

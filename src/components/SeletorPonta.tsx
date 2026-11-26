@@ -2,12 +2,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { cidadeDe, CIDADES, nomeCidade, type CidadeId } from '../data/cidades';
 import type { Local } from '../data/locais';
-import { CATEGORIAS, categoriasVisiveis, livrePermitido, type CategoriaId, type Ponta } from '../data/servicos';
+import { CATEGORIAS, categoriasVisiveis, livrePermitido, type CategoriaId, type Ponta, type ServicoId } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
-import { acharRua } from '../services/grafo';
-import { formatarReais } from '../services/preco';
+import { useCotacoes } from '../hooks/useCotacoes';
+import { distanciaRetaKm, formatarReais } from '../services/preco';
 import { geocodificar, minhaLocalizacao } from '../services/rota';
+import { SOLICITANTE } from '../variante';
 import MapaRuas, { type EstadoMapa } from './MapaRuas';
 import { cores, raio, sombra } from './tema';
 
@@ -24,21 +26,26 @@ export type Escolha = {
 type Lugar = { nome: string; endereco: string; lat: number; lon: number };
 const CHAVE_LUGARES = 'lugares:v1';
 
-export const escolhaCasa = (c: { endereco: string; lat: number; lon: number }): Escolha => ({
-  chave: 'casa', nome: 'Minha casa', endereco: c.endereco, lat: c.lat, lon: c.lon, corpo: { casa: true },
+export const escolhaCasa = (c: { endereco: string; lat: number; lon: number }, quem: 'cliente' | 'lojista' = 'cliente'): Escolha => ({
+  chave: 'casa', nome: quem === 'lojista' ? 'Minha loja' : 'Minha casa', endereco: c.endereco, lat: c.lat, lon: c.lon, corpo: { casa: true },
 });
-const escolhaLocal = (l: Local): Escolha => ({ chave: `l:${l.id}`, nome: l.nome, endereco: l.endereco.split(', Guaramirim')[0], lat: l.lat, lon: l.lon, corpo: { localId: l.id } });
+const curto = (e: string) => e.split(/, (Guaramirim|Jaraguá do Sul|Schroeder|Massaranduba|Joinville)/)[0];
+const escolhaLocal = (l: Local): Escolha => ({ chave: `l:${l.id}`, nome: l.nome, endereco: curto(l.endereco), lat: l.lat, lon: l.lon, corpo: { localId: l.id } });
 const escolhaLivre = (l: Lugar): Escolha => ({ chave: `x:${l.nome}:${l.lat}:${l.lon}`, nome: l.nome, endereco: l.endereco, lat: l.lat, lon: l.lon, corpo: { ...l } });
 
 type Props = {
   ponta: Ponta;
   valor: Escolha | null;
   onChange: (e: Escolha) => void;
-  /** Preço com cada opção (para mostrar ao lado dos locais da lista). */
-  preco?: (p: { lat: number; lon: number }) => number | null;
+  servico: ServicoId;
+  agendado: boolean;
+  /** O outro lado da viagem: com ele, cada local da lista mostra o preço (calculado pelo servidor). */
+  base?: { lat: number; lon: number } | null;
 };
 
-export default function SeletorPonta({ ponta, valor, onChange, preco }: Props) {
+const MOSTRAR = 8;
+
+export default function SeletorPonta({ ponta, valor, onChange, servico, agendado, base }: Props) {
   const { casa, locais, config } = useApp();
   const categorias = useMemo(() => categoriasVisiveis(ponta, config), [ponta, config]);
   const livreOk = livrePermitido(ponta, config);
@@ -55,8 +62,15 @@ export default function SeletorPonta({ ponta, valor, onChange, preco }: Props) {
       .catch(() => {});
   }, [livre]);
 
-  const lista = useMemo(() => locais.filter((l) => l.categoria === cat), [locais, cat]);
-  const precos = useMemo(() => (preco ? Object.fromEntries(lista.map((l) => [l.id, preco(l)])) : {}), [lista, preco]);
+  const [todos, setTodos] = useState(false);
+  // Os mais perto primeiro (do outro lado da viagem ou da casa), de todas as cidades liberadas.
+  const ref = base ?? casa;
+  const lista = useMemo(() => {
+    const l = locais.filter((x) => x.categoria === cat);
+    return ref ? l.sort((a, b) => distanciaRetaKm(a.lat, a.lon, ref.lat, ref.lon) - distanciaRetaKm(b.lat, b.lon, ref.lat, ref.lon)) : l;
+  }, [locais, cat, ref]);
+  const visiveis = useMemo(() => (todos ? lista : lista.slice(0, MOSTRAR)), [lista, todos]);
+  const cot = useCotacoes(servico, agendado, base, visiveis);
 
   async function usarGps() {
     setMsg(null);
@@ -82,7 +96,15 @@ export default function SeletorPonta({ ponta, valor, onChange, preco }: Props) {
     <View style={{ gap: 8 }}>
       <Text style={s.rotulo}>{ponta.rotulo}</Text>
 
-      {ponta.casa && casa && <Opcao icone="🏠" titulo="Minha casa" sub={casa.endereco} ativo={valor?.chave === 'casa'} onPress={() => onChange(escolhaCasa(casa))} />}
+      {ponta.casa && casa && (
+        <Opcao
+          icone={SOLICITANTE === 'lojista' ? '🏪' : '🏠'}
+          titulo={SOLICITANTE === 'lojista' ? 'Minha loja' : 'Minha casa'}
+          sub={casa.endereco}
+          ativo={valor?.chave === 'casa'}
+          onPress={() => onChange(escolhaCasa(casa, SOLICITANTE))}
+        />
+      )}
 
       {categorias.length > 0 && (
         <>
@@ -101,16 +123,21 @@ export default function SeletorPonta({ ponta, valor, onChange, preco }: Props) {
             </View>
           )}
           {lista.length === 0 && <Text style={s.vazio}>Nenhum local cadastrado nesta categoria ainda.</Text>}
-          {lista.map((l) => (
+          {visiveis.map((l) => (
             <Opcao
               key={l.id}
               titulo={l.nome}
-              sub={l.endereco.split(', Guaramirim')[0]}
-              direita={preco ? (precos[l.id] != null ? formatarReais(precos[l.id]!) : '—') : undefined}
+              sub={`${curto(l.endereco)} · ${nomeCidade(l.cidade ?? cidadeDe(l))}`}
+              direita={base ? (cot[l.id] ? formatarReais(cot[l.id]!.valor) : '…') : undefined}
               ativo={valor?.chave === `l:${l.id}`}
               onPress={() => onChange(escolhaLocal(l))}
             />
           ))}
+          {lista.length > MOSTRAR && (
+            <Pressable onPress={() => setTodos(!todos)}>
+              <Text style={s.mais}>{todos ? 'Mostrar só os mais perto' : `Ver todos (${lista.length})`}</Text>
+            </Pressable>
+          )}
         </>
       )}
 
@@ -176,21 +203,23 @@ function Opcao(p: { icone?: string; titulo: string; sub?: string; direita?: stri
 
 /** Endereço digitado + ponto no mapa (obrigatório, para o preço e a navegação do motorista). */
 function EnderecoLivre({ onUsar, onCancelar }: { onUsar: (l: Lugar, salvar: boolean) => void; onCancelar: () => void }) {
-  const { casa } = useApp();
+  const { casa, config } = useApp();
+  const cidades = CIDADES.filter((c) => config.cidadesAtivas.includes(c.id));
+  const [cidade, setCidade] = useState<CidadeId>((casa && cidadeDe(casa)) || cidades[0]?.id || 'guaramirim');
   const [nome, setNome] = useState('');
   const [endereco, setEndereco] = useState('');
   const [pin, setPin] = useState<{ lat: number; lon: number } | null>(null);
   const [salvar, setSalvar] = useState(false);
   const [ocupado, setOcupado] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const rua = useMemo(() => acharRua(endereco), [endereco]);
-  const estado: EstadoMapa = useMemo(() => ({ modo: 'escolher', casa: pin ?? (casa ? { lat: casa.lat, lon: casa.lon } : null), rua, mercados: [] }), [pin, rua, casa]);
+  const centro = CIDADES.find((c) => c.id === cidade)?.centro ?? null;
+  const estado: EstadoMapa = useMemo(() => ({ modo: 'escolher', casa: pin, centro, mercados: [] }), [pin, centro]);
 
   async function achar() {
     setMsg(null);
     setOcupado(true);
     try {
-      const p = await geocodificar(/guaramirim/i.test(endereco) ? endereco : `${endereco}, Guaramirim - SC`);
+      const p = await geocodificar(endereco, cidade);
       if (p) setPin(p);
       else setMsg('Não achei esse endereço. Toque no mapa no ponto certo.');
     } finally {
@@ -201,6 +230,15 @@ function EnderecoLivre({ onUsar, onCancelar }: { onUsar: (l: Lugar, salvar: bool
   const ok = endereco.trim().length >= 6 && !!pin;
   return (
     <View style={s.livre}>
+      {cidades.length > 1 && (
+        <View style={s.chips}>
+          {cidades.map((c) => (
+            <Pressable key={c.id} style={[s.chip, cidade === c.id && s.chipAtivo]} onPress={() => setCidade(c.id)}>
+              <Text style={[s.chipTexto, cidade === c.id && { color: cores.primaria }]}>{c.nome}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
       <TextInput style={s.input} value={nome} onChangeText={setNome} placeholder="Nome (ex.: Trabalho, Correios) — opcional" placeholderTextColor={cores.apagado} maxLength={40} />
       <TextInput
         style={s.input}
@@ -245,6 +283,7 @@ const s = StyleSheet.create({
   chipAtivo: { backgroundColor: cores.primariaClara, borderColor: cores.primaria },
   chipTexto: { fontSize: 14, fontWeight: '600', color: cores.texto },
   vazio: { fontSize: 13, color: cores.suave },
+  mais: { color: cores.primaria, fontWeight: '700', fontSize: 14, textAlign: 'center', paddingVertical: 6 },
   opcao: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: cores.cartao, borderRadius: raio, borderWidth: 1.5, borderColor: 'transparent', padding: 14, ...sombra },
   opcaoAtiva: { borderColor: cores.primaria, backgroundColor: cores.primariaClara },
   opcaoIcone: { fontSize: 22 },

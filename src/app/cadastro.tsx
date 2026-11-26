@@ -1,17 +1,14 @@
-import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { router, Stack } from 'expo-router';
+import { useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import CampoFoto from '../components/CampoFoto';
-import MapaRuas, { type EstadoMapa } from '../components/MapaRuas';
+import CampoEndereco from '../components/CampoEndereco';
+import { BotaoInicio } from '../components/Marca';
 import { cores, raio, sombra } from '../components/tema';
-import { MERCADOS } from '../data/mercados';
 import { useApp } from '../estado/AppContext';
 import { api, enviarFoto, ErroApi, guardarToken } from '../services/api';
 import { cpfValido, formatarCpf } from '../services/cpf';
-import { acharRua } from '../services/grafo';
-import { geocodificar, minhaLocalizacao } from '../services/rota';
 
-const CURTO: Record<string, string> = { cooper: 'Cooper', komprao: 'Komprão', burei: 'Burei', 'super-tres': 'Super Três', martini: 'Martini' };
 
 export default function Cadastro() {
   const { casa, temConta, salvarCasa } = useApp();
@@ -23,34 +20,6 @@ export default function Cadastro() {
   const [pin, setPin] = useState<{ lat: number; lon: number } | null>(casa ? { lat: casa.lat, lon: casa.lon } : null);
   const [ocupado, setOcupado] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-
-  const rua = useMemo(() => acharRua(endereco), [endereco]);
-  const estado: EstadoMapa = useMemo(
-    () => ({
-      modo: 'escolher',
-      casa: pin,
-      rua,
-      mercados: MERCADOS.map((m) => ({ id: m.id, curto: CURTO[m.id] ?? m.nome, lat: m.lat, lon: m.lon })),
-    }),
-    [pin, rua],
-  );
-
-  async function localizar(como: 'gps' | 'endereco') {
-    setMsg(null);
-    setOcupado(true);
-    try {
-      if (como === 'gps') setPin(await minhaLocalizacao());
-      else {
-        const p = await geocodificar(/guaramirim/i.test(endereco) ? endereco : `${endereco}, Guaramirim - SC`);
-        if (p) setPin(p);
-        else setMsg('Não achei esse endereço. Toque no mapa no ponto da sua casa.');
-      }
-    } catch (e) {
-      setMsg((e as Error).message);
-    } finally {
-      setOcupado(false);
-    }
-  }
 
   const faltando = [
     nome.trim().split(' ').length < 2 && 'nome completo',
@@ -91,7 +60,8 @@ export default function Cadastro() {
 
   return (
     <ScrollView contentContainerStyle={s.conteudo} keyboardShouldPersistTaps="handled">
-      {!temConta && <Text style={s.intro}>Cadastre-se uma vez. Depois é só pedir ou agendar o frete.</Text>}
+      {!temConta && <Stack.Screen options={{ title: 'Cadastro de cliente', headerLeft: () => <BotaoInicio /> }} />}
+      {!temConta && <Text style={s.intro}>Cadastre-se uma vez. Depois é só pedir ou agendar.</Text>}
 
       <CampoFoto rotulo="Sua foto" uri={foto} onFoto={setFoto} frontal enviada={casa?.temFoto} />
 
@@ -120,30 +90,7 @@ export default function Cadastro() {
         autoComplete="tel"
       />
 
-      <Text style={s.rotulo}>Endereço de entrega (rua, número e bairro)</Text>
-      <TextInput
-        style={s.input}
-        value={endereco}
-        onChangeText={setEndereco}
-        placeholder="Ex.: Rua 28 de Agosto, 1200, Centro"
-        placeholderTextColor={cores.suave}
-        returnKeyType="search"
-        onSubmitEditing={() => endereco.trim().length > 4 && localizar('endereco')}
-      />
-      <Text style={s.passo}>
-        {pin ? '✓ Casa marcada. Toque no mapa para ajustar.' : rua ? `Rua encontrada: ${rua}. Toque no mapa no ponto da sua casa.` : 'Toque no mapa no ponto exato da sua casa.'}
-      </Text>
-
-      <MapaRuas estado={estado} onEscolher={setPin} style={{ height: 320 }} />
-
-      <View style={s.linha}>
-        <Pressable onPress={() => localizar('gps')} disabled={ocupado}>
-          <Text style={s.link}>📍 Estou em casa</Text>
-        </Pressable>
-        <Pressable onPress={() => localizar('endereco')} disabled={ocupado || endereco.trim().length < 5}>
-          <Text style={[s.link, endereco.trim().length < 5 && { opacity: 0.4 }]}>🔎 Achar endereço</Text>
-        </Pressable>
-      </View>
+      <CampoEndereco rotulo="Endereço de entrega (rua, número e bairro)" endereco={endereco} onEndereco={setEndereco} pin={pin} onPin={setPin} gps="Estou em casa" />
 
       {msg && <Text style={s.erro}>{msg}</Text>}
       {faltando.length > 0 && <Text style={s.falta}>Falta: {faltando.join(', ')}.</Text>}
