@@ -1,20 +1,18 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { Redirect } from 'expo-router';
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Marca } from '../components/Marca';
 import { COR_PERFIL, cores } from '../components/tema';
-import { ADMIN_WEB } from '../config';
 import { EH_ADMIN, MODO, trocarModo, type Modo } from '../variante';
 
 const OPCOES: { modo: Modo; titulo: string; sub: string; icone: keyof typeof MaterialCommunityIcons.glyphMap }[] = [
   { modo: 'cliente', titulo: 'CLIENTE', sub: 'Solicitar transportes', icone: 'account' },
   { modo: 'motorista', titulo: 'MOTORISTA', sub: 'Realizar transportes', icone: 'car' },
   { modo: 'lojista', titulo: 'LOJISTA', sub: 'Solicitar transporte de compras e clientes', icone: 'storefront' },
-  { modo: 'admin', titulo: 'ADMIN', sub: 'Gerenciar a plataforma (no computador)', icone: 'shield-check' },
 ];
 
-/** Abertura do app: a pessoa escolhe como quer usar a MOVI. O perfil fica salvo até tocar em "Início". */
+/** Abertura do app: a pessoa escolhe como quer usar a MOVI (o Admin é só no computador). O perfil fica salvo até tocar em "Início". */
 export default function Inicio() {
   const insets = useSafeAreaInsets();
   if (EH_ADMIN) return <Redirect href="/painel" />;
@@ -33,7 +31,7 @@ export default function Inicio() {
             <Pressable
               key={o.modo}
               style={({ pressed }) => [s.cartao, { backgroundColor: `${cor}2E`, borderLeftColor: cor }, pressed && { opacity: 0.8 }]}
-              onPress={() => (o.modo === 'admin' ? Linking.openURL(ADMIN_WEB) : trocarModo(o.modo))}
+              onPress={() => trocarModo(o.modo)}
               accessibilityRole="button"
             >
               <MaterialCommunityIcons name={o.icone} size={34} color="#FFFFFF" />
