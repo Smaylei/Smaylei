@@ -147,8 +147,10 @@ export default function PedidoTela() {
                 <Pressable key={v.id} style={[s.segItem, veiculo === v.id && s.segAtivo]} onPress={() => setVeiculo(v.id)}>
                   <Text style={[s.segTexto, veiculo === v.id && s.segTextoAtivo]}>
                     {v.icone} {v.nome}
-                    {v.id === 'moto' ? ` · ${Math.round((1 - config.motoFatorPreco) * 100)}% mais barato` : ''}
                   </Text>
+                  {v.id === 'moto' && config.motoFatorPreco < 1 && (
+                    <Text style={[s.segSub, veiculo === v.id && s.segTextoAtivo]}>{Math.round((1 - config.motoFatorPreco) * 100)}% mais barato</Text>
+                  )}
                 </Pressable>
               ))}
             </View>
@@ -295,10 +297,11 @@ const s = StyleSheet.create({
   sub: { fontSize: 13, fontWeight: '600', color: cores.suave, marginTop: 4 },
   input: { backgroundColor: cores.cartao, borderRadius: 12, padding: 12, fontSize: 15, color: cores.texto, ...sombra },
   segmento: { flexDirection: 'row', backgroundColor: cores.cartao, borderRadius: 999, padding: 4, ...sombra },
-  segItem: { flex: 1, paddingVertical: 10, borderRadius: 999, alignItems: 'center' },
+  segItem: { flex: 1, paddingVertical: 10, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
   segAtivo: { backgroundColor: cores.primaria },
   segTexto: { fontSize: 15, fontWeight: '600', color: cores.texto },
   segTextoAtivo: { color: '#fff' },
+  segSub: { fontSize: 11, color: cores.suave, marginTop: 1 },
   faixas: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { ...sombra, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 14, backgroundColor: cores.cartao },
   chipAtivo: { backgroundColor: cores.primaria },

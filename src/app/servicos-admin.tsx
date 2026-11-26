@@ -110,13 +110,14 @@ export default function ServicosAdmin() {
       <View style={s.cartao}>
         <Text style={s.titulo}>🏍️ Moto (motoboy)</Text>
         <Text style={s.desc}>O motorista escolhe carro ou moto no cadastro. Corridas de moto só vão para motos.</Text>
-        <Linha titulo="Aceitar pedidos de moto" valor={lib.motoAtivo} onChange={() => salvar({ ...lib, motoAtivo: !lib.motoAtivo })} bloqueado={salvando} />
+        <Linha titulo="Aceitar pedidos de moto" rotulos={['Ligado', 'Desligado']} valor={lib.motoAtivo} onChange={() => salvar({ ...lib, motoAtivo: !lib.motoAtivo })} bloqueado={salvando} />
         {lib.motoAtivo &&
           SERVICOS.map((sv) => (
             <Linha
               key={sv.id}
               titulo={`${sv.icone} ${sv.titulo}${sv.publico === 'lojista' ? ' (lojista)' : ''}`}
               sub="Pode ser feito de moto"
+              rotulos={['Sim', 'Não']}
               valor={lib.motoServicos.includes(sv.id)}
               onChange={() => alternarMoto(sv.id)}
               bloqueado={salvando}
@@ -170,14 +171,14 @@ export default function ServicosAdmin() {
   );
 }
 
-function Linha({ titulo, sub, valor, onChange, bloqueado }: { titulo: string; sub?: string; valor: boolean; onChange: () => void; bloqueado: boolean }) {
+function Linha({ titulo, sub, valor, onChange, bloqueado, rotulos = ['Liberado', 'Em breve'] }: { titulo: string; sub?: string; valor: boolean; onChange: () => void; bloqueado: boolean; rotulos?: [string, string] }) {
   return (
     <View style={s.linha}>
       <View style={{ flex: 1 }}>
         <Text style={[s.item, !valor && { color: cores.suave }]}>{titulo}</Text>
         {sub ? <Text style={s.sub}>{sub}</Text> : null}
       </View>
-      <Text style={[s.estado, { color: valor ? cores.sucesso : cores.apagado }]}>{valor ? 'Liberado' : 'Em breve'}</Text>
+      <Text style={[s.estado, { color: valor ? cores.sucesso : cores.apagado }]}>{valor ? rotulos[0] : rotulos[1]}</Text>
       <Switch value={valor} onValueChange={onChange} disabled={bloqueado} trackColor={{ true: cores.primaria }} />
     </View>
   );
