@@ -400,7 +400,8 @@ export class Central extends DurableObject<Env> {
   }
   private livreDoMotorista(motoristaId: unknown, bloco: Bloco, ignorar?: unknown): boolean {
     return !this.q<{ inicio: string; fim: string; id: string }>(
-      `SELECT id, inicio, fim FROM corridas WHERE motorista_id=? AND (status IN ${COM_MOTORISTA} OR status='entregue')`,
+      // Entregue = livre na hora (antes o motorista ficava bloqueado "voltando ao mercado").
+      `SELECT id, inicio, fim FROM corridas WHERE motorista_id=? AND status IN ${COM_MOTORISTA}`,
       motoristaId,
     ).some((c) => c.id !== ignorar && sobrepoeBloco({ inicio: Date.parse(c.inicio), fim: Date.parse(c.fim) }, bloco));
   }
@@ -429,11 +430,12 @@ export class Central extends DurableObject<Env> {
     // Só contagens (sem dados pessoais): ajuda a entender um "nenhum motorista livre".
     const n = (q: string, ...x: unknown[]) => Number(this.um(q, ...x)?.n ?? 0);
     const diag = {
-      v: 2,
+      v: 3,
       online: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1`),
       comPosicao: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1 AND loc_em > ?`, iso(agora - LOC_VALIDA_MIN * MIN)),
       livres,
       esperando,
+      emCorrida: n(`SELECT COUNT(DISTINCT motorista_id) AS n FROM corridas WHERE motorista_id IS NOT NULL AND status IN ${COM_MOTORISTA}`),
     };
     return { agora: agoraOk, dias: proximosDias(cfg, blocos, agora, 6, this.aprovados()), bloqueioMin: cfg.bloqueioMin, diag };
   }
@@ -1097,7 +1099,7 @@ export class Central extends DurableObject<Env> {
       if (metodo === 'POST' && acao === '/confirmar-recebimento') {
         if (c.cliente_na_coleta !== 0 || c.status !== 'em_andamento') return erro('Ainda não há entrega para confirmar.', 409);
         this.liberar(c);
-        this.sql.exec(`UPDATE corridas SET status='entregue', entregue_em=? WHERE id=?`, iso(agora), c.id);
+        this.sql.exec(`UPDATE corridas SET status='entregue', entregue_em=?, fim=? WHERE id=?`, iso(agora), iso(agora), c.id);
         return json(this.corridaParaCliente(this.corrida(c.id)!));
       }
       if (metodo === 'POST' && acao === '/cancelar') {
@@ -1297,7 +1299,7 @@ export class Central extends DurableObject<Env> {
           this.liberar(c);
           this.avisar(this.textoCorrida(c, `📦 ENTREGUE sem confirmação do cliente — ${mot.nome} chegou ao destino (GPS) e esperou ${cfg.esperaConfirmacaoMin} min; valor liberado`), c.id);
         }
-        this.sql.exec(`UPDATE corridas SET status='entregue', entregue_em=? WHERE id=?`, iso(agora), c.id);
+        this.sql.exec(`UPDATE corridas SET status='entregue', entregue_em=?, fim=? WHERE id=?`, iso(agora), iso(agora), c.id);
         return json(this.corridaParaMotorista(this.corrida(c.id)!));
       }
       if (metodo === 'POST' && acao === '/cliente-ausente') {
