@@ -1,7 +1,7 @@
 // Página do mapa (sem Google e sem chave): MapLibre GL + tiles do OpenFreeMap (OpenStreetMap).
 // Usada no celular (WebView) e no painel web (iframe). Recebe o estado por window.mfEstado(...)
 // e devolve { tipo: 'pronto' } e { tipo: 'pin', lat, lon } (toque no mapa no modo "escolher").
-import { cores } from './tema';
+import { COR_VEICULO, cores } from './tema';
 
 export const MAPLIBRE = 'https://unpkg.com/maplibre-gl@4.7.1/dist';
 export const ESTILO_MAPA = 'https://tiles.openfreemap.org/styles/dark';
@@ -16,10 +16,12 @@ html,body,#m{margin:0;height:100%;background:${cores.fundo};font-family:system-u
 .casa{width:34px;height:34px;border-radius:17px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 2px 8px rgba(0,0,0,.6);border:3px solid ${cores.primaria}}
 .loja{width:max-content;padding:4px 9px;border-radius:12px;background:${cores.cartao};color:#fff;font-size:12px;font-weight:700;border:1.5px solid #3a3f46;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.5)}
 .loja.sel{background:${cores.primaria};border-color:${cores.primaria}}
-.frota{display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer}
-.frota .ic{width:34px;height:34px;border-radius:17px;display:flex;align-items:center;justify-content:center;font-size:18px;border:3px solid #fff;box-shadow:0 2px 10px rgba(0,0,0,.6)}
-.frota .nm{width:max-content;padding:1px 7px;border-radius:8px;background:rgba(10,11,13,.85);color:#fff;font-size:11px;font-weight:700;white-space:nowrap}
-.frota.livre .ic{background:#2DB36F}.frota.corrida .ic{background:#F27B1A}.frota.offline .ic{background:#5b636b;opacity:.75}.frota.offline .nm{opacity:.7}
+.frota{display:flex;align-items:center;gap:6px;cursor:pointer}
+.frota .pt{width:12px;height:12px;border-radius:50%;border:2px solid #0b0c0e;flex:none}
+.frota.v-carro .pt{background:${COR_VEICULO.carro};box-shadow:0 0 0 4px ${COR_VEICULO.carro}38}
+.frota.v-moto .pt{background:${COR_VEICULO.moto};box-shadow:0 0 0 4px ${COR_VEICULO.moto}38}
+.frota .nm{padding:1px 6px;border-radius:5px;background:rgba(28,31,36,.88);border:1px solid rgba(255,255,255,.08);color:#e8eaed;font-size:11px;font-weight:600;line-height:16px;letter-spacing:.4px;white-space:nowrap}
+.frota.offline{opacity:.4}
 .carro{width:38px;height:38px;border-radius:19px;background:${cores.primaria};display:flex;align-items:center;justify-content:center;font-size:20px;border:3px solid #fff;box-shadow:0 2px 10px rgba(0,0,0,.6)}
 .aviso{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:${cores.suave};text-align:center;padding:20px}
 .maplibregl-ctrl-attrib{font-size:10px}
@@ -41,13 +43,13 @@ function el(c,h){var d=document.createElement('div');d.className=c;d.innerHTML=h
 function linha(p){return{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:p.map(function(x){return[x[1],x[0]];})}};}
 function anima(){var k=Math.min(1,(performance.now()-t0)/2500);var e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;carro.setLngLat([de[0]+(para[0]-de[0])*e,de[1]+(para[1]-de[1])*e]);if(k<1)requestAnimationFrame(anima);}
 function aplicar(){
-  var e=est,pts=[];
+  var e=est,pts=[],ativos=[];
   if(e.casa){var ll=[e.casa.lon,e.casa.lat];if(!mCasa)mCasa=new maplibregl.Marker({element:el('casa','🏠')}).setLngLat(ll).addTo(map);else mCasa.setLngLat(ll);pts.push(ll);}
   else if(mCasa){mCasa.remove();mCasa=null;}
   var ids={};
   (e.mercados||[]).forEach(function(m){ids[m.id]=1;var sel=e.sel===m.id;var ll=[m.lon,m.lat];
     if(!mks[m.id])mks[m.id]=new maplibregl.Marker({element:el('loja','')}).setLngLat(ll).addTo(map);
-    var d=mks[m.id].getElement();d.className='loja'+(sel?' sel':'');d.textContent=m.curto;mks[m.id].setLngLat(ll);if(sel||e.modo==='rota')pts.push(ll);});
+    var d=mks[m.id].getElement();d.className='loja'+(sel?' sel':'');d.textContent=m.curto;mks[m.id].setLngLat(ll);if(sel||e.modo==='rota')pts.push(ll);if(e.modo==='frota')ativos.push(ll);});
   Object.keys(mks).forEach(function(k){if(!ids[k]){mks[k].remove();delete mks[k];}});
   var r=e.rota,feats=[];if(r&&r.ida&&r.ida.length>1)feats.push(linha(r.ida));if(r&&r.volta&&r.volta.length>1)feats.push(linha(r.volta));
   var src=map.getSource('rota');if(src)src.setData({type:'FeatureCollection',features:feats});
@@ -55,10 +57,10 @@ function aplicar(){
     if(!carro){carro=new maplibregl.Marker({element:el('carro',e.motorista.moto?'🏍️':'🚗')}).setLngLat(p).addTo(map);para=p;}
     else if(!para||para[0]!==p[0]||para[1]!==p[1]){var a=carro.getLngLat();de=[a.lng,a.lat];para=p;t0=performance.now();requestAnimationFrame(anima);}}
   else if(carro){carro.remove();carro=null;para=null;}
-  var vistos={},ativos=[];
+  var vistos={};
   (e.motoristas||[]).forEach(function(m){vistos[m.id]=1;var p=[m.lon,m.lat];var f=frota[m.id];
-    if(!f){var d=el('frota '+m.estado,'<div class="ic">'+(m.moto?'🏍️':'🚗')+'</div><div class="nm"></div>');d.onclick=function(){enviar({tipo:'motorista',id:m.id});};f=frota[m.id]={m:new maplibregl.Marker({element:d,anchor:'center'}).setLngLat(p).addTo(map),p:p};}
-    var d2=f.m.getElement();d2.className='frota '+m.estado;d2.querySelector('.nm').textContent=m.nome;d2.style.zIndex=m.estado==='offline'?1:3;
+    if(!f){var d=el('frota','<div class="pt"></div><div class="nm"></div>');d.onclick=function(){enviar({tipo:'motorista',id:m.id});};f=frota[m.id]={m:new maplibregl.Marker({element:d,anchor:'left',offset:[-8,0]}).setLngLat(p).addTo(map),p:p};}
+    var d2=f.m.getElement();d2.className='frota '+(m.moto?'v-moto':'v-carro')+' '+m.estado;d2.querySelector('.nm').textContent=m.nome;d2.style.zIndex=m.estado==='offline'?1:3;
     if(f.p[0]!==p[0]||f.p[1]!==p[1]){f.p=p;mover(f,p);}
     pts.push(p);if(m.estado!=='offline')ativos.push(p);});
   Object.keys(frota).forEach(function(k){if(!vistos[k]){frota[k].m.remove();delete frota[k];}});
@@ -66,7 +68,7 @@ function aplicar(){
     var fk=e.foco?e.foco.lat+','+e.foco.lon:'';
     if(fk&&fk!==foco){foco=fk;map.flyTo({center:[e.foco.lon,e.foco.lat],zoom:15});return;}
     if(ativos.length)pts=ativos;
-    if(!chave&&pts.length){chave='x';if(pts.length===1)map.jumpTo({center:pts[0],zoom:14});else{var bb=new maplibregl.LngLatBounds(pts[0],pts[0]);pts.forEach(function(q){bb.extend(q);});map.fitBounds(bb,{padding:70,maxZoom:15,duration:0});}}
+    if(!chave&&pts.length){chave='x';if(pts.length===1)map.jumpTo({center:pts[0],zoom:14});else{var bb=new maplibregl.LngLatBounds(pts[0],pts[0]);pts.forEach(function(q){bb.extend(q);});map.fitBounds(bb,{padding:{top:60,bottom:60,left:60,right:130},maxZoom:15,duration:0});}}
     return;
   }
   var c=e.centro?e.centro.lat+','+e.centro.lon:'';

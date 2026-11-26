@@ -2,7 +2,7 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, useWindowDimensions, View } from 'react-native';
 import MapaRuas, { type EstadoMapa } from '../components/MapaRuas';
-import { cores, raio } from '../components/tema';
+import { COR_VEICULO, cores, raio } from '../components/tema';
 import * as Admin from '../services/admin';
 
 const ATUALIZAR_MS = 5000;
@@ -73,7 +73,7 @@ export default function MapaAdmin() {
       foco,
       motoristas: lista
         .filter((m) => m.lat != null && m.lon != null && (verOffline || m.estado !== 'offline'))
-        .map((m) => ({ id: m.id, nome: `${m.nome.split(' ')[0]} · ${m.placa}`, lat: m.lat!, lon: m.lon!, moto: m.veiculo === 'moto', estado: m.estado })),
+        .map((m) => ({ id: m.id, nome: m.placa, lat: m.lat!, lon: m.lon!, moto: m.veiculo === 'moto', estado: m.estado })),
       mercados: corridas.flatMap((c) => [
         ...(c.coleta_lat != null && c.coleta_lon != null ? [{ id: `c-${c.id}`, curto: `📍 ${c.cliente_nome.split(' ')[0]}`, lat: c.coleta_lat, lon: c.coleta_lon }] : []),
         ...(c.entrega_lat != null && c.entrega_lon != null ? [{ id: `d-${c.id}`, curto: `🏁 ${c.cliente_nome.split(' ')[0]}`, lat: c.entrega_lat, lon: c.entrega_lon }] : []),
@@ -111,6 +111,12 @@ export default function MapaAdmin() {
             <Text style={s.sub}>Mostrar offline (última posição)</Text>
             <Switch value={verOffline} onValueChange={setVerOffline} trackColor={{ true: cores.primaria }} />
           </View>
+          <View style={s.legenda}>
+            <View style={[s.ponto, { backgroundColor: COR_VEICULO.carro }]} />
+            <Text style={s.sub}>Carro</Text>
+            <View style={[s.ponto, { backgroundColor: COR_VEICULO.moto, marginLeft: 12 }]} />
+            <Text style={s.sub}>Moto</Text>
+          </View>
           <Text style={s.sub}>Atualiza a cada 5 s. Toque num motorista para centralizar o mapa.</Text>
           {erro && <Text style={s.erro}>{erro}</Text>}
           {lista.length === 0 && <Text style={s.sub}>Nenhum motorista aprovado ainda.</Text>}
@@ -121,13 +127,11 @@ export default function MapaAdmin() {
               disabled={m.lat == null}
               onPress={() => m.lat != null && setFoco({ lat: m.lat, lon: m.lon! })}
             >
-              <View style={[s.ponto, { backgroundColor: COR[m.estado] }]} />
+              <View style={[s.ponto, { backgroundColor: COR_VEICULO[m.veiculo === 'moto' ? 'moto' : 'carro'] }, m.estado === 'offline' && { opacity: 0.4 }]} />
               <View style={{ flex: 1 }}>
-                <Text style={s.nome}>
-                  {m.veiculo === 'moto' ? '🏍️' : '🚗'} {m.nome}
-                </Text>
+                <Text style={s.nome}>{m.nome}</Text>
                 <Text style={s.sub}>
-                  {m.placa} · {ROTULO[m.estado]} · {ha(m.loc_em, agora)}
+                  {m.placa} · <Text style={{ color: COR[m.estado], fontWeight: '600' }}>{ROTULO[m.estado]}</Text> · {ha(m.loc_em, agora)}
                 </Text>
               </View>
             </Pressable>
@@ -160,7 +164,8 @@ const s = StyleSheet.create({
   sub: { fontSize: 13, color: cores.suave },
   erro: { color: cores.erro, fontSize: 13 },
   cartao: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: cores.cartao, borderRadius: raio, padding: 12, borderWidth: 1, borderColor: cores.borda },
-  ponto: { width: 12, height: 12, borderRadius: 6 },
+  ponto: { width: 10, height: 10, borderRadius: 5 },
+  legenda: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   nome: { fontSize: 15, fontWeight: '700', color: cores.texto },
   corrida: { backgroundColor: cores.cartao, borderRadius: raio, padding: 12, gap: 2, borderLeftWidth: 3, borderLeftColor: '#F27B1A' },
 });

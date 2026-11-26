@@ -8,6 +8,9 @@ import { MODO } from '../variante';
  */
 export const COR_PERFIL = { cliente: '#2DB36F', motorista: '#1E7BFF', lojista: '#F27B1A', admin: '#7C8691' } as const;
 
+/** Mapa ao vivo do Admin: carro azul, moto amarela. */
+export const COR_VEICULO = { carro: '#1E7BFF', moto: '#FFC531' } as const;
+
 const destaque = (cor: string) => ({ primaria: cor, primariaClara: `${cor}24`, primariaMedia: `${cor}59` });
 
 export const cores = {
