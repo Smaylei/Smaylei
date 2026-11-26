@@ -22,15 +22,19 @@ import { LOCAIS_INICIAIS, LOCAIS_REGIAO } from '../../src/data/locais';
 import { MERCADOS } from '../../src/data/mercados';
 import {
   CATEGORIAS,
+  aceitaMoto,
   LIBERACAO_PADRAO,
   livrePermitido,
+  MOTO_PADRAO,
   MARCA,
   precoServico,
   servicoPorId,
   SERVICOS,
+  type ConfigMoto,
   type Liberacao,
   type Ponta as PontaServico,
   type ServicoId,
+  type Veiculo,
 } from '../../src/data/servicos';
 import { TARIFAS_PADRAO } from '../../src/data/tarifas';
 import {
@@ -59,7 +63,9 @@ export interface Env {
   APP_SCHEME: string;
 }
 
-export type Config = ConfigAgenda & Liberacao & {
+export type Config = ConfigAgenda & Liberacao & ConfigMoto & {
+  deslocamentoPadraoKm: number; // agendado (ainda sem motorista): km cobrados até a coleta
+  deslocamentoMaxKm: number; // teto do deslocamento cobrado
   tarifas: Tarifa[];
   margem: number;
   urgencia: Urgencia;
@@ -87,6 +93,9 @@ export const CONFIG_PADRAO: Config = {
   saqueDias: 7,
   esperaBorrachariaMin: 20,
   ...LIBERACAO_PADRAO,
+  ...MOTO_PADRAO,
+  deslocamentoPadraoKm: 3,
+  deslocamentoMaxKm: 15,
 };
 const AREA_M = 1500; // distância máxima de um endereço até as ruas do mapa (fora disso: fora da área)
 const MAX_VIAGENS = 20;
@@ -168,6 +177,9 @@ const COLUNAS_NOVAS = [`ALTER TABLE corridas ADD COLUMN pagamento_ate TEXT`, `AL
   ].map((c) => `ALTER TABLE corridas ADD COLUMN ${c}`),
   // lojistas: a loja é uma conta de solicitante com status (aprovação pelo Admin)
   'ALTER TABLE locais ADD COLUMN cidade TEXT',
+  "ALTER TABLE motoristas ADD COLUMN veiculo TEXT NOT NULL DEFAULT 'carro'",
+  "ALTER TABLE corridas ADD COLUMN veiculo TEXT NOT NULL DEFAULT 'carro'",
+  'ALTER TABLE corridas ADD COLUMN km_desloc REAL',
   ...["tipo TEXT NOT NULL DEFAULT 'cliente'", 'loja_nome TEXT', 'cnpj TEXT', "status TEXT NOT NULL DEFAULT 'aprovado'"].map((c) => `ALTER TABLE clientes ADD COLUMN ${c}`)];
 
 export const ROTULO: Record<string, string> = {
@@ -276,7 +288,7 @@ export class Central extends DurableObject<Env> {
     const mot = c.motorista_id ? this.um(`SELECT nome, placa FROM motoristas WHERE id=?`, c.motorista_id) : undefined;
     return [
       cab,
-      `Serviço: ${servicoPorId(c.servico).titulo}`,
+      `Serviço: ${servicoPorId(c.servico).titulo}${c.veiculo === 'moto' ? ' · 🏍️ MOTO' : ''}`,
       `Quando: ${c.agendado ? c.janela : `AGORA (${horaLocal(Date.parse(String(c.criado_em)))})`}`,
       cli?.tipo === 'lojista' ? `Loja: ${cli.loja_nome} (${cli.nome})` : `Cliente: ${cli?.nome ?? '-'}`,
       `Coleta: ${c.coleta_nome ?? c.mercado_nome}${c.coleta_endereco && c.coleta_nome !== 'Casa' ? ` (${c.coleta_endereco})` : ''}`,
@@ -419,9 +431,33 @@ export class Central extends DurableObject<Env> {
     });
   }
 
-  private async cotar(servico: ServicoId, coleta: Ponto, entrega: Ponto, agendado: boolean) {
-    const [r] = await this.trajetos(coleta, [entrega]);
-    return { valor: precoServico(r, this.config(), servico, agendado), km: r2(r.kmIda + r.kmVolta), minutos: Math.round(r.minIda + r.minVolta) };
+  /**
+   * Deslocamento cobrado até a coleta. Agora: do motorista livre (do mesmo veículo) mais perto,
+   * em linha reta × 1,35, arredondado a 0,5 km. Agendado (motorista ainda desconhecido) ou sem
+   * ninguém online: o padrão do Admin. Sempre limitado ao teto do Admin.
+   */
+  private deslocamento(coleta: Ponto, agendado: boolean, veiculo: Veiculo) {
+    const cfg = this.config();
+    let km = cfg.deslocamentoPadraoKm;
+    if (!agendado) {
+      const livres = this.motoristasLivresAgora(Date.now()).filter((m) => (m.veiculo ?? 'carro') === veiculo && m.lat != null);
+      if (livres.length) km = Math.min(...livres.map((m) => distanciaRetaKm(Number(m.lat), Number(m.lon), coleta.lat, coleta.lon) * 1.35));
+    }
+    km = Math.min(cfg.deslocamentoMaxKm, Math.max(0.5, Math.ceil(km * 2) / 2));
+    return { km, min: (km / 30) * 60 };
+  }
+
+  private preco(t: Trajeto, desloc: { km: number; min: number }, servico: ServicoId, agendado: boolean, veiculo: Veiculo, ida: boolean) {
+    // Viagem coleta → destino (na borracharia, leva e traz: ida e volta).
+    const retorno = servicoPorId(servico).retorno;
+    const kmViagem = ida ? t.kmIda : t.kmVolta, minViagem = ida ? t.minIda : t.minVolta;
+    const p = { kmDesloc: desloc.km, minDesloc: desloc.min, kmViagem: retorno ? t.kmIda + t.kmVolta : kmViagem, minViagem: retorno ? t.minIda + t.minVolta : minViagem };
+    return { valor: precoServico(p, this.config(), servico, agendado, veiculo), km: r2(p.kmDesloc + p.kmViagem), minutos: Math.round(p.minDesloc + p.minViagem), kmDesloc: p.kmDesloc };
+  }
+
+  private async cotar(servico: ServicoId, coleta: Ponto, entrega: Ponto, agendado: boolean, veiculo: Veiculo = 'carro') {
+    const [t] = await this.trajetos(coleta, [entrega]);
+    return this.preco(t, this.deslocamento(coleta, agendado, veiculo), servico, agendado, veiculo, true);
   }
 
   /** Ponto dentro de uma cidade liberada? */
@@ -476,9 +512,9 @@ export class Central extends DurableObject<Env> {
 
   // ---------- visões ----------
   private motoristaPublico(id: unknown) {
-    const m = id ? this.um(`SELECT id, nome, carro, placa, cor, selfie, lat, lon, loc_em, telefone FROM motoristas WHERE id=?`, id) : undefined;
+    const m = id ? this.um(`SELECT id, nome, carro, placa, cor, selfie, lat, lon, loc_em, telefone, veiculo FROM motoristas WHERE id=?`, id) : undefined;
     if (!m) return null;
-    return { id: m.id, nome: String(m.nome).split(' ')[0], carro: m.carro, placa: m.placa, cor: m.cor, temFoto: !!m.selfie, lat: m.lat, lon: m.lon, locEm: m.loc_em };
+    return { id: m.id, nome: String(m.nome).split(' ')[0], carro: m.carro, placa: m.placa, cor: m.cor, veiculo: m.veiculo ?? 'carro', temFoto: !!m.selfie, lat: m.lat, lon: m.lon, locEm: m.loc_em };
   }
   private corridaParaCliente(c: Linha) {
     const cfg = this.config();
@@ -501,7 +537,7 @@ export class Central extends DurableObject<Env> {
   private viagem(c: Linha) {
     const curto = (e: unknown) => String(e ?? '').split(/, Guaramirim/)[0];
     return {
-      servico: (c.servico ?? 'comigo') as ServicoId, servicoTitulo: servicoPorId(c.servico).titulo, descricao: c.descricao,
+      servico: (c.servico ?? 'comigo') as ServicoId, servicoTitulo: servicoPorId(c.servico).titulo, descricao: c.descricao, veiculo: (c.veiculo ?? 'carro') as Veiculo, kmDesloc: c.km_desloc,
       clienteNaColeta: c.cliente_na_coleta !== 0, retorno: c.retorno === 1, chegouDestinoEm: c.chegou_destino_em,
       coleta: { nome: c.coleta_nome, endereco: curto(c.coleta_endereco), lat: Number(c.coleta_lat), lon: Number(c.coleta_lon) },
       entrega: { nome: c.entrega_nome, endereco: curto(c.entrega_endereco), lat: Number(c.entrega_lat), lon: Number(c.entrega_lon) },
@@ -692,7 +728,8 @@ export class Central extends DurableObject<Env> {
         esperaPagamentoMin: cfg.esperaPagamentoMin, esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, comissaoMotoristaPct: cfg.comissaoMotoristaPct, aberto: cfg.aberto,
         esperaBorrachariaMin: cfg.esperaBorrachariaMin,
         servicosAtivos: cfg.servicosAtivos, categoriasAtivas: cfg.categoriasAtivas, outroEnderecoLoja: cfg.outroEnderecoLoja,
-        cidadesAtivas: cfg.cidadesAtivas,
+        cidadesAtivas: cfg.cidadesAtivas, motoAtivo: cfg.motoAtivo, motoServicos: cfg.motoServicos, motoFatorPreco: cfg.motoFatorPreco,
+        deslocamentoPadraoKm: cfg.deslocamentoPadraoKm,
         locais: this.locais().filter((l) => cfg.categoriasAtivas.includes(l.categoria as never) && !!l.cidade && cfg.cidadesAtivas.includes(l.cidade)),
       });
     if (metodo === 'GET' && p === '/v2/disponibilidade') return json(this.disponibilidade());
@@ -737,19 +774,20 @@ export class Central extends DurableObject<Env> {
       const b = await this.corpo<Record<string, unknown>>(req);
       const nome = String(b.nome ?? '').trim(), cpf = soDigitos(b.cpf), tel = soDigitos(b.telefone);
       const carro = String(b.carro ?? '').trim(), placa = String(b.placa ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const veiculo: Veiculo = b.veiculo === 'moto' ? 'moto' : 'carro';
       if (nome.length < 3) return erro('Informe o nome completo.');
       if (!cpfValido(cpf)) return erro('CPF inválido.');
       if (tel.length < 10) return erro('Informe o WhatsApp com DDD.');
-      if (carro.length < 2) return erro('Informe o modelo do carro.');
+      if (carro.length < 2) return erro(veiculo === 'moto' ? 'Informe o modelo da moto.' : 'Informe o modelo do carro.');
       if (!/^[A-Z]{3}\d[A-Z0-9]\d{2}$/.test(placa)) return erro('Placa inválida (ex.: ABC1D23).');
       if (this.um(`SELECT id FROM motoristas WHERE cpf=?`, cpf)) return erro('Já existe um motorista com esse CPF.', 409);
       const id = novoId('mot'), token = crypto.randomUUID() + crypto.randomUUID();
       // A chave Pix dos saques é o CPF do motorista.
       this.sql.exec(
-        `INSERT INTO motoristas (id, token, nome, cpf, telefone, carro, placa, cor, pix, criado_em) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        id, token, nome, cpf, tel, carro, placa, String(b.cor ?? '').trim() || null, cpf, iso(agora),
+        `INSERT INTO motoristas (id, token, nome, cpf, telefone, carro, placa, cor, pix, criado_em, veiculo) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        id, token, nome, cpf, tel, carro, placa, String(b.cor ?? '').trim() || null, cpf, iso(agora), veiculo,
       );
-      this.avisar(`🆕 NOVO MOTORISTA para aprovar\n${nome} · ${carro} ${placa}\nVeja os documentos em Motoristas.`);
+      this.avisar(`🆕 NOVO ${veiculo === 'moto' ? 'MOTOBOY' : 'MOTORISTA'} para aprovar\n${nome} · ${veiculo === 'moto' ? '🏍️' : '🚗'} ${carro} ${placa}\nVeja os documentos em Motoristas.`);
       return json({ id, token });
     }
 
@@ -798,13 +836,17 @@ export class Central extends DurableObject<Env> {
 
     // Preço e rota (mapa sem Google: OSRM/OpenStreetMap). O preço é o mesmo cobrado no pedido.
     if (metodo === 'POST' && p === '/v2/cotacoes') {
-      const b = await this.corpo<{ servico?: string; agendado?: boolean; base?: Ponto; pontos?: (Ponto & { id: string })[] }>(req);
+      // base = o lado já escolhido; pontos = as opções do outro lado (ex.: mercados da lista).
+      const b = await this.corpo<{ servico?: string; agendado?: boolean; base?: Ponto; baseEh?: 'coleta' | 'entrega'; veiculo?: string; pontos?: (Ponto & { id: string })[] }>(req);
       const pts = (b.pontos ?? []).filter((x) => typeof x?.lat === 'number' && typeof x?.lon === 'number').slice(0, 80);
       if (!b.base || typeof b.base.lat !== 'number' || typeof b.base.lon !== 'number') return erro('Informe o ponto de partida.');
       const sv = servicoPorId(b.servico);
+      const veiculo: Veiculo = b.veiculo === 'moto' ? 'moto' : 'carro';
+      const agendado = !!b.agendado;
       const ts = await this.trajetos(b.base, pts);
-      const cfg = this.config();
-      return json(Object.fromEntries(pts.map((x, i) => [x.id, { valor: precoServico(ts[i], cfg, sv.id, !!b.agendado), km: r2(ts[i].kmIda + ts[i].kmVolta), minutos: Math.round(ts[i].minIda + ts[i].minVolta) }])));
+      const baseColeta = b.baseEh !== 'entrega';
+      const deslocBase = baseColeta ? this.deslocamento(b.base, agendado, veiculo) : null;
+      return json(Object.fromEntries(pts.map((x, i) => [x.id, this.preco(ts[i], deslocBase ?? this.deslocamento(x, agendado, veiculo), sv.id, agendado, veiculo, baseColeta)])));
     }
     if (metodo === 'GET' && p === '/v2/rota') {
       const n = (k: string) => (url.searchParams.get(k) ?? '').split(',').map(Number);
@@ -846,8 +888,9 @@ export class Central extends DurableObject<Env> {
       this.sql.exec(`UPDATE corridas SET status='cancelado', motivo='substituido', cancelado_em=? WHERE cliente_id=? AND status='pagamento_pendente'`, iso(agora), cli.id);
       const b = await this.corpo<{
         servico?: string; coleta?: unknown; entrega?: unknown; descricao?: string; mercadoId?: string;
-        agendado?: boolean; inicio?: string; inicios?: string[]; voltas?: string[];
+        agendado?: boolean; inicio?: string; inicios?: string[]; voltas?: string[]; veiculo?: string;
       }>(req);
+      const veiculo: Veiculo = b.veiculo === 'moto' ? 'moto' : 'carro';
       const sv = servicoPorId(b.servico ?? 'comigo');
       if (b.servico && !SERVICOS.some((x) => x.id === b.servico)) return erro('Serviço inválido.');
       // Versões antigas do app mandam só o mercado: coleta no mercado, entrega em casa.
@@ -864,7 +907,8 @@ export class Central extends DurableObject<Env> {
       if (sv.descricao && descricao.length < 3) return erro(`Informe: ${sv.descricao.rotulo.toLowerCase()}.`);
       const agendado = !!b.agendado;
       if (!agendado && this.um(`SELECT id FROM corridas WHERE cliente_id=? AND agendado=0 AND status IN ${OCUPAM}`, cli.id)) return erro('Você já tem um frete em andamento.', 409);
-      const cot = await this.cotar(sv.id, coleta, entrega, agendado);
+      if (veiculo === 'moto' && !aceitaMoto(sv.id, cfg)) return erro('Este serviço ainda não está disponível de moto.');
+      const cot = await this.cotar(sv.id, coleta, entrega, agendado, veiculo);
 
       // Viagens: uma agora, uma agendada ou (transporte) vários dias com ida e volta.
       const viagens: { inicio: number; volta: boolean }[] = [];
@@ -898,11 +942,12 @@ export class Central extends DurableObject<Env> {
         const janela = agendado ? `${rotuloDia(dataLocal(v.inicio), dataLocal(agora))} · ${horaLocal(v.inicio)}` : 'Agora';
         this.sql.exec(
           `INSERT INTO corridas (id, cliente_id, mercado_id, mercado_nome, agendado, inicio, fim, janela, status, valor, km, minutos, criado_em, pagamento_ate,
-             servico, descricao, coleta_nome, coleta_endereco, coleta_lat, coleta_lon, entrega_nome, entrega_endereco, entrega_lat, entrega_lon, cliente_na_coleta, retorno, pacote_id)
-           VALUES (?,?,?,?,?,?,?,?, 'pagamento_pendente', ?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+             servico, descricao, coleta_nome, coleta_endereco, coleta_lat, coleta_lon, entrega_nome, entrega_endereco, entrega_lat, entrega_lon, cliente_na_coleta, retorno, pacote_id, veiculo, km_desloc)
+           VALUES (?,?,?,?,?,?,?,?, 'pagamento_pendente', ?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           id, cli.id, de.localId, de.nome, agendado ? 1 : 0, iso(v.inicio), iso(v.inicio + cfg.bloqueioMin * MIN), janela,
           cot.valor, cot.km, cot.minutos, iso(agora), iso(agora + cfg.esperaPagamentoMin * MIN),
           sv.id, descricao || null, de.nome, de.endereco, de.lat, de.lon, para.nome, para.endereco, para.lat, para.lon, sv.clienteNaColeta ? 1 : 0, sv.retorno ? 1 : 0, pacote,
+          veiculo, cot.kmDesloc,
         );
       }
       try {
@@ -1033,7 +1078,7 @@ export class Central extends DurableObject<Env> {
     if (metodo === 'GET' && p === '/v2/eu') {
       const s = this.saldo(mot.id);
       return json({
-        tipo: 'motorista', id: mot.id, nome: mot.nome, telefone: mot.telefone, carro: mot.carro, placa: mot.placa, cor: mot.cor, pix: mot.cpf,
+        tipo: 'motorista', id: mot.id, nome: mot.nome, telefone: mot.telefone, carro: mot.carro, placa: mot.placa, cor: mot.cor, pix: mot.cpf, veiculo: mot.veiculo ?? 'carro',
         status: mot.status, online: !!mot.online, temSelfie: !!mot.selfie, temCnh: !!mot.cnh, docsObrigatorios: !!this.env.DOCS,
         ...s, comissaoPct: cfg.comissaoMotoristaPct, ...this.notaMotorista(mot.id),
         agendaLink: `${url.origin}/agenda.ics?m=${mot.id}&k=${await this.chaveAgenda(String(mot.id))}`,
@@ -1086,6 +1131,7 @@ export class Central extends DurableObject<Env> {
       }
       if (!aprovado) return erro('Cadastro em análise.', 403);
       if (c.status !== 'buscando') return erro('Outro motorista já aceitou essa corrida.', 409);
+      if ((c.veiculo ?? 'carro') !== (mot.veiculo ?? 'carro')) return erro(c.veiculo === 'moto' ? 'Esta corrida é para moto.' : 'Esta corrida é para carro.', 409);
       if (!this.livreDoMotorista(mot.id, { inicio: Date.parse(String(c.inicio)), fim: Date.parse(String(c.fim)) })) return erro('Você já tem uma corrida nesse horário.', 409);
       this.sql.exec(`UPDATE corridas SET status='aceito', motorista_id=?, aceito_em=? WHERE id=? AND status='buscando'`, mot.id, iso(agora), c.id);
       const aceita = this.corrida(c.id)!;
@@ -1178,7 +1224,10 @@ export class Central extends DurableObject<Env> {
     if (mot.status !== 'aprovado') return [];
     const agora = Date.now();
     const recentes = !!mot.online && !!mot.loc_em && Date.parse(String(mot.loc_em)) > agora - LOC_VALIDA_MIN * MIN;
-    return this.q(`SELECT c.* FROM corridas c WHERE c.status='buscando' AND NOT EXISTS (SELECT 1 FROM recusas r WHERE r.corrida_id=c.id AND r.motorista_id=?) ORDER BY c.inicio`, mot.id)
+    return this.q(
+      `SELECT c.* FROM corridas c WHERE c.status='buscando' AND c.veiculo=? AND NOT EXISTS (SELECT 1 FROM recusas r WHERE r.corrida_id=c.id AND r.motorista_id=?) ORDER BY c.inicio`,
+      mot.veiculo ?? 'carro', mot.id,
+    )
       .filter((c) => (c.agendado ? true : recentes))
       .filter((c) => this.livreDoMotorista(mot.id, { inicio: Date.parse(String(c.inicio)), fim: Date.parse(String(c.fim)) }))
       .map((c) => {
@@ -1258,7 +1307,7 @@ export class Central extends DurableObject<Env> {
       );
     if (metodo === 'GET' && p === '/v2/admin/motoristas')
       return json(
-        this.q(`SELECT id, nome, cpf, telefone, carro, placa, cor, status, online, lat, lon, loc_em, criado_em, selfie, cnh,
+        this.q(`SELECT id, nome, cpf, telefone, carro, placa, cor, status, online, lat, lon, loc_em, criado_em, selfie, cnh, veiculo,
           (SELECT COUNT(*) FROM corridas c WHERE c.motorista_id=motoristas.id AND c.status IN ('em_andamento','entregue')) AS corridas
           FROM motoristas ORDER BY (status='pendente') DESC, nome`).map((m) => ({ ...m, ...this.saldo(m.id), ...this.notaMotorista(m.id) })),
       );
@@ -1336,6 +1385,10 @@ export class Central extends DurableObject<Env> {
       if (!Array.isArray(cfg.servicosAtivos) || cfg.servicosAtivos.some((x) => !SERVICOS.some((s) => s.id === x))) return erro('Serviços inválidos.');
       if (!Array.isArray(cfg.categoriasAtivas) || cfg.categoriasAtivas.some((x) => !CATEGORIAS.some((c) => c.id === x))) return erro('Categorias inválidas.');
       cfg.outroEnderecoLoja = !!cfg.outroEnderecoLoja;
+      if (!(cfg.motoFatorPreco >= 0.2 && cfg.motoFatorPreco <= 2)) return erro('Fator da moto deve ficar entre 20% e 200% do carro.');
+      if (!Array.isArray(cfg.motoServicos) || cfg.motoServicos.some((x) => !SERVICOS.some((s) => s.id === x))) return erro('Serviços de moto inválidos.');
+      if (!(cfg.deslocamentoPadraoKm >= 0 && cfg.deslocamentoPadraoKm <= cfg.deslocamentoMaxKm && cfg.deslocamentoMaxKm <= 50)) return erro('Deslocamento inválido.');
+      cfg.motoAtivo = !!cfg.motoAtivo;
       if (!Array.isArray(cfg.cidadesAtivas) || !cfg.cidadesAtivas.length || cfg.cidadesAtivas.some((x) => !CIDADES.some((c) => c.id === x))) return erro('Cidades inválidas.');
       this.salvarConfig(cfg);
       return json(cfg);

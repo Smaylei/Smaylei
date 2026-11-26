@@ -4,7 +4,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import SeletorPonta, { escolhaCasa, type Escolha } from '../components/SeletorPonta';
 import { cores, raio, sombra } from '../components/tema';
-import { servicoPorId } from '../data/servicos';
+import { aceitaMoto, servicoPorId, VEICULOS, type Veiculo } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
 import { useCotacoes } from '../hooks/useCotacoes';
 import { api, type CorridaCliente, type Disponibilidade } from '../services/api';
@@ -22,6 +22,9 @@ export default function PedidoTela() {
   const [coleta, setColeta] = useState<Escolha | null>(casa && sv.coleta.casa && !sv.entrega.casa ? escolhaCasa(casa, SOLICITANTE) : casa && sv.coleta.casa && sv.variosDias ? escolhaCasa(casa, SOLICITANTE) : null);
   const [entrega, setEntrega] = useState<Escolha | null>(casa && sv.entrega.casa && !sv.coleta.casa ? escolhaCasa(casa, SOLICITANTE) : null);
   const [descricao, setDescricao] = useState('');
+  const [veiculoEscolhido, setVeiculo] = useState<Veiculo>('carro');
+  const podeMoto = aceitaMoto(sv.id, config);
+  const veiculo: Veiculo = podeMoto ? veiculoEscolhido : 'carro';
   // Se a casa/loja carregar depois de abrir a tela, já deixa marcada no lado padrão.
   useEffect(() => {
     if (!casa) return;
@@ -49,7 +52,7 @@ export default function PedidoTela() {
     } catch (e) {
       setErro((e as Error).message);
     }
-  }, [recarregarConfig]);
+  }, [recarregarConfig, setDisp, setErro]);
 
   useEffect(() => {
     const t = setTimeout(carregar, 0);
@@ -59,7 +62,7 @@ export default function PedidoTela() {
   // Preço de cada opção da lista, com o outro lado já escolhido.
   // Valor calculado pelo servidor (rota OSRM + tarifas do Admin): é o mesmo cobrado no pedido.
   const destinoCot = useMemo(() => (entrega ? [{ id: 'd', lat: entrega.lat, lon: entrega.lon }] : []), [entrega]);
-  const cot = useCotacoes(sv.id, agendado, coleta, destinoCot);
+  const cot = useCotacoes(sv.id, agendado, coleta, destinoCot, 'coleta', veiculo);
   const valor = coleta && entrega ? (cot.d?.valor ?? null) : null;
 
   // Viagens do pedido.
@@ -102,7 +105,7 @@ export default function PedidoTela() {
       const c = await api<CorridaCliente>('cliente', '/v2/corridas', {
         method: 'POST',
         corpo: {
-          servico: sv.id, coleta: coleta.corpo, entrega: entrega.corpo, descricao: descricao.trim() || undefined, agendado,
+          servico: sv.id, veiculo, coleta: coleta.corpo, entrega: entrega.corpo, descricao: descricao.trim() || undefined, agendado,
           inicios: agendado ? viagens.idas : undefined, voltas: agendado && viagens.voltas.length ? viagens.voltas : undefined,
         },
       });
@@ -136,8 +139,24 @@ export default function PedidoTela() {
         </View>
         {sv.aviso && <Text style={s.aviso}>ℹ️ {sv.aviso}</Text>}
 
-        <SeletorPonta ponta={sv.coleta} valor={coleta} onChange={setColeta} servico={sv.id} agendado={agendado} base={entrega} />
-        <SeletorPonta ponta={sv.entrega} valor={entrega} onChange={setEntrega} servico={sv.id} agendado={agendado} base={coleta} />
+        {podeMoto && (
+          <>
+            <Text style={s.secao}>Veículo</Text>
+            <View style={s.segmento}>
+              {VEICULOS.map((v) => (
+                <Pressable key={v.id} style={[s.segItem, veiculo === v.id && s.segAtivo]} onPress={() => setVeiculo(v.id)}>
+                  <Text style={[s.segTexto, veiculo === v.id && s.segTextoAtivo]}>
+                    {v.icone} {v.nome}
+                    {v.id === 'moto' ? ` · ${Math.round((1 - config.motoFatorPreco) * 100)}% mais barato` : ''}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            {veiculo === 'moto' && <Text style={s.aviso}>🏍️ Motoboy: ideal para volumes pequenos (até 2 sacolas ou uma caixa pequena).</Text>}
+          </>
+        )}
+        <SeletorPonta ponta={sv.coleta} valor={coleta} onChange={setColeta} servico={sv.id} agendado={agendado} base={entrega} lado="coleta" veiculo={veiculo} />
+        <SeletorPonta ponta={sv.entrega} valor={entrega} onChange={setEntrega} servico={sv.id} agendado={agendado} base={coleta} lado="entrega" veiculo={veiculo} />
 
         {sv.descricao && (
           <>
@@ -229,6 +248,12 @@ export default function PedidoTela() {
           </>
         )}
 
+        {cot.d && coleta && entrega ? (
+          <Text style={s.composicao}>
+            Preço = motorista até a coleta (~{cot.d.kmDesloc.toFixed(1).replace('.', ',')} km{agendado ? ', estimado' : ''}) + coleta até o destino (~
+            {(cot.d.km - cot.d.kmDesloc).toFixed(1).replace('.', ',')} km{sv.retorno ? ', ida e volta' : ''}).
+          </Text>
+        ) : null}
         <View style={s.info}>
           <Text style={s.infoTexto}>
             🔒 Você paga agora, dentro do app (Pix ou cartão à vista). O valor fica retido e só é liberado ao motorista quando{' '}
@@ -284,6 +309,7 @@ const s = StyleSheet.create({
   indispTitulo: { color: cores.alerta, fontSize: 15, fontWeight: '700' },
   indispTexto: { color: cores.alerta, fontSize: 14 },
   info: { marginTop: 10, gap: 4 },
+  composicao: { fontSize: 13, color: cores.texto, backgroundColor: cores.cartao, borderRadius: 12, padding: 12, lineHeight: 19 },
   infoTexto: { fontSize: 13, color: cores.suave, lineHeight: 18 },
   erro: { color: cores.erro, marginTop: 6, fontSize: 14 },
   rodape: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingTop: 12, backgroundColor: cores.cartao, borderTopWidth: 1, borderTopColor: cores.borda },

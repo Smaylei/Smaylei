@@ -72,7 +72,7 @@ export default function Corrida() {
       casa: { lat: entrega.lat, lon: entrega.lon },
       mercados: coleta ? [{ id: 'coleta', curto: 'Coleta', lat: coleta.lat, lon: coleta.lon }] : [],
       sel: coleta ? 'coleta' : null,
-      motorista: latMot != null && lonMot != null ? { lat: latMot, lon: lonMot } : null,
+      motorista: latMot != null && lonMot != null ? { lat: latMot, lon: lonMot, moto: c.veiculo === 'moto' } : null,
       rota: eta ? { ida: eta.caminho, volta: [] } : null,
     };
   }, [c, coleta, entrega, latMot, lonMot, eta]);
@@ -218,6 +218,7 @@ export default function Corrida() {
           <View style={{ flex: 1 }}>
             <Text style={s.motNome}>{mot.nome}</Text>
             <Text style={s.motCarro}>
+              {mot.veiculo === 'moto' ? '🏍️ ' : ''}
               {mot.carro}
               {mot.cor ? ` · ${mot.cor}` : ''}
             </Text>

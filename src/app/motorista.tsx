@@ -204,7 +204,7 @@ export default function Motorista() {
           {o.descricao ? <Text style={s.detalhe}>📝 {o.descricao}</Text> : null}
           <Text style={s.detalhe}>
             {o.kmAteMercado != null ? `${o.kmAteMercado.toFixed(1).replace('.', ',')} km até a coleta · ` : ''}
-            Corrida ida e volta {o.km.toFixed(1).replace('.', ',')} km · ~{o.minutos} min
+            Percurso cobrado {o.km.toFixed(1).replace('.', ',')} km (até a coleta + viagem) · ~{o.minutos} min
           </Text>
           <View style={[s.linha, { marginTop: 8 }]}>
             <Pressable style={[s.botao, s.botaoSec]} onPress={() => responder(o, false)} disabled={ocupado}>

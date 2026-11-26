@@ -1,14 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { CidadeId } from '../data/cidades';
 import { LOCAIS_INICIAIS, type Local } from '../data/locais';
-import { LIBERACAO_PADRAO, type Liberacao } from '../data/servicos';
+import { LIBERACAO_PADRAO, MOTO_PADRAO, type ConfigMoto, type Liberacao } from '../data/servicos';
 import { TARIFAS_PADRAO } from '../data/tarifas';
 import { API, api, lerToken } from '../services/api';
 import { carregarEndereco, salvarEndereco, type Endereco } from '../services/cadastro';
 import { URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../services/preco';
 import { MODO, SOLICITANTE } from '../variante';
 
-type Config = Liberacao & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin: number };
+type Config = Liberacao & ConfigMoto & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin: number };
 
 /** Cadastro no servidor de quem pede (cliente ou loja). */
 export type Eu = { tipo: 'cliente' | 'lojista'; nome: string; status?: 'pendente' | 'aprovado' | 'bloqueado'; lojaNome?: string; cidade?: CidadeId | null };
@@ -37,7 +37,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [casa, setCasa] = useState<Endereco | null>(null);
   const [temConta, setTemConta] = useState(false);
   const [eu, setEu] = useState<Eu | null>(null);
-  const [config, setConfig] = useState<Config>({ tarifas: TARIFAS_PADRAO, margem: 0, urgencia: URGENCIA_PADRAO, esperaBorrachariaMin: 20, ...LIBERACAO_PADRAO });
+  const [config, setConfig] = useState<Config>({ tarifas: TARIFAS_PADRAO, margem: 0, urgencia: URGENCIA_PADRAO, esperaBorrachariaMin: 20, ...LIBERACAO_PADRAO, ...MOTO_PADRAO });
   const [locais, setLocais] = useState<Local[]>(LOCAIS_INICIAIS.filter((l) => l.categoria === 'mercado'));
 
   // Tarifas, serviços, cidades e locais vêm do servidor: qualquer mudança no Admin vale aqui também.
@@ -56,6 +56,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             categoriasAtivas: c.categoriasAtivas ?? LIBERACAO_PADRAO.categoriasAtivas,
             outroEnderecoLoja: c.outroEnderecoLoja ?? LIBERACAO_PADRAO.outroEnderecoLoja,
             cidadesAtivas: c.cidadesAtivas ?? LIBERACAO_PADRAO.cidadesAtivas,
+            motoAtivo: c.motoAtivo ?? MOTO_PADRAO.motoAtivo,
+            motoServicos: c.motoServicos ?? MOTO_PADRAO.motoServicos,
+            motoFatorPreco: c.motoFatorPreco ?? MOTO_PADRAO.motoFatorPreco,
           });
         if (c?.locais) setLocais((antes) => (JSON.stringify(antes) === JSON.stringify(c.locais) ? antes : c.locais!));
       })

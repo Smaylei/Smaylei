@@ -1,13 +1,14 @@
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import CampoFoto from '../components/CampoFoto';
 import { BotaoInicio } from '../components/Marca';
 import { cores, raio, sombra } from '../components/tema';
+import { VEICULOS, type Veiculo } from '../data/servicos';
 import { api, enviarFoto, ErroApi, guardarToken, lerToken } from '../services/api';
 import { cpfValido, formatarCpf } from '../services/cpf';
 
-type Eu = { nome: string; telefone: string; carro: string; placa: string; cor?: string; pix?: string; temSelfie: boolean; temCnh: boolean };
+type Eu = { nome: string; telefone: string; carro: string; placa: string; veiculo?: Veiculo; cor?: string; pix?: string; temSelfie: boolean; temCnh: boolean };
 
 export default function CadastroMotorista() {
   const [temConta, setTemConta] = useState(false);
@@ -15,6 +16,7 @@ export default function CadastroMotorista() {
   const [nome, setNome] = useState('');
   const [cpf, setCpf] = useState('');
   const [telefone, setTelefone] = useState('');
+  const [veiculo, setVeiculo] = useState<Veiculo>('carro');
   const [carro, setCarro] = useState('');
   const [cor, setCor] = useState('');
   const [placa, setPlaca] = useState('');
@@ -49,7 +51,7 @@ export default function CadastroMotorista() {
         nome.trim().split(' ').length < 2 && 'nome completo',
         !cpfValido(cpf) && 'CPF válido',
         telefone.replace(/\D/g, '').length < 10 && 'WhatsApp',
-        carro.trim().length < 2 && 'carro',
+        carro.trim().length < 2 && (veiculo === 'moto' ? 'modelo da moto' : 'modelo do carro'),
         !placaOk && 'placa',
         !selfie && 'selfie',
         !cnh && 'foto da CNH',
@@ -60,7 +62,7 @@ export default function CadastroMotorista() {
     setMsg(null);
     try {
       if (!temConta) {
-        const r = await api<{ token: string }>(null, '/v2/motoristas', { method: 'POST', corpo: { nome: nome.trim(), cpf, telefone, carro, placa, cor } });
+        const r = await api<{ token: string }>(null, '/v2/motoristas', { method: 'POST', corpo: { nome: nome.trim(), cpf, telefone, carro, placa, cor, veiculo } });
         await guardarToken('motorista', r.token);
         setTemConta(true);
       }
@@ -102,7 +104,21 @@ export default function CadastroMotorista() {
             exemplo="000.000.000-00"
           />
           <Campo rotulo="WhatsApp" valor={telefone} onChange={setTelefone} teclado="phone-pad" exemplo="(47) 99999-9999" />
-          <Campo rotulo="Carro (modelo)" valor={carro} onChange={setCarro} exemplo="Ex.: Fiat Strada" />
+          <Text style={s.rotulo}>Você trabalha com</Text>
+          <View style={s.veiculos}>
+            {VEICULOS.map((v) => (
+              <Pressable key={v.id} style={[s.veiculo, veiculo === v.id && s.veiculoAtivo]} onPress={() => setVeiculo(v.id)} accessibilityRole="radio" accessibilityState={{ selected: veiculo === v.id }}>
+                <Text style={s.veiculoIcone}>{v.icone}</Text>
+                <Text style={[s.veiculoNome, veiculo === v.id && { color: cores.primaria }]}>{v.id === 'moto' ? 'Moto (motoboy)' : 'Carro'}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={s.lgpd}>
+            {veiculo === 'moto'
+              ? 'De moto você recebe entregas de volumes pequenos (compras e encomendas). As regras de capacidade e valores podem mudar pela MOVI.'
+              : 'De carro você recebe corridas com passageiro e compras.'}
+          </Text>
+          <Campo rotulo={veiculo === 'moto' ? 'Moto (modelo)' : 'Carro (modelo)'} valor={carro} onChange={setCarro} exemplo={veiculo === 'moto' ? 'Ex.: Honda CG 160' : 'Ex.: Fiat Strada'} />
           <Campo rotulo="Cor" valor={cor} onChange={setCor} exemplo="Ex.: Branca" />
           <Campo rotulo="Placa" valor={placa} onChange={(t) => setPlaca(t.toUpperCase())} exemplo="ABC1D23" erro={placa.length >= 7 && !placaOk} />
           <Text style={s.lgpd}>Seus saques vão por Pix para a chave CPF informada acima.</Text>
@@ -143,6 +159,11 @@ function Campo(p: { rotulo: string; valor: string; onChange: (t: string) => void
 
 const s = StyleSheet.create({
   conteudo: { padding: 16, paddingBottom: 40, gap: 8 },
+  veiculos: { flexDirection: 'row', gap: 10 },
+  veiculo: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: 14, borderRadius: raio, backgroundColor: cores.cartao, borderWidth: 1.5, borderColor: cores.borda },
+  veiculoAtivo: { borderColor: cores.primaria, backgroundColor: cores.primariaClara },
+  veiculoIcone: { fontSize: 30 },
+  veiculoNome: { fontSize: 15, fontWeight: '700', color: cores.texto },
   intro: { fontSize: 15, color: cores.texto, marginBottom: 4 },
   rotulo: { fontSize: 13, color: cores.suave, marginTop: 6 },
   input: { backgroundColor: cores.cartao, ...sombra, borderRadius: raio, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: cores.texto },

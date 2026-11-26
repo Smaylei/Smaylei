@@ -1,23 +1,32 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { cores, raio, sombra } from '../components/tema';
 import { CIDADES } from '../data/cidades';
-import { CATEGORIAS, MODALIDADES, SERVICOS, type CategoriaId, type Liberacao, type ServicoId } from '../data/servicos';
+import { CATEGORIAS, MODALIDADES, SERVICOS, type CategoriaId, type ConfigMoto, type Liberacao, type ServicoId } from '../data/servicos';
 import * as Admin from '../services/admin';
+
+type Ajustes = Liberacao & ConfigMoto & { deslocamentoPadraoKm: number; deslocamentoMaxKm: number };
 
 /**
  * Liberação gradual: tudo já está pronto, e cada serviço/categoria só aparece para os clientes
  * quando você ligar aqui. No lançamento, apenas os mercados.
  */
 export default function ServicosAdmin() {
-  const [lib, setLib] = useState<Liberacao | null>(null);
+  const [lib, setLib] = useState<Ajustes | null>(null);
+  const [fator, setFator] = useState('');
+  const [desloc, setDesloc] = useState('');
   const [salvando, setSalvando] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
       const c = (await Admin.resumo()).config;
-      setLib({ servicosAtivos: c.servicosAtivos, categoriasAtivas: c.categoriasAtivas, outroEnderecoLoja: c.outroEnderecoLoja, cidadesAtivas: c.cidadesAtivas });
+      setLib({
+        servicosAtivos: c.servicosAtivos, categoriasAtivas: c.categoriasAtivas, outroEnderecoLoja: c.outroEnderecoLoja, cidadesAtivas: c.cidadesAtivas,
+        motoAtivo: c.motoAtivo, motoServicos: c.motoServicos, motoFatorPreco: c.motoFatorPreco, deslocamentoPadraoKm: c.deslocamentoPadraoKm, deslocamentoMaxKm: c.deslocamentoMaxKm,
+      });
+      setFator(String(Math.round(c.motoFatorPreco * 100)));
+      setDesloc(String(c.deslocamentoPadraoKm).replace('.', ','));
     } catch (e) {
       Alert.alert('Erro', (e as Error).message);
     }
@@ -29,7 +38,7 @@ export default function ServicosAdmin() {
     }, [carregar]),
   );
 
-  async function salvar(novo: Liberacao) {
+  async function salvar(novo: Ajustes) {
     const antes = lib;
     setLib(novo);
     setSalvando(true);
@@ -46,6 +55,9 @@ export default function ServicosAdmin() {
   if (!lib) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   const alternarServico = (id: ServicoId) =>
     salvar({ ...lib, servicosAtivos: lib.servicosAtivos.includes(id) ? lib.servicosAtivos.filter((x) => x !== id) : [...lib.servicosAtivos, id] });
+  const alternarMoto = (id: ServicoId) =>
+    salvar({ ...lib, motoServicos: lib.motoServicos.includes(id) ? lib.motoServicos.filter((x) => x !== id) : [...lib.motoServicos, id] });
+  const numero = (t: string) => Number(t.replace(',', '.'));
   const alternarCategoria = (id: CategoriaId) =>
     salvar({ ...lib, categoriasAtivas: lib.categoriasAtivas.includes(id) ? lib.categoriasAtivas.filter((x) => x !== id) : [...lib.categoriasAtivas, id] });
 
@@ -95,6 +107,62 @@ export default function ServicosAdmin() {
           />
         ))}
       </View>
+      <View style={s.cartao}>
+        <Text style={s.titulo}>🏍️ Moto (motoboy)</Text>
+        <Text style={s.desc}>O motorista escolhe carro ou moto no cadastro. Corridas de moto só vão para motos.</Text>
+        <Linha titulo="Aceitar pedidos de moto" valor={lib.motoAtivo} onChange={() => salvar({ ...lib, motoAtivo: !lib.motoAtivo })} bloqueado={salvando} />
+        {lib.motoAtivo &&
+          SERVICOS.map((sv) => (
+            <Linha
+              key={sv.id}
+              titulo={`${sv.icone} ${sv.titulo}${sv.publico === 'lojista' ? ' (lojista)' : ''}`}
+              sub="Pode ser feito de moto"
+              valor={lib.motoServicos.includes(sv.id)}
+              onChange={() => alternarMoto(sv.id)}
+              bloqueado={salvando}
+            />
+          ))}
+        <View style={s.campoLinha}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.item}>Preço da moto (% do carro)</Text>
+            <Text style={s.sub}>Ex.: 70 = a moto custa 30% menos que o carro no mesmo percurso.</Text>
+          </View>
+          <TextInput style={s.campo} value={fator} onChangeText={setFator} keyboardType="number-pad" maxLength={3} />
+          <Pressable
+            style={s.ok}
+            disabled={salvando}
+            onPress={() => (numero(fator) >= 20 && numero(fator) <= 200 ? salvar({ ...lib, motoFatorPreco: numero(fator) / 100 }) : Alert.alert('Moto', 'Use um valor entre 20 e 200.'))}
+          >
+            <Text style={s.okTexto}>Salvar</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={s.cartao}>
+        <Text style={s.titulo}>Preço: deslocamento até a coleta</Text>
+        <Text style={s.desc}>
+          O valor = motorista até a coleta + coleta até o destino. Pedido para agora: conta do motorista livre mais perto. Agendado (ainda sem motorista): usa o padrão abaixo.
+        </Text>
+        <View style={s.campoLinha}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.item}>Deslocamento padrão (km)</Text>
+            <Text style={s.sub}>Máximo cobrado em qualquer pedido: {lib.deslocamentoMaxKm} km.</Text>
+          </View>
+          <TextInput style={s.campo} value={desloc} onChangeText={setDesloc} keyboardType="decimal-pad" maxLength={4} />
+          <Pressable
+            style={s.ok}
+            disabled={salvando}
+            onPress={() =>
+              numero(desloc) >= 0 && numero(desloc) <= lib.deslocamentoMaxKm
+                ? salvar({ ...lib, deslocamentoPadraoKm: numero(desloc) })
+                : Alert.alert('Deslocamento', `Use um valor entre 0 e ${lib.deslocamentoMaxKm} km.`)
+            }
+          >
+            <Text style={s.okTexto}>Salvar</Text>
+          </Pressable>
+        </View>
+      </View>
+
       <Text style={s.nota}>
         Antes de liberar passageiros, gás ou bebidas, confira as exigências legais, de segurança e seguro de cada modalidade (Documento Conceitual, nota operacional).
       </Text>
@@ -126,4 +194,8 @@ const s = StyleSheet.create({
   sub: { fontSize: 12, color: cores.suave },
   estado: { fontSize: 11, fontWeight: '700' },
   nota: { fontSize: 12, color: cores.suave, lineHeight: 17 },
+  campoLinha: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderTopWidth: 1, borderTopColor: cores.borda },
+  campo: { width: 72, backgroundColor: cores.fundo, borderRadius: 10, borderWidth: 1, borderColor: cores.borda, paddingHorizontal: 10, paddingVertical: 8, fontSize: 16, color: cores.texto, textAlign: 'center' },
+  ok: { backgroundColor: cores.primaria, borderRadius: 10, paddingVertical: 9, paddingHorizontal: 14 },
+  okTexto: { color: '#fff', fontWeight: '700' },
 });

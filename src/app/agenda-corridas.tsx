@@ -86,7 +86,7 @@ export default function AgendaCorridas() {
               <Text style={s.texto}>🏁 Destino: {c.entrega ? (c.entrega.nome === 'Casa' ? c.entrega.endereco : `${c.entrega.nome} · ${c.entrega.endereco}`) : c.cliente?.endereco}</Text>
               {c.descricao ? <Text style={s.detalhe}>📝 {c.descricao}</Text> : null}
               <Text style={s.detalhe}>
-                Ida e volta {c.km.toFixed(1).replace('.', ',')} km · ~{c.minutos} min
+                Percurso {c.km.toFixed(1).replace('.', ',')} km (até a coleta + viagem) · ~{c.minutos} min
               </Text>
               <Pressable style={s.botao} onPress={() => aceitar(c)} disabled={!!ocupado}>
                 {ocupado === c.id ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Aceitar para {dia.rotulo.toLowerCase()}</Text>}

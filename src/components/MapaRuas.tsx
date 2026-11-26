@@ -11,7 +11,7 @@ export type EstadoMapa = {
   sel?: string | null;
   rota?: { ida: [number, number][]; volta: [number, number][] } | null;
   rua?: string | null; // (mapa antigo) ignorado
-  motorista?: { lat: number; lon: number } | null; // posição ao vivo do motorista
+  motorista?: { lat: number; lon: number; moto?: boolean } | null; // posição ao vivo do motorista (🏍️ se moto)
   /** Centro inicial (ex.: a cidade escolhida) quando ainda não há ponto marcado. */
   centro?: { lat: number; lon: number } | null;
 };

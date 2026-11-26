@@ -83,6 +83,7 @@ export default function CorridaMotoristaTela() {
   const destino = indoAoCliente ? entrega : coleta;
   // Rota de carro (OSRM pelo servidor), recalculada a cada ~100 m.
   const eta = useRota(eu, destino);
+  const ehMoto = c?.veiculo === 'moto';
   const estadoMapa: EstadoMapa | null = useMemo(
     () =>
       entrega && coleta
@@ -91,11 +92,11 @@ export default function CorridaMotoristaTela() {
             casa: { lat: entrega.lat, lon: entrega.lon },
             mercados: [{ id: 'coleta', curto: 'Coleta', lat: coleta.lat, lon: coleta.lon }],
             sel: 'coleta',
-            motorista: eu,
+            motorista: eu ? { ...eu, moto: ehMoto } : null,
             rota: eta ? { ida: eta.caminho, volta: [] } : null,
           }
         : null,
-    [entrega, coleta, eu, eta],
+    [entrega, coleta, eu, eta, ehMoto],
   );
 
   async function acao(caminho: string, opts: { confirmar?: string; corpo?: unknown } = {}) {

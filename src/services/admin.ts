@@ -26,6 +26,11 @@ export type ConfigServidor = {
   categoriasAtivas: CategoriaId[];
   outroEnderecoLoja: boolean;
   cidadesAtivas: CidadeId[];
+  motoAtivo: boolean;
+  motoServicos: ServicoId[];
+  motoFatorPreco: number;
+  deslocamentoPadraoKm: number;
+  deslocamentoMaxKm: number;
 };
 
 export type Resumo = {
@@ -89,6 +94,7 @@ export type CorridaAdmin = {
 
 export type MotoristaAdmin = {
   id: string;
+  veiculo?: 'carro' | 'moto';
   nome: string;
   cpf: string;
   telefone: string;

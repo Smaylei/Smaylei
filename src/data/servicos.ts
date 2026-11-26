@@ -1,6 +1,6 @@
 // Serviços oferecidos e categorias de locais. Compartilhado entre o app e o servidor.
 import type { CidadeId } from './cidades';
-import { estimarIdaEVolta, precoFrete, precoSugerido, type Tarifa, type Trajeto, type Urgencia } from '../services/preco';
+import { estimarIdaEVolta, precoFrete, precoSugerido, type Tarifa, type Urgencia } from '../services/preco';
 
 // MOVI — "Sua cidade em movimento." Três linhas de serviço (Documento Conceitual):
 //   MOVI GO    → transporte de passageiros (a pessoa vai)
@@ -159,17 +159,33 @@ export const SERVICOS: Servico[] = [
 
 export const servicoPorId = (id: unknown): Servico => SERVICOS.find((s) => s.id === id) ?? SERVICOS[0];
 
-export type ConfigPreco = { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin?: number };
+export type Veiculo = 'carro' | 'moto';
+export const VEICULOS: { id: Veiculo; nome: string; icone: string }[] = [
+  { id: 'carro', nome: 'Carro', icone: '🚗' },
+  { id: 'moto', nome: 'Moto', icone: '🏍️' },
+];
+
+/** Moto (motoboy): o Admin escolhe em quais serviços ela entra e quanto custa em relação ao carro. */
+export type ConfigMoto = { motoAtivo: boolean; motoServicos: ServicoId[]; motoFatorPreco: number };
+export const MOTO_PADRAO: ConfigMoto = { motoAtivo: true, motoServicos: ['buscar', 'encomenda', 'loja_entrega'], motoFatorPreco: 0.7 };
+export const aceitaMoto = (servico: ServicoId, cfg: ConfigMoto) => cfg.motoAtivo && cfg.motoServicos.includes(servico);
+
+export type ConfigPreco = ConfigMoto & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin?: number };
+
+/** Percurso cobrado: do motorista até a coleta (deslocamento) e da coleta até o destino (viagem). */
+export type Percurso = { kmDesloc: number; minDesloc: number; kmViagem: number; minViagem: number };
 
 /**
- * Preço de qualquer serviço: o percurso coleta → entrega → coleta (o motorista volta ao ponto de
- * partida), com as tarifas Uber/99 e a margem do Admin. Na borracharia soma a espera do motorista.
+ * Preço de qualquer serviço: deslocamento do motorista até a coleta + viagem da coleta ao destino
+ * (na borracharia, ida e volta e a espera), com as tarifas Uber/99, a margem e a urgência do Admin.
+ * Moto: o mesmo cálculo × fator definido no Admin.
  */
-export function precoServico(r: Trajeto, cfg: ConfigPreco, servico: ServicoId, agendado: boolean) {
+export function precoServico(p: Percurso, cfg: ConfigPreco, servico: ServicoId, agendado: boolean, veiculo: Veiculo = 'carro') {
   const espera = servico === 'borracharia' ? (cfg.esperaBorrachariaMin ?? 20) : 0;
-  const t = { ...r, minIda: r.minIda + espera };
+  const t = { kmIda: p.kmDesloc, minIda: p.minDesloc + espera, kmVolta: p.kmViagem, minVolta: p.minViagem };
   const sugerido = precoSugerido(cfg.tarifas.map((x) => estimarIdaEVolta(t, x)), cfg.margem);
-  return precoFrete(sugerido, agendado, cfg.urgencia);
+  const carro = precoFrete(sugerido, agendado, cfg.urgencia);
+  return veiculo === 'moto' ? Math.round(carro * cfg.motoFatorPreco * 100) / 100 : carro;
 }
 
 /** O que está liberado para os clientes (Admin → Serviços). No lançamento: só mercados. */

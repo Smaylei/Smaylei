@@ -8,7 +8,7 @@ import { EH_ADMIN, MODO, trocarModo, type Modo } from '../variante';
 
 const OPCOES: { modo: Modo; titulo: string; sub: string; icone: keyof typeof MaterialCommunityIcons.glyphMap }[] = [
   { modo: 'cliente', titulo: 'CLIENTE', sub: 'Solicitar transportes', icone: 'account' },
-  { modo: 'motorista', titulo: 'MOTORISTA', sub: 'Realizar transportes', icone: 'car' },
+  { modo: 'motorista', titulo: 'MOTORISTA', sub: 'Realizar transportes de carro ou moto', icone: 'car' },
   { modo: 'lojista', titulo: 'LOJISTA', sub: 'Solicitar transporte de compras e clientes', icone: 'storefront' },
 ];
 

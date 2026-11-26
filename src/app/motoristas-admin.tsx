@@ -60,6 +60,7 @@ export default function MotoristasAdmin() {
               </Text>
             </View>
             <Text style={s.detalhe}>
+              {m.veiculo === 'moto' ? '🏍️ Moto · ' : '🚗 '}
               {m.carro}
               {m.cor ? ` ${m.cor}` : ''} · {m.placa} · {m.corridas} corridas
             </Text>

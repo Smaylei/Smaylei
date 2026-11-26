@@ -37,6 +37,16 @@ de Guaramirim embutido ou a linha reta × 1,35.
 **Cidades (para teste):** Guaramirim, Jaraguá do Sul, Schroeder, Massaranduba e Joinville — 33 mercados da
 região já cadastrados (OpenStreetMap). Admin → *Serviços e cidades* liga/desliga cada cidade.
 
+### Preço e veículo
+
+- **Valor = deslocamento do motorista até a coleta + viagem da coleta ao destino** (borracharia: leva e traz +
+  espera), com as tarifas Uber/99, a margem e a urgência do Admin. Pedido *agora*: deslocamento do motorista livre
+  mais perto (mesmo veículo, linha reta × 1,35). *Agendado* (motorista ainda desconhecido) ou ninguém online: o
+  deslocamento padrão do Admin (3 km). Teto: 15 km. O valor fica fixo no pagamento.
+- **Moto (motoboy)**: o motorista escolhe carro ou moto no cadastro; corridas de moto só vão para motos. O Admin
+  liga a moto, escolhe os serviços em que ela entra (padrão: só buscar compras, encomenda, entrega do lojista) e o
+  preço em % do carro (padrão 70%). As regras de capacidade e valores ficam no Admin → Serviços e cidades.
+
 **Lançamento: só mercados.** Os demais serviços e as categorias (padarias, farmácias, gás e bebidas, doces
 e festa, mecânicos, borracharias) já estão prontos e ficam desligados até o Admin liberar em
 *Serviços liberados*. O servidor recusa pedidos de serviços/categorias desligados.

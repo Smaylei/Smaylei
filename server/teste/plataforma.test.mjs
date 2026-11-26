@@ -460,3 +460,54 @@ test('região: cidades vizinhas, cotação pelo servidor e lojista (aprovação,
   assert.equal(of.solicitante, 'Mercado Bom Preço (loja)');
   assert.ok(!(await call('/v2/admin/clientes', { token: ADM })).d.some((x) => x.id === lista[0].id));
 });
+
+test('preço: deslocamento do motorista até a coleta + coleta até o destino; moto (motoboy) com fator e só nos serviços liberados', async () => {
+  const cfg0 = (await call('/v2/config')).d;
+  assert.equal(cfg0.motoFatorPreco, 0.7);
+  assert.equal(cfg0.deslocamentoPadraoKm, 3);
+  const c = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Gil Prado', cpf: '123.456.789-09', endereco: 'Rua K, 9, Centro', lat: -26.4790, lon: -48.9900 } });
+  const cli = c.d.token;
+  const cooper = { lat: -26.471870, lon: -48.976217 };
+  const base = { servico: 'comigo', agendado: true, base: cooper, baseEh: 'coleta', pontos: [{ id: 'd', lat: -26.4790, lon: -48.9900 }] };
+  // agendado: deslocamento padrão (3 km); com padrão maior, o preço sobe
+  const p3 = (await call('/v2/cotacoes', { metodo: 'POST', token: cli, corpo: base })).d.d;
+  assert.ok(p3.km > 3);
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { deslocamentoPadraoKm: 8 } });
+  const p8 = (await call('/v2/cotacoes', { metodo: 'POST', token: cli, corpo: base })).d.d;
+  assert.ok(p8.valor > p3.valor && Math.abs(p8.km - p3.km - 5) < 0.01, JSON.stringify([p3, p8]));
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { deslocamentoPadraoKm: 3 } });
+  // agora: usa o motorista livre mais perto da coleta (o do teste está online na Cooper)
+  await call('/v2/eu/livre', { metodo: 'POST', token: motorista });
+  await online(motorista, cooper);
+  const agora = (await call('/v2/cotacoes', { metodo: 'POST', token: cli, corpo: { ...base, agendado: false } })).d.d;
+  assert.ok(agora.km < p3.km, 'motorista já na coleta: deslocamento mínimo');
+  // os dois lados dão o mesmo preço (lista de mercados com a casa fixa)
+  const inverso = (await call('/v2/cotacoes', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', agendado: true, base: { lat: -26.4790, lon: -48.9900 }, baseEh: 'entrega', pontos: [{ id: 'm', ...cooper }] } })).d.m;
+  assert.equal(inverso.valor, p3.valor);
+
+  // moto: 70% do carro, só em serviços liberados para moto
+  const moto = (await call('/v2/cotacoes', { metodo: 'POST', token: cli, corpo: { ...base, servico: 'buscar', veiculo: 'moto' } })).d.d;
+  const carro = (await call('/v2/cotacoes', { metodo: 'POST', token: cli, corpo: { ...base, servico: 'buscar' } })).d.d;
+  assert.equal(moto.valor, Math.round(carro.valor * 0.7 * 100) / 100);
+  const naoPode = await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', veiculo: 'moto', coleta: { localId: 'cooper' }, agendado: false } });
+  assert.match(naoPode.d.erro, /moto/);
+  // motoboy se cadastra; corrida de moto só aparece para moto
+  const mb = await call('/v2/motoristas', { metodo: 'POST', corpo: { nome: 'Leo Moto', cpf: '987.654.321-00', telefone: '47977776666', carro: 'Honda CG 160', placa: 'MOT1A23', veiculo: 'moto' } });
+  assert.equal(mb.s, 200, JSON.stringify(mb.d));
+  assert.match(await ultimoAviso(), /MOTOBOY/);
+  const mot2 = mb.d.token;
+  assert.equal((await call('/v2/eu', { token: mot2 })).d.veiculo, 'moto');
+  const lista = (await call('/v2/admin/motoristas', { token: ADM })).d;
+  await call(`/v2/admin/motoristas/${lista.find((m) => m.nome === 'Leo Moto').id}/status`, { metodo: 'POST', token: ADM, corpo: { status: 'aprovado' } });
+  await call('/v2/arquivos?tipo=selfie', { metodo: 'POST', token: mot2, bruto: JPG, tipo: 'image/jpeg' });
+  await call('/v2/arquivos?tipo=cnh', { metodo: 'POST', token: mot2, bruto: JPG, tipo: 'image/jpeg' });
+  await online(mot2, cooper);
+  const pm = await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'buscar', veiculo: 'moto', coleta: { localId: 'cooper' }, descricao: 'Pedido 7', agendado: false } });
+  assert.equal(pm.s, 200, JSON.stringify(pm.d));
+  assert.equal(pm.d.veiculo, 'moto');
+  await pagar(pm.d.id);
+  assert.ok((await call('/v2/ofertas', { token: mot2 })).d.some((o) => o.id === pm.d.id));
+  assert.ok(!(await call('/v2/ofertas', { token: motorista })).d.some((o) => o.id === pm.d.id));
+  assert.equal((await call(`/v2/ofertas/${pm.d.id}/aceitar`, { metodo: 'POST', token: motorista })).s, 409);
+  assert.equal((await call(`/v2/ofertas/${pm.d.id}/aceitar`, { metodo: 'POST', token: mot2 })).d.status, 'aceito');
+});

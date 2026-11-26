@@ -1,4 +1,4 @@
-import type { ServicoId } from '../data/servicos';
+import type { ServicoId, Veiculo } from '../data/servicos';
 // Cliente da API do servidor (server/src/central.ts), usado pelos três apps.
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as SecureStore from 'expo-secure-store';
@@ -69,6 +69,7 @@ export type Status = 'pagamento_pendente' | 'buscando' | 'aceito' | 'no_local' |
 
 export type MotoristaPublico = {
   id: string;
+  veiculo?: Veiculo;
   nome: string;
   carro: string;
   placa: string;
@@ -86,6 +87,10 @@ export type PontoViagem = { nome: string; endereco: string; lat: number; lon: nu
 export type Viagem = {
   servico: ServicoId;
   servicoTitulo: string;
+  /** Carro ou moto (motoboy). */
+  veiculo?: Veiculo;
+  /** Km cobrados do motorista até a coleta. */
+  kmDesloc?: number | null;
   descricao: string | null;
   /** O cliente está na coleta (confirma a chegada do motorista)? Senão, confirma o recebimento. */
   clienteNaColeta: boolean;

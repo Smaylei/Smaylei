@@ -46,7 +46,7 @@ function aplicar(){
   var r=e.rota,feats=[];if(r&&r.ida&&r.ida.length>1)feats.push(linha(r.ida));if(r&&r.volta&&r.volta.length>1)feats.push(linha(r.volta));
   var src=map.getSource('rota');if(src)src.setData({type:'FeatureCollection',features:feats});
   if(e.motorista){var p=[e.motorista.lon,e.motorista.lat];pts.push(p);
-    if(!carro){carro=new maplibregl.Marker({element:el('carro','🚗')}).setLngLat(p).addTo(map);para=p;}
+    if(!carro){carro=new maplibregl.Marker({element:el('carro',e.motorista.moto?'🏍️':'🚗')}).setLngLat(p).addTo(map);para=p;}
     else if(!para||para[0]!==p[0]||para[1]!==p[1]){var a=carro.getLngLat();de=[a.lng,a.lat];para=p;t0=performance.now();requestAnimationFrame(anima);}}
   else if(carro){carro.remove();carro=null;para=null;}
   var c=e.centro?e.centro.lat+','+e.centro.lon:'';

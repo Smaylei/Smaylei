@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { cidadeDe, CIDADES, nomeCidade, type CidadeId } from '../data/cidades';
 import type { Local } from '../data/locais';
-import { CATEGORIAS, categoriasVisiveis, livrePermitido, type CategoriaId, type Ponta, type ServicoId } from '../data/servicos';
+import { CATEGORIAS, categoriasVisiveis, livrePermitido, type CategoriaId, type Ponta, type ServicoId, type Veiculo } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
 import { useCotacoes } from '../hooks/useCotacoes';
 import { distanciaRetaKm, formatarReais } from '../services/preco';
@@ -41,11 +41,14 @@ type Props = {
   agendado: boolean;
   /** O outro lado da viagem: com ele, cada local da lista mostra o preço (calculado pelo servidor). */
   base?: { lat: number; lon: number } | null;
+  /** Qual lado este seletor escolhe (o preço conta o deslocamento do motorista até a coleta). */
+  lado: 'coleta' | 'entrega';
+  veiculo?: Veiculo;
 };
 
 const MOSTRAR = 8;
 
-export default function SeletorPonta({ ponta, valor, onChange, servico, agendado, base }: Props) {
+export default function SeletorPonta({ ponta, valor, onChange, servico, agendado, base, lado, veiculo = 'carro' }: Props) {
   const { casa, locais, config } = useApp();
   const categorias = useMemo(() => categoriasVisiveis(ponta, config), [ponta, config]);
   const livreOk = livrePermitido(ponta, config);
@@ -70,7 +73,7 @@ export default function SeletorPonta({ ponta, valor, onChange, servico, agendado
     return ref ? l.sort((a, b) => distanciaRetaKm(a.lat, a.lon, ref.lat, ref.lon) - distanciaRetaKm(b.lat, b.lon, ref.lat, ref.lon)) : l;
   }, [locais, cat, ref]);
   const visiveis = useMemo(() => (todos ? lista : lista.slice(0, MOSTRAR)), [lista, todos]);
-  const cot = useCotacoes(servico, agendado, base, visiveis);
+  const cot = useCotacoes(servico, agendado, base, visiveis, lado === 'coleta' ? 'entrega' : 'coleta', veiculo);
 
   async function usarGps() {
     setMsg(null);
