@@ -41,3 +41,6 @@ yarn-error.*
 /android
 dist-admin/
 admin-web/.build/
+
+# estado local do wrangler dev
+.wrangler/
