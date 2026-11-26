@@ -232,3 +232,24 @@ export async function senhaProvisoria(tipo: 'clientes' | 'motoristas' | 'lojista
     Alert.alert('Erro', (e as Error).message);
   }
 }
+
+/** Exclui a conta (depois de confirmar). O histórico de corridas e pagamentos fica como "conta excluída". */
+export async function excluirConta(tipo: 'clientes' | 'motoristas' | 'lojistas', id: string, nome: string, depois: () => void) {
+  const ok = await new Promise<boolean>((res) =>
+    Alert.alert(
+      'Excluir conta',
+      `Excluir a conta de ${nome}? Isso não pode ser desfeito. A pessoa sai do app e pode fazer um cadastro novo com o mesmo CPF.`,
+      [
+        { text: 'Voltar', style: 'cancel', onPress: () => res(false) },
+        { text: 'Excluir', style: 'destructive', onPress: () => res(true) },
+      ],
+    ),
+  );
+  if (!ok) return;
+  try {
+    await api('admin', `/v2/admin/${tipo}/${id}`, { method: 'DELETE' });
+    depois();
+  } catch (e) {
+    Alert.alert('Não foi possível excluir', (e as Error).message);
+  }
+}

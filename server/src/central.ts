@@ -684,7 +684,7 @@ export class Central extends DurableObject<Env> {
     const esc = (s: unknown) => String(s ?? '').replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/[,;]/g, (m) => '\\' + m);
     const filtro = motoristaId ? `AND c.motorista_id=?` : '';
     const linhas = this.q(
-      `SELECT c.*, cl.nome AS cliente_nome, cl.endereco, cl.telefone, cl.lat, cl.lon FROM corridas c JOIN clientes cl ON cl.id=c.cliente_id
+      `SELECT c.*, COALESCE(cl.nome, '(conta excluída)') AS cliente_nome, cl.endereco, cl.telefone, cl.lat, cl.lon FROM corridas c LEFT JOIN clientes cl ON cl.id=c.cliente_id
        WHERE c.status IN ('buscando','aceito','no_local','em_andamento','entregue') ${filtro}`,
       ...(motoristaId ? [motoristaId] : []),
     );
@@ -1321,9 +1321,9 @@ export class Central extends DurableObject<Env> {
     if (metodo === 'GET' && p === '/v2/admin/avaliacoes') {
       // Avaliações e sugestões: só a administração vê (o motorista vê apenas a média).
       const lista = this.q(`SELECT a.corrida_id AS corridaId, a.nota, a.sugestao, a.criado_em AS criadoEm, a.lida,
-          cl.nome AS clienteNome, m.nome AS motoristaNome, c.mercado_nome AS mercado, c.valor,
+          COALESCE(cl.nome, '(conta excluída)') AS clienteNome, m.nome AS motoristaNome, c.mercado_nome AS mercado, c.valor,
           (SELECT g.valor FROM gorjetas g WHERE g.corrida_id=a.corrida_id AND g.status='paga') AS gorjeta
-        FROM avaliacoes a JOIN corridas c ON c.id=a.corrida_id JOIN clientes cl ON cl.id=a.cliente_id LEFT JOIN motoristas m ON m.id=a.motorista_id
+        FROM avaliacoes a JOIN corridas c ON c.id=a.corrida_id LEFT JOIN clientes cl ON cl.id=a.cliente_id LEFT JOIN motoristas m ON m.id=a.motorista_id
         ORDER BY a.criado_em DESC LIMIT 300`);
       const r = this.um(`SELECT AVG(nota) AS media, COUNT(*) AS n, SUM(sugestao IS NOT NULL) AS s FROM avaliacoes`);
       const g = this.um(`SELECT COALESCE(SUM(valor),0) AS v, COUNT(*) AS n FROM gorjetas WHERE status='paga'`);
@@ -1349,9 +1349,9 @@ export class Central extends DurableObject<Env> {
     }
     if (metodo === 'GET' && p === '/v2/admin/corridas')
       return json(
-        this.q(`SELECT c.*, cl.nome AS cliente_nome, cl.telefone AS cliente_telefone, cl.endereco AS cliente_endereco, cl.lat AS cliente_lat, cl.lon AS cliente_lon,
+        this.q(`SELECT c.*, COALESCE(cl.nome, '(conta excluída)') AS cliente_nome, cl.telefone AS cliente_telefone, COALESCE(cl.endereco, c.entrega_endereco) AS cliente_endereco, cl.lat AS cliente_lat, cl.lon AS cliente_lon,
                 m.nome AS motorista_nome, m.placa AS motorista_placa, m.telefone AS motorista_telefone
-         FROM corridas c JOIN clientes cl ON cl.id=c.cliente_id LEFT JOIN motoristas m ON m.id=c.motorista_id
+         FROM corridas c LEFT JOIN clientes cl ON cl.id=c.cliente_id LEFT JOIN motoristas m ON m.id=c.motorista_id
          WHERE c.status!='pagamento_pendente' OR c.pagamento_ate > ? ORDER BY c.inicio DESC LIMIT 300`, iso(agora)),
       );
     if (metodo === 'GET' && p === '/v2/admin/motoristas')
@@ -1375,7 +1375,7 @@ export class Central extends DurableObject<Env> {
       return json(this.q(`SELECT id, nome, cpf, telefone, endereco, lat, lon, bloqueado, criado_em, foto,
         (SELECT COUNT(*) FROM corridas c WHERE c.cliente_id=clientes.id AND c.pago_em IS NOT NULL) AS corridas FROM clientes WHERE tipo='cliente' ORDER BY criado_em DESC LIMIT 500`));
     if (metodo === 'GET' && p === '/v2/admin/saques')
-      return json(this.q(`SELECT s.*, m.nome AS motorista_nome, m.telefone AS motorista_telefone FROM saques s JOIN motoristas m ON m.id=s.motorista_id ORDER BY (s.status='solicitado') DESC, s.criado_em DESC LIMIT 200`));
+      return json(this.q(`SELECT s.*, COALESCE(m.nome, '(conta excluída)') AS motorista_nome, m.telefone AS motorista_telefone FROM saques s LEFT JOIN motoristas m ON m.id=s.motorista_id ORDER BY (s.status='solicitado') DESC, s.criado_em DESC LIMIT 200`));
     const sm = p.match(/^\/v2\/admin\/saques\/([\w-]+)\/(pagar|recusar)$/);
     if (metodo === 'POST' && sm) {
       const s = this.um(`SELECT * FROM saques WHERE id=?`, sm[1]);
@@ -1388,7 +1388,7 @@ export class Central extends DurableObject<Env> {
     }
     if (metodo === 'GET' && p === '/v2/admin/estornos')
       return json(this.q(`SELECT c.id, c.valor, c.reembolso, c.reembolsado_em, c.motivo, c.cancelado_em, c.receipt_url, c.metodo, c.mercado_nome, c.taxa_aplicada,
-        cl.nome AS cliente_nome, cl.telefone AS cliente_telefone FROM corridas c JOIN clientes cl ON cl.id=c.cliente_id WHERE c.reembolso > 0 ORDER BY (c.reembolsado_em IS NULL) DESC, c.cancelado_em DESC LIMIT 200`));
+        COALESCE(cl.nome, '(conta excluída)') AS cliente_nome, cl.telefone AS cliente_telefone FROM corridas c LEFT JOIN clientes cl ON cl.id=c.cliente_id WHERE c.reembolso > 0 ORDER BY (c.reembolsado_em IS NULL) DESC, c.cancelado_em DESC LIMIT 200`));
     const em = p.match(/^\/v2\/admin\/estornos\/([\w-]+)\/feito$/);
     if (metodo === 'POST' && em) {
       this.sql.exec(`UPDATE corridas SET reembolsado_em=? WHERE id=? AND reembolso > 0`, iso(agora), em[1]);
@@ -1399,6 +1399,39 @@ export class Central extends DurableObject<Env> {
       const b = await this.corpo<{ status?: string }>(req);
       if (!['aprovado', 'bloqueado', 'pendente'].includes(String(b.status))) return erro('Status inválido.');
       this.sql.exec(`UPDATE motoristas SET status=?, online=CASE WHEN ?='aprovado' THEN online ELSE 0 END WHERE id=?`, b.status, b.status, mm[1]);
+      return json({ ok: true });
+    }
+    // Excluir conta (o histórico de corridas e pagamentos continua, como "conta excluída").
+    const exm = p.match(/^\/v2\/admin\/(clientes|lojistas|motoristas)\/([\w-]+)$/);
+    if (metodo === 'DELETE' && exm) {
+      const [, tipo, id] = exm;
+      if (tipo === 'motoristas') {
+        const m = this.um(`SELECT * FROM motoristas WHERE id=?`, id);
+        if (!m) return erro('Cadastro não encontrado.', 404);
+        if (this.um(`SELECT id FROM corridas WHERE motorista_id=? AND status IN ${COM_MOTORISTA}`, id)) return erro('Este motorista tem corrida em andamento. Cancele ou conclua antes de excluir.', 409);
+        if (this.um(`SELECT id FROM saques WHERE motorista_id=? AND status='solicitado'`, id)) return erro('Há um saque pendente deste motorista. Pague ou recuse antes de excluir.', 409);
+        const saldo = this.saldo(id).disponivel;
+        if (saldo > 0) return erro(`Este motorista tem ${brl(saldo)} de saldo. Pague o saldo antes de excluir.`, 409);
+        // Corridas agendadas que ele tinha aceitado voltam a procurar motorista.
+        this.sql.exec(`UPDATE corridas SET motorista_id=NULL WHERE motorista_id=? AND status='buscando'`, id);
+        this.sql.exec(`DELETE FROM recusas WHERE motorista_id=?`, id);
+        this.sql.exec(`DELETE FROM motoristas WHERE id=?`, id);
+        for (const k of [m.selfie, m.cnh]) if (k && this.env.DOCS) await this.env.DOCS.delete(String(k)).catch(() => {});
+        this.sql.exec(`DELETE FROM login_tentativas WHERE chave=?`, `motorista:${m.cpf}`);
+        this.avisar(`🗑️ Conta de motorista excluída: ${m.nome} (${m.placa})`);
+        return json({ ok: true });
+      }
+      const c = this.um(`SELECT * FROM clientes WHERE id=? AND tipo=?`, id, tipo === 'lojistas' ? 'lojista' : 'cliente');
+      if (!c) return erro('Cadastro não encontrado.', 404);
+      if (this.um(`SELECT id FROM corridas WHERE cliente_id=? AND (status IN ${OCUPAM} OR (status='pagamento_pendente' AND pagamento_ate > ?))`, id, iso(agora)))
+        return erro('Esta conta tem corrida em andamento ou aguardando pagamento. Cancele ou conclua antes de excluir.', 409);
+      if (this.um(`SELECT id FROM corridas WHERE cliente_id=? AND reembolso > 0 AND reembolsado_em IS NULL`, id))
+        return erro('Esta conta tem estorno pendente. Faça o estorno e marque como feito antes de excluir.', 409);
+      this.sql.exec(`UPDATE corridas SET status='cancelado', motivo='conta_excluida', cancelado_em=? WHERE cliente_id=? AND status='pagamento_pendente'`, iso(agora), id);
+      this.sql.exec(`DELETE FROM clientes WHERE id=?`, id);
+      if (c.foto && this.env.DOCS) await this.env.DOCS.delete(String(c.foto)).catch(() => {});
+      this.sql.exec(`DELETE FROM login_tentativas WHERE chave IN (?, ?)`, `cliente:${c.cpf}`, `lojista:${c.cpf}`);
+      this.avisar(`🗑️ Conta ${c.tipo === 'lojista' ? `de lojista excluída: ${c.loja_nome}` : `de cliente excluída: ${c.nome}`}`);
       return json({ ok: true });
     }
     const spm = p.match(/^\/v2\/admin\/(clientes|lojistas|motoristas)\/([\w-]+)\/senha$/);

@@ -3,7 +3,8 @@ import type { CidadeId } from '../data/cidades';
 import { LOCAIS_INICIAIS, type Local } from '../data/locais';
 import { LIBERACAO_PADRAO, MOTO_PADRAO, type ConfigMoto, type Liberacao } from '../data/servicos';
 import { TARIFAS_PADRAO } from '../data/tarifas';
-import { API, api, lerToken } from '../services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API, api, apagarToken, ErroApi, lerToken } from '../services/api';
 import { carregarEndereco, salvarEndereco, type Endereco } from '../services/cadastro';
 import { URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../services/preco';
 import { MODO, SOLICITANTE } from '../variante';
@@ -76,7 +77,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setEu(d);
         setCasa((c) => (c && c.lat === d.lat && c.lon === d.lon && c.endereco === d.endereco ? c : { ...(c ?? {}), nome: d.nome, endereco: d.endereco, lat: d.lat, lon: d.lon }));
       })
-      .catch(() => {});
+      .catch(async (e) => {
+        // Conta excluída no Admin (ou acesso inválido): volta para Entrar / Realizar cadastro.
+        if (e instanceof ErroApi && e.status === 401) {
+          await apagarToken(SOLICITANTE).catch(() => {});
+          await AsyncStorage.removeItem(SOLICITANTE === 'lojista' ? 'cadastro:loja:v1' : 'cadastro:casa:v1').catch(() => {});
+          setEu(null);
+          setCasa(null);
+          setTemConta(false);
+        }
+      });
   }, []);
 
   useEffect(() => {

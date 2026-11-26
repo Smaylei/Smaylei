@@ -76,6 +76,7 @@ export default function MotoristasAdmin() {
               </View>
               <View style={s.botoes}>
                 <Mini texto="Senha provisória" onPress={() => Admin.senhaProvisoria('motoristas', m.id, m.nome)} />
+                <Mini texto="Excluir conta" perigo onPress={() => Admin.excluirConta('motoristas', m.id, m.nome, carregar)} />
                 {m.status !== 'aprovado' && <Mini texto="Aprovar" onPress={() => acao(() => Admin.statusMotorista(m.id, 'aprovado'))} />}
                 {m.status !== 'bloqueado' && <Mini texto="Bloquear" perigo onPress={() => acao(() => Admin.statusMotorista(m.id, 'bloqueado'))} />}
               </View>

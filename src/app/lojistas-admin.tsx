@@ -64,6 +64,9 @@ export default function LojistasAdmin() {
             <Pressable style={s.mini} onPress={() => Admin.senhaProvisoria('lojistas', l.id, l.loja_nome)}>
               <Text style={s.miniTexto}>Senha provisória</Text>
             </Pressable>
+            <Pressable style={[s.mini, { backgroundColor: cores.erroFundo }]} onPress={() => Admin.excluirConta('lojistas', l.id, l.loja_nome, carregar)}>
+              <Text style={[s.miniTexto, { color: cores.erro }]}>Excluir conta</Text>
+            </Pressable>
             <Pressable style={s.mini} onPress={() => Linking.openURL(`https://www.openstreetmap.org/?mlat=${l.lat}&mlon=${l.lon}#map=18/${l.lat}/${l.lon}`)}>
               <Text style={s.miniTexto}>Mapa</Text>
             </Pressable>

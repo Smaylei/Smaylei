@@ -53,6 +53,7 @@ export default function ClientesAdmin() {
           <Text style={s.detalhe}>📍 {c.endereco}</Text>
           <View style={s.botoes}>
             <Mini texto="Senha provisória" onPress={() => Admin.senhaProvisoria('clientes', c.id, c.nome)} />
+            <Mini texto="Excluir conta" perigo onPress={() => Admin.excluirConta('clientes', c.id, c.nome, carregar)} />
             {c.bloqueado ? <Mini texto="Desbloquear" onPress={() => acao(c.id, 'desbloquear')} /> : <Mini texto="Bloquear" perigo onPress={() => acao(c.id, 'bloquear')} />}
           </View>
         </View>

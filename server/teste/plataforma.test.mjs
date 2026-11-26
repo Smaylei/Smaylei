@@ -23,6 +23,7 @@ const env = {
   DOCS: {
     put: async (k, v, o) => void arquivos.set(k, { v, ct: o?.httpMetadata?.contentType }),
     get: async (k) => (arquivos.has(k) ? { body: arquivos.get(k).v, httpMetadata: { contentType: arquivos.get(k).ct } } : null),
+    delete: async (k) => void arquivos.delete(k),
   },
 };
 const central = new Central(ctx, env);
@@ -566,4 +567,42 @@ test('login: CPF + senha em outro aparelho (cliente, motorista, lojista por CNPJ
   // o mesmo CPF tem conta de cliente com outra senha: cada perfil tem a sua
   assert.equal((await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'lojista', documento: '13579246828', senha: 'padaria1' } })).d.token, lj.d.token);
   assert.equal((await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'cliente', documento: '13579246828', senha: 'nova123' } })).d.token, antigo.d.token);
+});
+
+test('admin exclui contas: cliente sem senha recadastra com o mesmo CPF; histórico fica como "conta excluída"; motorista com saldo não é excluído', async () => {
+  const lista = (await call('/v2/admin/clientes', { token: ADM })).d;
+  // com corrida em andamento: não exclui
+  const ana = lista.find((c) => c.nome === 'Ana Souza');
+  assert.match((await call(`/v2/admin/clientes/${ana.id}`, { metodo: 'DELETE', token: ADM })).d.erro, /andamento/);
+  // conta antiga sem senha ("Rui Antigo"): excluída e recadastrada com o mesmo CPF, agora com senha
+  const rui = lista.find((c) => c.nome === 'Rui Antigo');
+  const tokenRui = (await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'cliente', documento: '13579246828', senha: 'nova123' } })).d.token;
+  assert.equal((await call(`/v2/admin/clientes/${rui.id}`, { metodo: 'DELETE', token: cliente })).s, 404); // só o admin
+  const ex = await call(`/v2/admin/clientes/${rui.id}`, { metodo: 'DELETE', token: ADM });
+  assert.equal(ex.s, 200, JSON.stringify(ex.d));
+  assert.match(await ultimoAviso(), /Conta de cliente excluída: Rui Antigo/);
+  assert.equal((await call('/v2/eu', { token: tokenRui })).s, 401); // o token antigo deixa de valer
+  const novo = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Rui Antigo', cpf: '135.792.468-28', senha: 'ruisenha', endereco: 'Rua M, 4, Centro', lat: -26.4752, lon: -48.993 } });
+  assert.equal(novo.s, 200, JSON.stringify(novo.d));
+  assert.equal((await call('/v2/entrar', { metodo: 'POST', corpo: { perfil: 'cliente', documento: '13579246828', senha: 'ruisenha' } })).d.token, novo.d.token);
+  // conta com histórico ("Bia Lima"): as corridas continuam no Admin como "conta excluída"
+  const bia = lista.find((c) => c.nome === 'Bia Lima');
+  assert.equal((await call(`/v2/admin/clientes/${bia.id}`, { metodo: 'DELETE', token: ADM })).s, 200);
+  assert.ok((await call('/v2/admin/corridas', { token: ADM })).d.some((c) => c.cliente_nome === '(conta excluída)'));
+
+  // motorista com saldo: precisa pagar antes
+  const mots = (await call('/v2/admin/motoristas', { token: ADM })).d;
+  const comSaldo = mots.find((m) => m.disponivel > 0);
+  assert.ok(comSaldo, 'há motorista com saldo nos testes');
+  assert.match((await call(`/v2/admin/motoristas/${comSaldo.id}`, { metodo: 'DELETE', token: ADM })).d.erro, /saldo|corrida|saque/);
+  // motorista sem corridas nem saldo: excluído, e pode se cadastrar de novo
+  const m = await call('/v2/motoristas', { metodo: 'POST', corpo: { nome: 'Teo Sem', cpf: '246.813.579-28', telefone: '47966665555', carro: 'Gol', placa: 'TEO1A23', senha: 'teo12345' } });
+  assert.equal(m.s, 200, JSON.stringify(m.d));
+  const idTeo = (await call('/v2/admin/motoristas', { token: ADM })).d.find((x) => x.nome === 'Teo Sem').id;
+  assert.equal((await call(`/v2/admin/motoristas/${idTeo}`, { metodo: 'DELETE', token: ADM })).s, 200);
+  assert.equal((await call('/v2/motoristas', { metodo: 'POST', corpo: { nome: 'Teo Sem', cpf: '246.813.579-28', telefone: '47966665555', carro: 'Gol', placa: 'TEO1A23', senha: 'teo12345' } })).s, 200);
+  // lojista
+  const lj = (await call('/v2/admin/lojistas', { token: ADM })).d.find((l) => l.loja_nome === 'Padaria Sol');
+  assert.equal((await call(`/v2/admin/lojistas/${lj.id}`, { metodo: 'DELETE', token: ADM })).s, 200);
+  assert.ok(!(await call('/v2/admin/lojistas', { token: ADM })).d.some((l) => l.id === lj.id));
 });
