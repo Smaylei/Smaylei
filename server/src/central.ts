@@ -23,6 +23,7 @@ import { MERCADOS } from '../../src/data/mercados';
 import {
   CATEGORIAS,
   aceitaMoto,
+  DELIVERY_PADRAO,
   LIBERACAO_PADRAO,
   livrePermitido,
   MOTO_PADRAO,
@@ -31,6 +32,7 @@ import {
   precoServico,
   servicoPorId,
   SERVICOS,
+  type ConfigDelivery,
   type ConfigMoto,
   type Liberacao,
   type Ponta as PontaServico,
@@ -54,6 +56,10 @@ import { cpfValido } from '../../src/services/cpf';
 import { distanciaDoMapa, rotaEntre } from '../../src/services/grafo';
 import { caminhoOsrm, tabelaOsrm, trajetoEstimado, type Trajeto } from './rotas';
 import { conferir, gerarHash, senhaProvisoria, senhaValida } from './senha';
+import { brl, DIA, erro, iso, json, MIN, novoId, r2, soDigitos, type Linha } from './util';
+import { COLUNAS_DELIVERY, Delivery, ESQUEMA_DELIVERY } from './delivery';
+
+export { erro, json } from './util';
 import { distanciaRetaKm, URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../../src/services/preco';
 
 export interface Env {
@@ -65,7 +71,7 @@ export interface Env {
   APP_SCHEME: string;
 }
 
-export type Config = ConfigAgenda & Liberacao & ConfigMoto & {
+export type Config = ConfigAgenda & Liberacao & ConfigMoto & ConfigDelivery & {
   deslocamentoPadraoKm: number; // agendado (ainda sem motorista): km cobrados até a coleta
   deslocamentoMaxKm: number; // teto do deslocamento cobrado
   tarifas: Tarifa[];
@@ -96,38 +102,23 @@ export const CONFIG_PADRAO: Config = {
   esperaBorrachariaMin: 20,
   ...LIBERACAO_PADRAO,
   ...MOTO_PADRAO,
+  ...DELIVERY_PADRAO,
   deslocamentoPadraoKm: 3,
   deslocamentoMaxKm: 15,
 };
 const AREA_M = 1500; // distância máxima de um endereço até as ruas do mapa (fora disso: fora da área)
 const MAX_VIAGENS = 20;
 
-const MIN = 60_000;
-const DIA = 24 * 60 * MIN;
 // Corridas que ocupam o motorista/horário.
 const OCUPAM = `('buscando','aceito','no_local','em_andamento')`;
 const COM_MOTORISTA = `('aceito','no_local','em_andamento')`;
 const LOC_VALIDA_MIN = 3;
 const API_IP = 'https://api.checkout.infinitepay.io';
 
-type Linha = Record<string, string | number | null>;
 type Ponto = { lat: number; lon: number };
 type Ponta = Ponto & { nome: string; endereco: string; localId: string };
 type Quem = { tipo: 'cliente' | 'motorista' | 'admin'; id: string; linha?: Linha };
 
-const CORS = {
-  'access-control-allow-origin': '*',
-  'access-control-allow-headers': 'content-type, authorization',
-  'access-control-allow-methods': 'GET,POST,PUT,DELETE',
-};
-export const json = (d: unknown, status = 200) =>
-  new Response(JSON.stringify(d), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...CORS } });
-export const erro = (mensagem: string, status = 400) => json({ erro: mensagem }, status);
-const brl = (v: number) => 'R$ ' + Number(v).toFixed(2).replace('.', ',');
-const iso = (ms: number) => new Date(ms).toISOString();
-const r2 = (v: number) => Math.round(v * 100) / 100;
-const novoId = (p: string) => `${p}-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 6)}`;
-const soDigitos = (s: unknown) => String(s ?? '').replace(/\D/g, '');
 
 const ESQUEMA = `
 CREATE TABLE IF NOT EXISTS config (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);
@@ -199,13 +190,29 @@ export const ROTULO: Record<string, string> = {
 
 export class Central extends DurableObject<Env> {
   private sql: SqlStorage;
+  private delivery: Delivery;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
+    this.delivery = new Delivery({
+      q: (c, ...a) => this.q(c, ...a),
+      um: (c, ...a) => this.um(c, ...a),
+      exec: (c, ...a) => void this.sql.exec(c, ...a),
+      config: () => this.config(),
+      avisar: (t, id) => this.avisar(t, id),
+      link: (o) => this.linkInfinitePay(o),
+      checar: (o, slug, tx) => this.checarPagamento(o, slug, tx),
+      cotar: (coleta, entrega, veiculo) => this.cotar('delivery', coleta, entrega, false, veiculo),
+      agoraOk: () => this.disponibilidade().agora,
+      foraDaArea: (p) => this.foraDaArea(p),
+      corrida: (id) => this.corrida(id),
+      cancelarCorrida: (c, motivo, por, cab) => void this.cancelar(c, motivo, por, cab),
+      docs: env.DOCS,
+    });
     ctx.blockConcurrencyWhile(async () => {
-      for (const cmd of ESQUEMA.split(';').map((c) => c.trim()).filter(Boolean)) this.sql.exec(cmd);
-      for (const cmd of COLUNAS_NOVAS) {
+      for (const cmd of (ESQUEMA + ';' + ESQUEMA_DELIVERY).split(';').map((c) => c.trim()).filter(Boolean)) this.sql.exec(cmd);
+      for (const cmd of [...COLUNAS_NOVAS, ...COLUNAS_DELIVERY]) {
         try {
           this.sql.exec(cmd);
         } catch {
@@ -328,6 +335,7 @@ export class Central extends DurableObject<Env> {
     const ganho = this.ganho(Number(c.valor));
     this.sql.exec(`UPDATE corridas SET liberado_em=?, ganho_motorista=? WHERE id=?`, iso(Date.now()), ganho, c.id);
     this.creditar(c.motorista_id, c.id, 'corrida', ganho);
+    if (c.pedido_id) this.delivery.entregue(c.pedido_id); // delivery: produtos para o saldo da loja
   }
   saldo(motoristaId: unknown) {
     const creditos = Number(this.um(`SELECT COALESCE(SUM(valor),0) AS v FROM creditos WHERE motorista_id=?`, motoristaId)?.v ?? 0);
@@ -354,6 +362,11 @@ export class Central extends DurableObject<Env> {
       `UPDATE corridas SET status='cancelado', motivo=?, cancelado_por=?, cancelado_em=?, taxa_aplicada=?, reembolso=?, fim=? WHERE id=?`,
       motivo, por, agora, taxa, reembolso, agora, c.id,
     );
+    if (c.pedido_id) {
+      // Delivery: o pedido inteiro é cancelado e o estorno (produtos + frete − taxa) fica no pedido.
+      this.delivery.corridaCancelada(c.pedido_id, taxa, cab);
+      return this.corrida(c.id)!;
+    }
     const novo = this.corrida(c.id)!;
     if (c.pago_em) this.avisar(this.textoCorrida(novo, cab), c.id);
     return novo;
@@ -367,6 +380,7 @@ export class Central extends DurableObject<Env> {
     for (const c of this.q(`SELECT * FROM corridas WHERE status='buscando' AND oferta_ate < ?`, iso(agora)))
       this.cancelar(c, 'sem_motorista', 'sistema', '⚠️ SEM MOTORISTA — corrida cancelada');
     this.sql.exec(`UPDATE motoristas SET online=0 WHERE online=1 AND (loc_em IS NULL OR loc_em < ?)`, iso(agora - 30 * MIN));
+    this.delivery.manutencao();
     void cfg;
   }
 
@@ -535,6 +549,7 @@ export class Central extends DurableObject<Env> {
       motorista: comMotorista ? this.motoristaPublico(c.motorista_id) : null,
       ...this.viagem(c),
       pacote: c.pacote_id ? this.um(`SELECT id, valor, viagens FROM pacotes WHERE id=?`, c.pacote_id) ?? null : null,
+      pedidoId: c.pedido_id ?? null,
       mensagens: Number(this.um(`SELECT COUNT(*) AS n FROM mensagens WHERE corrida_id=?`, c.id)?.n ?? 0),
       avaliacao: this.um(`SELECT nota FROM avaliacoes WHERE corrida_id=?`, c.id)?.nota ?? null,
       gorjeta: this.um(`SELECT valor FROM gorjetas WHERE corrida_id=? AND status='paga'`, c.id)?.valor ?? null,
@@ -582,11 +597,13 @@ export class Central extends DurableObject<Env> {
    * eventual parcelamento com juros por conta de quem paga (a InfinitePay não permite
    * desligar o parcelamento; o app orienta "Pix ou cartão à vista").
    */
-  private async linkInfinitePay(o: { orderNsu: string; valor: number; descricao: string; cli: Linha; origem: string; validoMin: number }) {
+  private async linkInfinitePay(o: { orderNsu: string; valor: number; descricao: string; cli: Linha; origem: string; validoMin: number; itens?: { descricao: string; valor: number; qtd: number }[] }) {
     const chave = this.env.INFINITEPAY_API_KEY;
     const corpo = {
       handle: this.env.INFINITEPAY_HANDLE,
-      items: [{ quantity: 1, price: Math.round(o.valor * 100), description: o.descricao }],
+      items: o.itens?.length
+        ? o.itens.map((i) => ({ quantity: i.qtd, price: Math.round(i.valor * 100), description: i.descricao.slice(0, 120) }))
+        : [{ quantity: 1, price: Math.round(o.valor * 100), description: o.descricao }],
       order_nsu: o.orderNsu,
       redirect_url: `${o.origem}/retorno`,
       webhook_url: `${o.origem}/webhook`,
@@ -737,7 +754,7 @@ export class Central extends DurableObject<Env> {
         servicosAtivos: cfg.servicosAtivos, categoriasAtivas: cfg.categoriasAtivas, outroEnderecoLoja: cfg.outroEnderecoLoja,
         cidadesAtivas: cfg.cidadesAtivas, motoAtivo: cfg.motoAtivo, motoServicos: cfg.motoServicos, motoMinimo: cfg.motoMinimo, motoKmIncluso: cfg.motoKmIncluso, motoPorKm: cfg.motoPorKm, motoRepassePct: cfg.motoRepassePct,
         motoAcrescimoPct: r2((fatorMoto(cfg) - 1) * 100), // APKs antigos calculam com o acréscimo
-        deslocamentoPadraoKm: cfg.deslocamentoPadraoKm,
+        deslocamentoPadraoKm: cfg.deslocamentoPadraoKm, deliveryMensalidade: cfg.deliveryMensalidade, deliveryUrgencia: cfg.deliveryUrgencia,
         locais: this.locais().filter((l) => cfg.categoriasAtivas.includes(l.categoria as never) && !!l.cidade && cfg.cidadesAtivas.includes(l.cidade)),
       });
     if (metodo === 'GET' && p === '/v2/disponibilidade') return json(this.disponibilidade());
@@ -840,7 +857,15 @@ export class Central extends DurableObject<Env> {
       const slug = q.get('slug'), tx = q.get('transaction_nsu');
       if (id.startsWith('gorj-')) {
         const g = slug && tx ? await this.confirmarGorjeta(id, slug, tx, q.get('receipt_url')) : this.um(`SELECT * FROM gorjetas WHERE id=?`, id);
-        return paginaRetorno(this.env.APP_SCHEME, g?.status === 'paga', String(g?.corrida_id ?? ''), true);
+        return paginaRetorno(this.env.APP_SCHEME, g?.status === 'paga', String(g?.corrida_id ?? ''), 'gorjeta');
+      }
+      if (id.startsWith('ped-')) {
+        const pd = slug && tx ? await this.delivery.confirmar(id, slug, tx, q.get('receipt_url')) : this.um(`SELECT * FROM pedidos WHERE id=?`, id);
+        return paginaRetorno(this.env.APP_SCHEME, !!pd?.pago_em, id, 'pedido');
+      }
+      if (id.startsWith('mens-')) {
+        const m = slug && tx ? await this.delivery.confirmar(id, slug, tx, q.get('receipt_url')) : this.um(`SELECT * FROM mensalidades WHERE id=?`, id);
+        return paginaRetorno(this.env.APP_SCHEME, m?.status === 'paga', id, 'mensalidade');
       }
       const c = slug && tx ? await this.confirmarPagamento(id, slug, tx, q.get('receipt_url')) : this.corrida(id);
       return paginaRetorno(this.env.APP_SCHEME, !!c?.pago_em, String(c?.id ?? id));
@@ -849,6 +874,7 @@ export class Central extends DurableObject<Env> {
       const b = await this.corpo<{ order_nsu?: string; invoice_slug?: string; transaction_nsu?: string; receipt_url?: string }>(req);
       if (!b.order_nsu || !b.invoice_slug || !b.transaction_nsu) return new Response('dados incompletos', { status: 400 });
       if (b.order_nsu.startsWith('gorj-')) await this.confirmarGorjeta(b.order_nsu, b.invoice_slug, b.transaction_nsu, b.receipt_url);
+      else if (b.order_nsu.startsWith('ped-') || b.order_nsu.startsWith('mens-')) await this.delivery.confirmar(b.order_nsu, b.invoice_slug, b.transaction_nsu, b.receipt_url);
       else await this.confirmarPagamento(b.order_nsu, b.invoice_slug, b.transaction_nsu, b.receipt_url);
       return new Response('ok');
     }
@@ -858,6 +884,9 @@ export class Central extends DurableObject<Env> {
       return new Response(this.ics(mot || undefined), { headers: { 'content-type': 'text/calendar; charset=utf-8' } });
     }
 
+    const foto = await this.delivery.publicas(p, metodo);
+    if (foto) return foto;
+
     // ===== autenticadas =====
     const eu = this.quem(req);
     if (!eu) return erro('Faça o cadastro ou entre novamente.', 401);
@@ -865,7 +894,8 @@ export class Central extends DurableObject<Env> {
     if (metodo === 'POST' && p === '/v2/arquivos') {
       if (!this.env.DOCS) return erro('Armazenamento de documentos não configurado.', 503);
       const tipo = url.searchParams.get('tipo') ?? '';
-      if (!['foto', 'selfie', 'cnh'].includes(tipo)) return erro('Tipo de arquivo inválido.');
+      if (!['foto', 'selfie', 'cnh', 'produto'].includes(tipo)) return erro('Tipo de arquivo inválido.');
+      if (tipo === 'produto' && eu.linha?.tipo !== 'lojista') return erro('Só lojistas enviam fotos de produtos.', 403);
       const dados = await req.arrayBuffer();
       if (dados.byteLength < 1000 || dados.byteLength > 4_000_000) return erro('A imagem precisa ter até 4 MB.');
       const chave = `${eu.tipo}/${eu.id}/${tipo}-${Date.now().toString(36)}.jpg`;
@@ -921,6 +951,8 @@ export class Central extends DurableObject<Env> {
     const agora = Date.now();
     const cfg = this.config();
     const cli = eu.linha!;
+    const dlv = cli.tipo === 'lojista' ? await this.delivery.loja(req, url, cli, p, metodo) : await this.delivery.cliente(req, url, cli, p, metodo);
+    if (dlv) return dlv;
     if (metodo === 'GET' && p === '/v2/eu')
       return json({
         tipo: cli.tipo === 'lojista' ? 'lojista' : 'cliente', id: cli.id, nome: cli.nome, telefone: cli.telefone, endereco: cli.endereco, lat: cli.lat, lon: cli.lon,
@@ -948,6 +980,7 @@ export class Central extends DurableObject<Env> {
       if (b.servico && !SERVICOS.some((x) => x.id === b.servico)) return erro('Serviço inválido.');
       // Versões antigas do app mandam só o mercado: coleta no mercado, entrega em casa.
       if (!cfg.servicosAtivos.includes(sv.id)) return erro(`“${sv.titulo}” ainda não está disponível. Em breve!`, 403);
+      if (sv.vitrine) return erro('Faça o pedido pela vitrine das lojas, em Delivery.', 400);
       const souLoja = cli.tipo === 'lojista';
       if (sv.publico !== (souLoja ? 'lojista' : 'cliente')) return erro(souLoja ? 'Use os serviços da área do lojista.' : 'Serviço exclusivo para lojistas.', 403);
       if (souLoja && cli.status !== 'aprovado') return erro(cli.status === 'bloqueado' ? 'Loja bloqueada. Fale com o suporte.' : 'O cadastro da sua loja está em análise. Avisaremos quando for aprovado.', 403);
@@ -1054,6 +1087,7 @@ export class Central extends DurableObject<Env> {
         return json(this.corridaParaCliente(this.corrida(c.id)!));
       }
       if (metodo === 'POST' && acao === '/cancelar') {
+        if (c.pedido_id) return erro('Esta entrega é de um pedido do delivery. Para cancelar, fale com o suporte pelo chat.', 409);
         if (c.status === 'pagamento_pendente') {
           this.sql.exec(
             `UPDATE corridas SET status='cancelado', motivo='cliente_cancelou', cancelado_por='cliente', cancelado_em=? WHERE status='pagamento_pendente' AND (id=? OR (pacote_id IS NOT NULL AND pacote_id=?))`,
@@ -1293,10 +1327,14 @@ export class Central extends DurableObject<Env> {
   // ===== admin =====
   private async rotasAdmin(req: Request, url: URL, p: string, metodo: string): Promise<Response> {
     const agora = Date.now();
+    const dlv = await this.delivery.admin(req, p, metodo);
+    if (dlv) return dlv;
     if (metodo === 'GET' && p === '/v2/admin/resumo') {
       const cfg = this.config();
       const n = (sql: string, ...a: unknown[]) => Number(this.um(sql, ...a)?.n ?? 0);
+      const d = this.delivery.resumo();
       return json({
+        ...d,
         config: cfg,
         disponibilidade: this.disponibilidade(),
         motoristasOnline: n(`SELECT COUNT(*) AS n FROM motoristas WHERE online=1 AND status='aprovado'`),
@@ -1305,8 +1343,8 @@ export class Central extends DurableObject<Env> {
         retido: n(`SELECT COALESCE(SUM(valor),0) AS n FROM corridas WHERE pago_em IS NOT NULL AND liberado_em IS NULL AND status IN ('buscando','aceito','no_local','em_andamento')`),
         saquesPendentes: n(`SELECT COALESCE(SUM(valor),0) AS n FROM saques WHERE status='solicitado'`),
         saquesPendentesQtd: n(`SELECT COUNT(*) AS n FROM saques WHERE status='solicitado'`),
-        estornosPendentes: n(`SELECT COALESCE(SUM(reembolso),0) AS n FROM corridas WHERE reembolso > 0 AND reembolsado_em IS NULL`),
-        estornosPendentesQtd: n(`SELECT COUNT(*) AS n FROM corridas WHERE reembolso > 0 AND reembolsado_em IS NULL`),
+        estornosPendentes: r2(n(`SELECT COALESCE(SUM(reembolso),0) AS n FROM corridas WHERE reembolso > 0 AND reembolsado_em IS NULL`) + d.estornosPedidos),
+        estornosPendentesQtd: n(`SELECT COUNT(*) AS n FROM corridas WHERE reembolso > 0 AND reembolsado_em IS NULL`) + d.estornosPedidosQtd,
         avisosNaoLidos: n(`SELECT COUNT(*) AS n FROM avisos WHERE lido=0`),
         lojistasPendentes: n(`SELECT COUNT(*) AS n FROM clientes WHERE tipo='lojista' AND status='pendente'`),
         avaliacoesNaoLidas: n(`SELECT COUNT(*) AS n FROM avaliacoes WHERE lida=0`),
@@ -1391,10 +1429,12 @@ export class Central extends DurableObject<Env> {
       return json({ ok: true });
     }
     if (metodo === 'GET' && p === '/v2/admin/estornos')
-      return json(this.q(`SELECT c.id, c.valor, c.reembolso, c.reembolsado_em, c.motivo, c.cancelado_em, c.receipt_url, c.metodo, c.mercado_nome, c.taxa_aplicada,
-        COALESCE(cl.nome, '(conta excluída)') AS cliente_nome, cl.telefone AS cliente_telefone FROM corridas c LEFT JOIN clientes cl ON cl.id=c.cliente_id WHERE c.reembolso > 0 ORDER BY (c.reembolsado_em IS NULL) DESC, c.cancelado_em DESC LIMIT 200`));
+      return json([...this.delivery.estornos(), ...this.q(`SELECT c.id, c.valor, c.reembolso, c.reembolsado_em, c.motivo, c.cancelado_em, c.receipt_url, c.metodo, c.mercado_nome, c.taxa_aplicada,
+        COALESCE(cl.nome, '(conta excluída)') AS cliente_nome, cl.telefone AS cliente_telefone FROM corridas c LEFT JOIN clientes cl ON cl.id=c.cliente_id WHERE c.reembolso > 0 ORDER BY (c.reembolsado_em IS NULL) DESC, c.cancelado_em DESC LIMIT 200`)]
+        .sort((a, b) => Number(!b.reembolsado_em) - Number(!a.reembolsado_em) || String(b.cancelado_em ?? '').localeCompare(String(a.cancelado_em ?? ''))));
     const em = p.match(/^\/v2\/admin\/estornos\/([\w-]+)\/feito$/);
     if (metodo === 'POST' && em) {
+      if (em[1].startsWith('ped-')) this.delivery.estornoFeito(em[1]);
       this.sql.exec(`UPDATE corridas SET reembolsado_em=? WHERE id=? AND reembolso > 0`, iso(agora), em[1]);
       return json({ ok: true });
     }
@@ -1427,6 +1467,8 @@ export class Central extends DurableObject<Env> {
       }
       const c = this.um(`SELECT * FROM clientes WHERE id=? AND tipo=?`, id, tipo === 'lojistas' ? 'lojista' : 'cliente');
       if (!c) return erro('Cadastro não encontrado.', 404);
+      const bloqueio = this.delivery.bloqueiaExclusao(id, tipo === 'lojistas');
+      if (bloqueio) return erro(bloqueio, 409);
       if (this.um(`SELECT id FROM corridas WHERE cliente_id=? AND (status IN ${OCUPAM} OR (status='pagamento_pendente' AND pagamento_ate > ?))`, id, iso(agora)))
         return erro('Esta conta tem corrida em andamento ou aguardando pagamento. Cancele ou conclua antes de excluir.', 409);
       if (this.um(`SELECT id FROM corridas WHERE cliente_id=? AND reembolso > 0 AND reembolsado_em IS NULL`, id))
@@ -1434,6 +1476,11 @@ export class Central extends DurableObject<Env> {
       this.sql.exec(`UPDATE corridas SET status='cancelado', motivo='conta_excluida', cancelado_em=? WHERE cliente_id=? AND status='pagamento_pendente'`, iso(agora), id);
       this.sql.exec(`DELETE FROM clientes WHERE id=?`, id);
       if (c.foto && this.env.DOCS) await this.env.DOCS.delete(String(c.foto)).catch(() => {});
+      if (tipo === 'lojistas') {
+        for (const pr of this.q(`SELECT foto FROM produtos WHERE loja_id=? AND foto IS NOT NULL`, id)) if (this.env.DOCS) await this.env.DOCS.delete(String(pr.foto)).catch(() => {});
+        this.sql.exec(`DELETE FROM produtos WHERE loja_id=?`, id);
+        this.sql.exec(`UPDATE pedidos SET status='cancelado', motivo='conta_excluida', cancelado_em=? WHERE loja_id=? AND status='pagamento_pendente'`, iso(agora), id);
+      } else this.sql.exec(`UPDATE pedidos SET status='cancelado', motivo='conta_excluida', cancelado_em=? WHERE cliente_id=? AND status='pagamento_pendente'`, iso(agora), id);
       this.sql.exec(`DELETE FROM login_tentativas WHERE chave IN (?, ?)`, `cliente:${c.cpf}`, `lojista:${c.cpf}`);
       this.avisar(`🗑️ Conta ${c.tipo === 'lojista' ? `de lojista excluída: ${c.loja_nome}` : `de cliente excluída: ${c.nome}`}`);
       return json({ ok: true });
@@ -1483,6 +1530,8 @@ export class Central extends DurableObject<Env> {
         return erro('Tabela da moto inválida.');
       if (!Array.isArray(cfg.motoServicos) || cfg.motoServicos.some((x) => !SERVICOS.some((s) => s.id === x))) return erro('Serviços de moto inválidos.');
       if (!(cfg.deslocamentoPadraoKm >= 0 && cfg.deslocamentoPadraoKm <= cfg.deslocamentoMaxKm && cfg.deslocamentoMaxKm <= 50)) return erro('Deslocamento inválido.');
+      if (!(cfg.deliveryMensalidade >= 1 && cfg.deliveryMensalidade <= 1000 && cfg.deliveryAceiteMin >= 3 && cfg.deliveryAceiteMin <= 60)) return erro('Valores do delivery inválidos.');
+      cfg.deliveryUrgencia = !!cfg.deliveryUrgencia;
       cfg.motoAtivo = !!cfg.motoAtivo;
       if (!Array.isArray(cfg.cidadesAtivas) || !cfg.cidadesAtivas.length || cfg.cidadesAtivas.some((x) => !CIDADES.some((c) => c.id === x))) return erro('Cidades inválidas.');
       this.salvarConfig(cfg);
@@ -1522,14 +1571,15 @@ export class Central extends DurableObject<Env> {
   }
 }
 
-export function paginaRetorno(scheme: string, pago: boolean, id: string, gorjeta = false) {
-  const link = `${scheme}://pagamento?corrida=${encodeURIComponent(id)}&status=${pago ? 'pago' : 'aguardando'}`;
+export function paginaRetorno(scheme: string, pago: boolean, id: string, tipo: 'corrida' | 'gorjeta' | 'pedido' | 'mensalidade' = 'corrida') {
+  const gorjeta = tipo === 'gorjeta';
+  const link = `${scheme}://pagamento?${tipo === 'pedido' ? 'pedido' : tipo === 'mensalidade' ? 'mensalidade' : 'corrida'}=${encodeURIComponent(id)}&status=${pago ? 'pago' : 'aguardando'}`;
   const titulo = gorjeta ? (pago ? 'Obrigado pela gorjeta!' : 'Gorjeta em processamento') : pago ? 'Pagamento confirmado!' : 'Pagamento em processamento';
   return new Response(
     `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${titulo}</title><style>body{font-family:system-ui,sans-serif;background:#F6F7F5;color:#1E2925;display:grid;place-items:center;min-height:100vh;margin:0;padding:24px;text-align:center}
 a{display:inline-block;margin-top:16px;background:#2E8A5E;color:#fff;padding:14px 24px;border-radius:14px;text-decoration:none;font-weight:700}</style></head>
-<body><div><h1>${titulo}</h1><p>${gorjeta ? 'O valor vai inteiro para o motorista.' : pago ? 'O valor fica retido até você confirmar que o motorista chegou.' : 'Assim que a InfinitePay confirmar, o app mostra o pagamento.'}</p>
+<body><div><h1>${titulo}</h1><p>${gorjeta ? 'O valor vai inteiro para o motorista.' : tipo === 'mensalidade' ? (pago ? 'Sua vitrine no Delivery da MOVI está ativa.' : 'Assim que a InfinitePay confirmar, a vitrine é ativada.') : tipo === 'pedido' ? (pago ? 'Agora é só aguardar a loja aceitar o seu pedido.' : 'Assim que a InfinitePay confirmar, a loja recebe o pedido.') : pago ? 'O valor fica retido até você confirmar que o motorista chegou.' : 'Assim que a InfinitePay confirmar, o app mostra o pagamento.'}</p>
 <a href="${link}">Voltar ao ${MARCA.nome}</a></div></body></html>`,
     { headers: { 'content-type': 'text/html; charset=utf-8' } },
   );

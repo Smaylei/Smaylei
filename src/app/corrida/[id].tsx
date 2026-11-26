@@ -255,7 +255,12 @@ export default function Corrida() {
           <Text style={s.link}>Ver comprovante</Text>
         </Pressable>
       )}
-      {['pagamento_pendente', 'buscando', 'aceito', 'no_local'].includes(c.status) && (
+      {c.pedidoId && (
+        <Pressable onPress={() => router.push(`/meu-pedido/${c.pedidoId}`)}>
+          <Text style={s.link}>🛵 Ver o pedido do delivery</Text>
+        </Pressable>
+      )}
+      {!c.pedidoId && ['pagamento_pendente', 'buscando', 'aceito', 'no_local'].includes(c.status) && (
         <Pressable onPress={cancelar}>
           <Text style={[s.link, { color: cores.erro }]}>Cancelar frete</Text>
         </Pressable>

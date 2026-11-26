@@ -608,3 +608,173 @@ test('admin exclui contas: cliente sem senha recadastra com o mesmo CPF; histór
   assert.equal((await call(`/v2/admin/lojistas/${lj.id}`, { metodo: 'DELETE', token: ADM })).s, 200);
   assert.ok(!(await call('/v2/admin/lojistas', { token: ADM })).d.some((l) => l.id === lj.id));
 });
+
+const gerarCpf = (base) => {
+  const d = String(base).padStart(9, '0').split('').map(Number);
+  for (const n of [9, 10]) d.push((d.reduce((a, x, i) => a + x * (n + 1 - i), 0) * 10) % 11 % 10);
+  return d.join('');
+};
+
+test('delivery das lojas: vitrine com mensalidade, pedido pago pela MOVI, loja aceita, motorista entrega, repasse 100% à loja', async () => {
+  const LOJA = { lat: -26.4760, lon: -48.9950 };
+  const CASA = { lat: -26.4800, lon: -48.9890 };
+  // loja aprovada
+  const lj = await call('/v2/lojistas', { metodo: 'POST', corpo: { lojaNome: 'Lanches da Praça', nome: 'Caio Praça', cpf: gerarCpf(314159265), telefone: '47 99999-3333', senha: 'lanche123', endereco: 'Praça Central, 10, Centro', ...LOJA } });
+  assert.equal(lj.s, 200, JSON.stringify(lj.d));
+  const loja = lj.d.token;
+  await call(`/v2/admin/lojistas/${lj.d.id}/status`, { metodo: 'POST', token: ADM, corpo: { status: 'aprovado' } });
+  // cliente
+  const c = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Lia Fome', cpf: gerarCpf(271828182), telefone: '47988880000', endereco: 'Rua das Flores, 50, Centro', ...CASA } });
+  const cli = c.d.token;
+
+  // Delivery ainda desligado no Admin
+  assert.equal((await call('/v2/lojas', { token: cli })).s, 403);
+  const v0 = (await call('/v2/loja', { token: loja })).d;
+  assert.equal(v0.liberado, false);
+  assert.equal(v0.mensalidade, 15);
+  assert.match((await call('/v2/loja/mensalidade', { metodo: 'POST', token: loja })).d.erro, /ainda não foi liberado/);
+
+  // produtos (a loja já pode cadastrar); foto só da própria loja
+  const up = await call('/v2/arquivos?tipo=produto', { metodo: 'POST', token: loja, bruto: JPG, tipo: 'image/jpeg' });
+  assert.match(up.d.chave, new RegExp(`^cliente/${lj.d.id}/produto-`));
+  assert.equal((await call('/v2/arquivos?tipo=produto', { metodo: 'POST', token: cli, bruto: JPG, tipo: 'image/jpeg' })).s, 403);
+  assert.match((await call('/v2/loja/produtos', { metodo: 'POST', token: loja, corpo: { nome: 'X', preco: 10, foto: 'motorista/m1/cnh-x.jpg' } })).d.erro, /nome|Foto/);
+  assert.match((await call('/v2/loja/produtos', { metodo: 'POST', token: loja, corpo: { nome: 'X-Burguer', preco: 10, foto: 'motorista/m1/cnh-x.jpg' } })).d.erro, /Foto inválida/);
+  assert.match((await call('/v2/loja/produtos', { metodo: 'POST', token: loja, corpo: { nome: 'X-Burguer', preco: 0 } })).d.erro, /Preço/);
+  const xb = (await call('/v2/loja/produtos', { metodo: 'POST', token: loja, corpo: { nome: 'X-Burguer', descricao: 'Pão, carne 150 g, queijo', preco: 22.5, categoria: 'Lanches', foto: up.d.chave } })).d;
+  const refri = (await call('/v2/loja/produtos', { metodo: 'POST', token: loja, corpo: { nome: 'Refrigerante lata', preco: 6, categoria: 'Bebidas' } })).d;
+  assert.equal(xb.temFoto, true);
+  assert.equal((await call('/v2/loja/produtos', { token: loja })).d.length, 2);
+
+  // Admin libera o Delivery; a vitrine só aparece depois da mensalidade
+  const cfg0 = (await call('/v2/config')).d;
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { servicosAtivos: [...cfg0.servicosAtivos, 'delivery'] } });
+  assert.equal((await call('/v2/lojas', { token: cli })).d.lojas.length, 0);
+  const mens = await call('/v2/loja/mensalidade', { metodo: 'POST', token: loja });
+  assert.equal(mens.s, 200, JSON.stringify(mens.d));
+  assert.equal(linkCriado.items[0].price, 1500);
+  await pagar(mens.d.id);
+  assert.match(await ultimoAviso(), /MENSALIDADE DO DELIVERY paga: Lanches da Praça/);
+  const v1 = (await call('/v2/loja', { token: loja })).d;
+  assert.equal(v1.ativa, true);
+  assert.ok(Date.parse(v1.ativaAte) > Date.now() + 29 * 86400000);
+  const fechada = (await call('/v2/lojas', { token: cli })).d.lojas;
+  assert.equal(fechada.length, 1); // aparece como fechada
+  assert.equal(fechada[0].aberta, false);
+  assert.match((await call('/v2/pedidos', { metodo: 'POST', token: cli, corpo: { lojaId: lj.d.id, itens: [{ produtoId: xb.id, qtd: 1 }] } })).d.erro, /fechada/);
+  assert.equal((await call('/v2/loja', { metodo: 'PUT', token: loja, corpo: { aberta: true, categoria: 'restaurante', pedidoMinimo: 10, pix: 'pix@lanches.com', descricao: 'Lanches na chapa' } })).s, 200);
+  const lojas = (await call('/v2/lojas', { token: cli })).d;
+  assert.equal(lojas.lojas.length, 1);
+  assert.equal(lojas.lojas[0].categoria, 'restaurante');
+  assert.equal(lojas.lojas[0].produtos, 2);
+  const vit = (await call(`/v2/lojas/${lj.d.id}`, { token: cli })).d;
+  assert.deepEqual(vit.produtos.map((x) => x.nome).sort(), ['Refrigerante lata', 'X-Burguer']);
+  assert.equal((await call(`/v2/produtos/${xb.id}/foto`)).s, 200); // foto pública (sem login)
+
+  // motorista novo, online perto da loja
+  const m = await call('/v2/motoristas', { metodo: 'POST', corpo: { nome: 'Dani Entrega', cpf: gerarCpf(161803398), telefone: '47977771111', carro: 'Onix', placa: 'DAN1E23' } });
+  const mot = m.d.token;
+  await call(`/v2/admin/motoristas/${m.d.id}/status`, { metodo: 'POST', token: ADM, corpo: { status: 'aprovado' } });
+  await call('/v2/arquivos?tipo=selfie', { metodo: 'POST', token: mot, bruto: JPG, tipo: 'image/jpeg' });
+  await call('/v2/arquivos?tipo=cnh', { metodo: 'POST', token: mot, bruto: JPG, tipo: 'image/jpeg' });
+  assert.equal((await online(mot, LOJA)).s, 200);
+
+  // frete sem urgência (o mesmo "buscar" agora custa mais)
+  const cot = (await call('/v2/pedidos/cotar', { metodo: 'POST', token: cli, corpo: { lojaId: lj.d.id } })).d;
+  assert.ok(cot.frete > 0 && cot.entrega.ok, JSON.stringify(cot));
+  const buscar = (await call('/v2/cotacoes', { metodo: 'POST', token: cli, corpo: { servico: 'buscar', agendado: false, base: LOJA, baseEh: 'coleta', pontos: [{ id: 'c', ...CASA }] } })).d.c;
+  assert.ok(buscar.valor > cot.frete, JSON.stringify([buscar, cot]));
+
+  // pedido: mínimo da loja, preços do banco, um pagamento com os itens + frete
+  assert.match((await call('/v2/pedidos', { metodo: 'POST', token: cli, corpo: { lojaId: lj.d.id, itens: [{ produtoId: refri.id, qtd: 1 }] } })).d.erro, /pedido mínimo/);
+  assert.equal((await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'delivery', entrega: { casa: true } } })).s, 400);
+  const ped = await call('/v2/pedidos', { metodo: 'POST', token: cli, corpo: { lojaId: lj.d.id, itens: [{ produtoId: xb.id, qtd: 2, preco: 0.01 }, { produtoId: refri.id, qtd: 1 }], observacao: 'Sem cebola' } });
+  assert.equal(ped.s, 200, JSON.stringify(ped.d));
+  assert.equal(ped.d.subtotal, 51);
+  assert.equal(ped.d.total, Math.round((51 + cot.frete) * 100) / 100);
+  assert.deepEqual(linkCriado.items.map((i) => [i.quantity, i.price]), [[2, 2250], [1, 600], [1, Math.round(cot.frete * 100)]]);
+  assert.equal(ped.d.status, 'pagamento_pendente');
+  await pagar(ped.d.id);
+  assert.equal((await call(`/v2/pedidos/${ped.d.id}`, { token: cli })).d.status, 'aguardando_loja');
+  assert.match(await ultimoAviso(), /PEDIDO PAGO/);
+
+  // a loja vê o pedido (sem endereço nem sobrenome do cliente) e aceita: vira corrida paga procurando motorista
+  const naLoja = (await call('/v2/loja/pedidos', { token: loja })).d;
+  assert.equal(naLoja[0].status, 'aguardando_loja');
+  assert.equal(naLoja[0].cliente.nome, 'Lia');
+  assert.equal(naLoja[0].entregaEndereco, null);
+  assert.equal(naLoja[0].observacao, 'Sem cebola');
+  const ac = (await call(`/v2/loja/pedidos/${ped.d.id}/aceitar`, { metodo: 'POST', token: loja })).d;
+  assert.equal(ac.status, 'aceito');
+  assert.equal((await call(`/v2/loja/pedidos/${ped.d.id}/aceitar`, { metodo: 'POST', token: loja })).s, 409);
+  const of = (await call('/v2/ofertas', { token: mot })).d.find((o) => o.id === ac.corridaId);
+  assert.ok(of, 'oferta para o motorista');
+  assert.equal(of.servico, 'delivery');
+  assert.equal(of.valor, cot.frete);
+  assert.match(of.descricao, /Pedido #\w{4} · 3 itens/);
+  assert.equal((await call(`/v2/ofertas/${ac.corridaId}/aceitar`, { metodo: 'POST', token: mot })).s, 200);
+  assert.equal((await call(`/v2/corridas/${ac.corridaId}/cancelar`, { metodo: 'POST', token: cli })).s, 409); // cancelar só pelo suporte
+  assert.equal((await call(`/v2/loja/pedidos`, { token: loja })).d[0].motorista.placa, 'DAN1E23');
+  assert.equal((await call(`/v2/corridas/${ac.corridaId}/cheguei`, { metodo: 'POST', token: mot, corpo: LOJA })).d.status, 'no_local');
+  assert.equal((await call(`/v2/corridas/${ac.corridaId}/coletei`, { metodo: 'POST', token: mot })).d.status, 'em_andamento');
+  await call(`/v2/corridas/${ac.corridaId}/cheguei-destino`, { metodo: 'POST', token: mot, corpo: CASA });
+  const rec = await call(`/v2/corridas/${ac.corridaId}/confirmar-recebimento`, { metodo: 'POST', token: cli });
+  assert.equal(rec.d.status, 'entregue');
+  assert.equal((await call(`/v2/pedidos/${ped.d.id}`, { token: cli })).d.status, 'entregue');
+  // frete: 80% ao motorista; produtos: 100% à loja
+  assert.equal((await call('/v2/saldo', { token: mot })).d.disponivel, Math.round(cot.frete * 0.8 * 100) / 100);
+  const sl = (await call('/v2/loja/saldo', { token: loja })).d;
+  assert.equal(sl.disponivel, 51);
+  assert.equal(sl.chavePix, 'pix@lanches.com');
+  const rp = await call('/v2/loja/repasses', { metodo: 'POST', token: loja });
+  assert.equal(rp.d.valor, 51);
+  assert.match(await ultimoAviso(), /REPASSE DE LOJA SOLICITADO/);
+  assert.equal((await call('/v2/loja/repasses', { metodo: 'POST', token: loja })).s, 409);
+  const adm = (await call('/v2/admin/delivery', { token: ADM })).d;
+  assert.equal(adm.repasses[0].status, 'solicitado');
+  assert.equal((await call('/v2/admin/resumo', { token: ADM })).d.repassesLojaPendentesQtd, 1);
+  await call(`/v2/admin/repasses-loja/${adm.repasses[0].id}/pagar`, { metodo: 'POST', token: ADM });
+  assert.equal((await call('/v2/loja/saldo', { token: loja })).d.disponivel, 0);
+
+  // loja recusa: estorno total, aparece em Estornos e é marcado como feito
+  await call('/v2/eu/livre', { metodo: 'POST', token: mot }); // o motorista fica livre de novo
+  const r2 = await call('/v2/pedidos', { metodo: 'POST', token: cli, corpo: { lojaId: lj.d.id, itens: [{ produtoId: xb.id, qtd: 1 }] } });
+  assert.equal(r2.s, 200, JSON.stringify(r2.d));
+  const p2 = r2.d;
+  await pagar(p2.id);
+  await call(`/v2/loja/pedidos/${p2.id}/recusar`, { metodo: 'POST', token: loja, corpo: { motivo: 'Acabou o pão' } });
+  const p2c = (await call(`/v2/pedidos/${p2.id}`, { token: cli })).d;
+  assert.equal(p2c.status, 'cancelado');
+  assert.equal(p2c.reembolso, p2.total);
+  assert.match(p2c.motivo, /Acabou o pão/);
+  const est = (await call('/v2/admin/estornos', { token: ADM })).d.find((e) => e.id === p2.id);
+  assert.ok(est && est.reembolso === p2.total);
+  await call(`/v2/admin/estornos/${p2.id}/feito`, { metodo: 'POST', token: ADM });
+  assert.ok((await call(`/v2/pedidos/${p2.id}`, { token: cli })).d.reembolsadoEm);
+
+  // loja não responde no prazo: cancelado com estorno
+  const r3 = await call('/v2/pedidos', { metodo: 'POST', token: cli, corpo: { lojaId: lj.d.id, itens: [{ produtoId: xb.id, qtd: 1 }] } });
+  assert.equal(r3.s, 200, JSON.stringify(r3.d));
+  const p3 = r3.d;
+  await pagar(p3.id);
+  db.prepare(`UPDATE pedidos SET pago_em=? WHERE id=?`).run(new Date(Date.now() - 11 * 60000).toISOString(), p3.id);
+  const p3c = (await call(`/v2/pedidos/${p3.id}`, { token: cli })).d;
+  assert.equal(p3c.status, 'cancelado');
+  assert.equal(p3c.reembolso, p3.total);
+  assert.match(await ultimoAviso(), /LOJA NÃO RESPONDEU/);
+
+  // pedido em aberto impede excluir a loja; o Admin cancela o pedido (estorno) e dá dias de cortesia
+  const r4 = await call('/v2/pedidos', { metodo: 'POST', token: cli, corpo: { lojaId: lj.d.id, itens: [{ produtoId: xb.id, qtd: 1 }] } });
+  assert.equal(r4.s, 200, JSON.stringify(r4.d));
+  const p4 = r4.d;
+  await pagar(p4.id);
+  assert.match((await call(`/v2/admin/lojistas/${lj.d.id}`, { metodo: 'DELETE', token: ADM })).d.erro, /delivery/);
+  assert.equal((await call(`/v2/admin/pedidos/${p4.id}/cancelar`, { metodo: 'POST', token: ADM })).s, 200);
+  assert.equal((await call(`/v2/pedidos/${p4.id}`, { token: cli })).d.reembolso, p4.total);
+  const antes = Date.parse((await call('/v2/loja', { token: loja })).d.ativaAte);
+  await call(`/v2/admin/lojistas/${lj.d.id}/delivery-dias`, { metodo: 'POST', token: ADM, corpo: { dias: 30 } });
+  assert.ok(Date.parse((await call('/v2/loja', { token: loja })).d.ativaAte) >= antes + 29 * 86400000);
+  // produto desativado some da vitrine
+  await call(`/v2/loja/produtos/${refri.id}`, { metodo: 'PUT', token: loja, corpo: { ativo: false } });
+  assert.equal((await call(`/v2/lojas/${lj.d.id}`, { token: cli })).d.produtos.length, 1);
+});

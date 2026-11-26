@@ -7,16 +7,19 @@ import { cores, raio, sombra } from '../components/tema';
 import { MODALIDADES, servicosLiberados } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
 import { api, ROTULO_STATUS, type CorridaCliente } from '../services/api';
+import * as D from '../services/delivery';
 import { formatarReais } from '../services/preco';
 
 /** Início do lojista: chamar motorista para as compras (e o cliente) e acompanhar os pedidos da loja. */
 export default function Lojista() {
   const { carregado, casa, temConta, eu, config, recarregarEu } = useApp();
   const [ativas, setAtivas] = useState<CorridaCliente[]>([]);
+  const [vitrine, setVitrine] = useState<D.MinhaVitrine | null>(null);
 
   const carregar = useCallback(() => {
     recarregarEu();
     api<CorridaCliente[]>('lojista', '/v2/corridas/ativas').then(setAtivas).catch(() => {});
+    D.minhaVitrine().then(setVitrine).catch(() => {});
   }, [recarregarEu]);
 
   useFocusEffect(
@@ -49,6 +52,22 @@ export default function Lojista() {
             {eu.status === 'bloqueado' ? 'Fale com o suporte da MOVI.' : 'A MOVI vai conferir os dados da loja. Assim que for aprovada, você já pode chamar motoristas.'}
           </Text>
         </View>
+      )}
+
+      {vitrine && (
+        <Pressable style={[s.vitrine, vitrine.pedidosNovos > 0 && s.vitrineNova]} onPress={() => router.push(vitrine.pedidosNovos > 0 ? '/pedidos-loja' : '/vitrine')}>
+          <View style={s.icone}>
+            <Text style={{ fontSize: 24 }}>🛵</Text>
+          </View>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={s.servicoTitulo}>{vitrine.pedidosNovos > 0 ? `🔔 ${vitrine.pedidosNovos} ${vitrine.pedidosNovos === 1 ? 'pedido novo' : 'pedidos novos'}` : 'Minha vitrine · Delivery'}</Text>
+            <Text style={s.servicoSub}>
+              {!vitrine.ativa
+                ? `Venda seus produtos pelo app: ${formatarReais(vitrine.mensalidade)} por mês, sem taxa por pedido.`
+                : `${vitrine.aberta ? 'Aberta' : 'Fechada'} · ${vitrine.produtosAtivos} produtos · ${formatarReais(vitrine.saldo.disponivel)} a receber`}
+            </Text>
+          </View>
+        </Pressable>
       )}
 
       {ativas.map((c) => (
@@ -121,6 +140,8 @@ const s = StyleSheet.create({
   statusTitulo: { fontSize: 16, fontWeight: '700' },
   statusTexto: { fontSize: 14, color: cores.texto },
   modalidade: { fontSize: 13, fontWeight: '800', color: cores.primaria, letterSpacing: 1, marginTop: 6 },
+  vitrine: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: cores.cartao, borderRadius: raio + 2, padding: 16, borderWidth: 1.5, borderColor: cores.primariaMedia },
+  vitrineNova: { backgroundColor: cores.primariaClara, borderColor: cores.primaria },
   servico: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: cores.cartao, borderRadius: raio + 2, padding: 16, ...sombra },
   icone: { width: 52, height: 52, borderRadius: 26, backgroundColor: cores.primariaClara, alignItems: 'center', justifyContent: 'center' },
   servicoTitulo: { fontSize: 18, fontWeight: '700', color: cores.texto },

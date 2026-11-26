@@ -49,7 +49,7 @@ export async function api<T>(papel: Papel | null, caminho: string, init: Request
 }
 
 /** Diminui a foto (máx. 1280 px) e envia ao servidor. */
-export async function enviarFoto(papel: 'cliente' | 'motorista', tipo: 'foto' | 'selfie' | 'cnh', uri: string) {
+export async function enviarFoto(papel: 'cliente' | 'motorista' | 'lojista', tipo: 'foto' | 'selfie' | 'cnh' | 'produto', uri: string) {
   const ctx = ImageManipulator.manipulate(uri);
   ctx.resize({ width: 1280 });
   const img = await (await ctx.renderAsync()).saveAsync({ compress: 0.6, format: SaveFormat.JPEG });
@@ -133,6 +133,8 @@ export type CorridaCliente = Viagem & {
   gorjeta: number | null;
   /** Várias viagens pagas de uma vez. */
   pacote: { id: string; valor: number; viagens: number } | null;
+  /** Entrega de um pedido do delivery (cancelamento só pelo suporte). */
+  pedidoId?: string | null;
 };
 
 export type CorridaMotorista = Viagem & {

@@ -29,7 +29,7 @@ export const CATEGORIAS: { id: CategoriaId; nome: string; icone: string }[] = [
 
 export const LOJAS: CategoriaId[] = ['mercado', 'padaria', 'farmacia', 'gas_bebidas', 'festa'];
 
-export type ServicoId = 'comigo' | 'ir' | 'buscar' | 'encomenda' | 'transporte' | 'borracharia' | 'loja_entrega' | 'loja_cliente';
+export type ServicoId = 'comigo' | 'ir' | 'buscar' | 'encomenda' | 'transporte' | 'borracharia' | 'loja_entrega' | 'loja_cliente' | 'delivery';
 /** Quem pede: o cliente (pessoa) ou o lojista (a loja pede para o cliente dela). */
 export type Publico = 'cliente' | 'lojista';
 
@@ -54,6 +54,8 @@ export type Servico = {
   /** Pode agendar vários dias de uma vez (com ida e volta). */
   variosDias?: boolean;
   aviso?: string;
+  /** Delivery: o cliente compra na vitrine da loja (não é pedido pela tela de serviços). */
+  vitrine?: boolean;
 };
 
 export const SERVICOS: Servico[] = [
@@ -130,6 +132,18 @@ export const SERVICOS: Servico[] = [
     retorno: true,
     aviso: 'Leva e traz você e o pneu. O motorista não ajuda na troca do pneu.',
   },
+  {
+    id: 'delivery',
+    publico: 'cliente',
+    modalidade: 'leva',
+    titulo: 'Delivery das lojas',
+    sub: 'Peça produtos das lojas da cidade e receba em casa',
+    icone: '🛵',
+    clienteNaColeta: false,
+    coleta: { rotulo: 'Loja' },
+    entrega: { casa: true, rotulo: 'Entregar em' },
+    vitrine: true,
+  },
   // ----- lojista: a loja pede o transporte das compras (e do cliente) dela -----
   {
     id: 'loja_entrega',
@@ -192,7 +206,28 @@ export const precoMoto = (km: number, cfg: ConfigMoto & ComComissao) => Math.rou
 export const tarifaMoto = (km: number, cfg: ConfigMoto) => Math.round((cfg.motoMinimo + Math.max(0, km - cfg.motoKmIncluso) * cfg.motoPorKm) * 100) / 100;
 export const aceitaMoto = (servico: ServicoId, cfg: ConfigMoto) => cfg.motoAtivo && cfg.motoServicos.includes(servico);
 
-export type ConfigPreco = ConfigMoto & ComComissao & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin?: number };
+export type ConfigPreco = ConfigMoto & ComComissao & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin?: number; deliveryUrgencia?: boolean };
+
+/**
+ * Delivery das lojas (vitrine): a loja paga só a mensalidade (sem taxa por pedido). O cliente paga
+ * produtos + frete pela MOVI; os produtos são repassados 100% à loja depois da entrega.
+ */
+export type ConfigDelivery = { deliveryMensalidade: number; deliveryUrgencia: boolean; deliveryAceiteMin: number };
+export const DELIVERY_PADRAO: ConfigDelivery = { deliveryMensalidade: 15, deliveryUrgencia: false, deliveryAceiteMin: 10 };
+export const DIAS_MENSALIDADE = 30;
+
+/** Tipo de loja na vitrine (filtro do cliente). */
+export type CategoriaLoja = 'mercado' | 'restaurante' | 'padaria' | 'farmacia' | 'gas_bebidas' | 'festa' | 'outros';
+export const CATEGORIAS_LOJA: { id: CategoriaLoja; nome: string; icone: string }[] = [
+  { id: 'mercado', nome: 'Mercados', icone: '🛒' },
+  { id: 'restaurante', nome: 'Restaurantes e lanches', icone: '🍔' },
+  { id: 'padaria', nome: 'Padarias', icone: '🥖' },
+  { id: 'farmacia', nome: 'Farmácias', icone: '💊' },
+  { id: 'gas_bebidas', nome: 'Gás e bebidas', icone: '🔥' },
+  { id: 'festa', nome: 'Doces e festa', icone: '🎉' },
+  { id: 'outros', nome: 'Outras lojas', icone: '🏪' },
+];
+export const categoriaLoja = (id: unknown) => CATEGORIAS_LOJA.find((c) => c.id === id) ?? CATEGORIAS_LOJA[CATEGORIAS_LOJA.length - 1];
 
 /** Percurso cobrado: do motorista até a coleta (deslocamento) e da coleta até o destino (viagem). */
 export type Percurso = { kmDesloc: number; minDesloc: number; kmViagem: number; minViagem: number };
@@ -203,14 +238,16 @@ export type Percurso = { kmDesloc: number; minDesloc: number; kmViagem: number; 
  * Moto: tabela própria (mínimo + km excedente) sobre os km totais; a urgência do pedido "agora" vale igual.
  */
 export function precoServico(p: Percurso, cfg: ConfigPreco, servico: ServicoId, agendado: boolean, veiculo: Veiculo = 'carro') {
-  if (veiculo === 'moto') return precoFrete(precoMoto(p.kmDesloc + p.kmViagem, cfg), agendado, cfg.urgencia);
+  // Delivery: sem acréscimo de urgência, a não ser que o Admin ligue.
+  const semUrgencia = agendado || (servico === 'delivery' && !cfg.deliveryUrgencia);
+  if (veiculo === 'moto') return precoFrete(precoMoto(p.kmDesloc + p.kmViagem, cfg), semUrgencia, cfg.urgencia);
   const espera = servico === 'borracharia' ? (cfg.esperaBorrachariaMin ?? 20) : 0;
   const t = { kmIda: p.kmDesloc, minIda: p.minDesloc + espera, kmVolta: p.kmViagem, minVolta: p.minViagem };
   const sugerido = precoSugerido(
     cfg.tarifas.map((x) => estimarIdaEVolta(t, x)),
     cfg.margem,
   );
-  return precoFrete(sugerido, agendado, cfg.urgencia);
+  return precoFrete(sugerido, semUrgencia, cfg.urgencia);
 }
 
 /** O que está liberado para os clientes (Admin → Serviços). No lançamento: só mercados. */

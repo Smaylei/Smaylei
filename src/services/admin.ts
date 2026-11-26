@@ -4,6 +4,7 @@ import type { CategoriaId, ServicoId } from '../data/servicos';
 import { Alert } from 'react-native';
 import { api, apagarToken, guardarToken, type Disponibilidade, type Status } from './api';
 import type { Tarifa, Urgencia } from './preco';
+import type { LojaVitrine, Pedido, SaldoLoja } from './delivery';
 
 export type ConfigServidor = {
   aberto: boolean;
@@ -35,6 +36,9 @@ export type ConfigServidor = {
   motoRepassePct: number;
   deslocamentoPadraoKm: number;
   deslocamentoMaxKm: number;
+  deliveryMensalidade: number;
+  deliveryUrgencia: boolean;
+  deliveryAceiteMin: number;
 };
 
 export type Resumo = {
@@ -54,6 +58,10 @@ export type Resumo = {
   notaMedia: number;
   gorjetasHoje: number;
   faturamentoHoje: number;
+  deliveryPedidosAbertos: number;
+  deliveryRetido: number;
+  repassesLojaPendentes: number;
+  repassesLojaPendentesQtd: number;
 };
 
 export type CorridaAdmin = {
@@ -258,3 +266,23 @@ export async function excluirConta(tipo: 'clientes' | 'motoristas' | 'lojistas',
     Alert.alert('Não foi possível excluir', (e as Error).message);
   }
 }
+
+// ---------- delivery das lojas ----------
+export type LojaDeliveryAdmin = LojaVitrine & {
+  status: 'aprovado' | 'bloqueado';
+  ativaAte: string | null;
+  ativa: boolean;
+  pix: string;
+  telefone: string;
+  responsavel: string;
+  saldo: SaldoLoja;
+  pedidos: number;
+  produtosTotal: number;
+};
+export type RepasseLojaAdmin = { id: string; loja_id: string; loja_nome: string; telefone: string | null; valor: number; chave_pix: string; status: 'solicitado' | 'pago' | 'recusado'; criado_em: string; pago_em: string | null; motivo: string | null };
+export type MensalidadeAdmin = { id: string; valor: number; dias: number; origem: 'pagamento' | 'cortesia'; metodo: string | null; pagoEm: string; loja: string };
+export type DeliveryAdmin = { liberado: boolean; lojas: LojaDeliveryAdmin[]; repasses: RepasseLojaAdmin[]; pedidos: Pedido[]; mensalidades: MensalidadeAdmin[] };
+export const delivery = () => api<DeliveryAdmin>('admin', '/v2/admin/delivery');
+export const diasVitrine = (id: string, dias: number) => api<{ ativaAte: string }>('admin', `/v2/admin/lojistas/${id}/delivery-dias`, { method: 'POST', corpo: { dias } });
+export const repasseLoja = (id: string, acao: 'pagar' | 'recusar', motivo?: string) => api('admin', `/v2/admin/repasses-loja/${id}/${acao}`, { method: 'POST', corpo: { motivo } });
+export const cancelarPedido = (id: string) => api('admin', `/v2/admin/pedidos/${id}/cancelar`, { method: 'POST' });

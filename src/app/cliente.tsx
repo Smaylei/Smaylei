@@ -7,17 +7,21 @@ import { cores, raio, sombra } from '../components/tema';
 import { MARCA, MODALIDADES, servicosLiberados } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
 import { api, ROTULO_STATUS, type CorridaCliente } from '../services/api';
+import * as D from '../services/delivery';
 import { formatarReais } from '../services/preco';
 
 export default function Inicio() {
   const { carregado, casa, temConta, config, eu, recarregarEu } = useApp();
   const [ativas, setAtivas] = useState<CorridaCliente[]>([]);
+  const [pedidos, setPedidos] = useState<D.Pedido[]>([]);
+  const comDelivery = config.servicosAtivos.includes('delivery');
 
   useFocusEffect(
     useCallback(() => {
       if (!temConta) return;
       const carregar = () => {
         api<CorridaCliente[]>('cliente', '/v2/corridas/ativas').then(setAtivas).catch(() => {});
+        if (comDelivery) D.pedidosAtivos().then(setPedidos).catch(() => {});
       };
       const t0 = setTimeout(carregar, 0);
       const t = setInterval(carregar, 10_000);
@@ -25,7 +29,7 @@ export default function Inicio() {
         clearTimeout(t0);
         clearInterval(t);
       };
-    }, [temConta]),
+    }, [temConta, comDelivery]),
   );
 
   if (!carregado) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
@@ -38,6 +42,24 @@ export default function Inicio() {
       <Text style={s.slogan}>{MARCA.slogan}</Text>
       <Text style={s.ola}>Olá{casa.nome ? `, ${casa.nome.split(' ')[0]}` : ''}!</Text>
       <Text style={s.sub}>Do que você precisa hoje?</Text>
+
+      {/* Pedidos do delivery antes da entrega começar (depois, o card da entrega mostra tudo). */}
+      {pedidos
+        .filter((p) => p.status === 'aguardando_loja' || p.status === 'cancelado' || (p.status === 'aceito' && p.corridaStatus === 'buscando'))
+        .map((p) => (
+          <Pressable
+            key={p.id}
+            style={[s.status, p.status === 'cancelado' ? s.statusCancelado : s.statusOk]}
+            onPress={() => router.push(`/meu-pedido/${p.id}`)}
+          >
+            <Text style={[s.statusTitulo, { color: p.status === 'cancelado' ? cores.erro : cores.primaria }]}>🛵 {D.etapaPedido(p)}</Text>
+            <Text style={s.statusTexto}>
+              Pedido #{p.codigo} · {p.loja.nome} · {formatarReais(p.total)}
+            </Text>
+            {p.status === 'cancelado' && p.reembolso > 0 && <Text style={s.statusTexto}>{formatarReais(p.reembolso)} serão devolvidos para você.</Text>}
+            <Text style={s.verMais}>Ver pedido ›</Text>
+          </Pressable>
+        ))}
 
       {ativas
         .filter((c) => !(c.status === 'entregue' && c.avaliacao != null))
@@ -84,7 +106,7 @@ export default function Inicio() {
                 <Pressable
                   key={sv.id}
                   style={[s.servico, destaque && s.servicoPrincipal, lista.length === 1 && { width: '100%' }]}
-                  onPress={() => router.push({ pathname: '/pedido', params: { servico: sv.id } })}
+                  onPress={() => (sv.vitrine ? router.push('/delivery') : router.push({ pathname: '/pedido', params: { servico: sv.id } }))}
                   accessibilityRole="button"
                 >
                   <View style={[s.icone, destaque && { backgroundColor: 'rgba(255,255,255,0.18)' }]}>

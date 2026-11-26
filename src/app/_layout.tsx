@@ -61,9 +61,16 @@ export default function Layout() {
               <Stack.Screen name="chat/[id]" options={{ title: 'Chat' }} />
               <Stack.Screen name="pagamento" options={{ title: 'Pagamento' }} />
               <Stack.Screen name="checkout/[id]" options={{ title: 'Pagamento seguro' }} />
+              <Stack.Screen name="delivery" options={{ title: 'Delivery' }} />
+              <Stack.Screen name="loja/[id]" options={{ title: 'Loja' }} />
+              <Stack.Screen name="carrinho" options={{ title: 'Carrinho' }} />
+              <Stack.Screen name="meu-pedido/[id]" options={{ title: 'Pedido' }} />
               {/* lojista */}
               <Stack.Screen name="lojista" options={{ title: 'MOVI Lojista' }} />
               <Stack.Screen name="cadastro-lojista" options={{ title: 'Cadastro de lojista' }} />
+              <Stack.Screen name="vitrine" options={{ title: 'Minha vitrine' }} />
+              <Stack.Screen name="produto-loja" options={{ title: 'Produto' }} />
+              <Stack.Screen name="pedidos-loja" options={{ title: 'Pedidos do delivery' }} />
               {/* motorista */}
               <Stack.Screen name="motorista" options={{ title: 'MOVI Motorista' }} />
               <Stack.Screen name="cadastro-motorista" options={{ title: 'Cadastro de motorista' }} />
@@ -82,7 +89,8 @@ export default function Layout() {
               <Stack.Screen name="locais-admin" options={{ title: 'Locais' }} />
               <Stack.Screen name="servicos-admin" options={{ title: 'Serviços e cidades' }} />
               <Stack.Screen name="lojistas-admin" options={{ title: 'Lojistas' }} />
-            <Stack.Screen name="mapa-admin" options={{ title: 'Mapa ao vivo' }} />
+              <Stack.Screen name="mapa-admin" options={{ title: 'Mapa ao vivo' }} />
+              <Stack.Screen name="delivery-admin" options={{ title: 'Delivery das lojas' }} />
               <Stack.Screen name="ajustes" options={{ title: 'Ajustes' }} />
               <Stack.Screen name="tarifas" options={{ title: 'Tarifas' }} />
             </Stack>

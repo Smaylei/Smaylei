@@ -6,7 +6,7 @@ import { ActivityIndicator, Alert, Linking, Pressable, RefreshControl, ScrollVie
 import { cores, raio, sombra } from '../components/tema';
 import { useAgenda, type EventoAgenda } from '../hooks/useAgendaCelular';
 import { Marca } from '../components/Marca';
-import { servicoPorId } from '../data/servicos';
+import { servicoPorId, SERVICOS } from '../data/servicos';
 import * as Admin from '../services/admin';
 import { ErroApi, ROTULO_STATUS } from '../services/api';
 import { formatarReais } from '../services/preco';
@@ -166,12 +166,22 @@ export default function Painel() {
       </View>
       <View style={s.atalhos}>
         <Pressable style={s.atalho} onPress={() => router.push('/servicos-admin')}>
-          <Text style={s.atalhoTexto}>🚦 Serviços e cidades{res.config?.servicosAtivos ? ` · ${res.config.servicosAtivos.length} de 6` : ''}</Text>
+          <Text style={s.atalhoTexto}>🚦 Serviços e cidades{res.config?.servicosAtivos ? ` · ${res.config.servicosAtivos.length} de ${SERVICOS.length}` : ''}</Text>
         </Pressable>
         <Pressable style={s.atalho} onPress={() => router.push('/locais-admin')}>
           <Text style={s.atalhoTexto}>🏪 Locais</Text>
         </Pressable>
       </View>
+      <Pressable
+        style={[s.atalho, { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' }, (res.repassesLojaPendentesQtd ?? 0) > 0 && s.atalhoAlerta]}
+        onPress={() => router.push('/delivery-admin')}
+      >
+        <Text style={s.atalhoTexto}>
+          🛵 Delivery das lojas{res.config?.servicosAtivos?.includes('delivery') ? '' : ' · desligado'}
+          {res.deliveryPedidosAbertos ? ` · ${res.deliveryPedidosAbertos} pedido(s) em aberto` : ''}
+          {res.repassesLojaPendentesQtd ? ` · ${res.repassesLojaPendentesQtd} repasse(s) a pagar (${formatarReais(res.repassesLojaPendentes)})` : ''}
+        </Text>
+      </Pressable>
       <Pressable style={[s.atalho, { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' }, res.avaliacoesNaoLidas > 0 && s.atalhoAlerta]} onPress={() => router.push('/avaliacoes-admin')}>
         <Text style={s.atalhoTexto}>
           ⭐ Avaliações e sugestões{res.notaMedia ? ` · média ${res.notaMedia.toFixed(1).replace('.', ',')}` : ''}

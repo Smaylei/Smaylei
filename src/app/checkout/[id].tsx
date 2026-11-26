@@ -4,6 +4,7 @@ import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'r
 import WebView, { type WebViewNavigation } from 'react-native-webview';
 import { cores } from '../../components/tema';
 import { API, api, type CorridaCliente, type Gorjeta } from '../../services/api';
+import * as D from '../../services/delivery';
 import { SOLICITANTE } from '../../variante';
 import { formatarReais } from '../../services/preco';
 
@@ -16,6 +17,8 @@ type Cobranca = { titulo: string; valor: number; checkoutUrl: string | null; pen
 export default function Checkout() {
   const { id, tipo, corrida } = useLocalSearchParams<{ id: string; tipo?: string; corrida?: string }>();
   const ehGorjeta = tipo === 'gorjeta';
+  const ehPedido = tipo === 'pedido';
+  const ehMensalidade = tipo === 'mensalidade';
   const [c, setC] = useState<Cobranca | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregandoPagina, setCarregandoPagina] = useState(true);
@@ -25,7 +28,13 @@ export default function Checkout() {
   const conferir = useCallback(async () => {
     try {
       let atual: Cobranca;
-      if (ehGorjeta) {
+      if (ehPedido) {
+        const p = await D.pedido(id);
+        atual = { titulo: `Pedido #${p.codigo} · ${p.loja.nome}`, valor: p.total, checkoutUrl: p.checkoutUrl, pendente: p.status === 'pagamento_pendente' };
+      } else if (ehMensalidade) {
+        const m = await D.mensalidade(id);
+        atual = { titulo: 'Vitrine MOVI Delivery · 30 dias', valor: m.valor, checkoutUrl: m.status === 'pendente' ? m.checkoutUrl : null, pendente: m.status === 'pendente' };
+      } else if (ehGorjeta) {
         const g = await api<Gorjeta>(SOLICITANTE, `/v2/gorjetas/${id}`);
         atual = { titulo: 'Gorjeta para o motorista', valor: g.valor, checkoutUrl: g.status === 'pendente' ? g.checkoutUrl : null, pendente: g.status === 'pendente' };
       } else {
@@ -40,13 +49,14 @@ export default function Checkout() {
       setC(atual);
       if (!atual.pendente && !saiu.current) {
         saiu.current = true;
-        if (ehGorjeta) router.back();
+        if (ehGorjeta || ehMensalidade) router.back();
+        else if (ehPedido) router.replace(`/meu-pedido/${id}`);
         else router.replace(`/corrida/${id}`);
       }
     } catch (e) {
       setErro((e as Error).message);
     }
-  }, [id, ehGorjeta]);
+  }, [id, ehGorjeta, ehPedido, ehMensalidade]);
 
   useFocusEffect(
     useCallback(() => {
@@ -90,7 +100,11 @@ export default function Checkout() {
           <Text style={s.topoSub}>
             {ehGorjeta
               ? 'Pix ou cartão à vista, pela InfinitePay. 100% vai para o motorista.'
-              : 'Pix ou cartão à vista, pela InfinitePay. O valor fica retido e só é liberado ao motorista quando você confirmar.'}
+              : ehMensalidade
+                ? 'Pix ou cartão à vista, pela InfinitePay. Sem taxa por pedido: as vendas são 100% da loja.'
+                : ehPedido
+                  ? 'Pix ou cartão à vista, pela InfinitePay. O valor fica retido até a entrega; se a loja não aceitar, é devolvido.'
+                  : 'Pix ou cartão à vista, pela InfinitePay. O valor fica retido e só é liberado ao motorista quando você confirmar.'}
           </Text>
         </View>
       </View>
@@ -120,16 +134,20 @@ export default function Checkout() {
       <Pressable
         style={s.cancelar}
         onPress={() =>
-          ehGorjeta
+          ehGorjeta || ehMensalidade
             ? router.canGoBack()
               ? router.back()
               : router.replace(corrida ? `/corrida/${corrida}` : '/')
-            : api(SOLICITANTE, `/v2/corridas/${id}/cancelar`, { method: 'POST' })
-                .catch(() => {})
-                .finally(() => router.replace('/'))
+            : ehPedido
+              ? D.cancelarPedido(id)
+                  .catch(() => {})
+                  .finally(() => router.replace('/delivery'))
+              : api(SOLICITANTE, `/v2/corridas/${id}/cancelar`, { method: 'POST' })
+                  .catch(() => {})
+                  .finally(() => router.replace('/'))
         }
       >
-        <Text style={[s.cancelarTexto, ehGorjeta && { color: cores.suave }]}>{ehGorjeta ? 'Agora não' : 'Desistir do pedido'}</Text>
+        <Text style={[s.cancelarTexto, (ehGorjeta || ehMensalidade) && { color: cores.suave }]}>{ehGorjeta || ehMensalidade ? 'Agora não' : 'Desistir do pedido'}</Text>
       </Pressable>
     </View>
   );
