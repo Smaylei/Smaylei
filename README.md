@@ -11,6 +11,32 @@ Três apps no mesmo projeto: **MOVI** (cliente), **MOVI Motorista** (parceiro) e
 | **MOVI GO** · levamos você | Quero ir ao mercado · Carro na oficina (vários dias, ida e volta) · Borracharia (leva e traz) |
 | **MOVI LEVA** · buscamos e entregamos | Só buscar minhas compras · Buscar uma encomenda (doces de festa, pedidos prontos…) |
 
+### Um app só + Admin no navegador
+
+- **App MOVI** (Android/iOS): ao abrir, a pessoa escolhe **Cliente**, **Motorista** ou **Lojista**; o perfil
+  fica salvo e o botão **Início** (no topo) volta à escolha — útil para quem tem mais de uma conta. Cada
+  perfil tem a sua cor (verde, azul, laranja) no tema escuro da marca.
+- **Lojista**: a loja se cadastra (nome, CNPJ, responsável, endereço), o Admin aprova e ela chama
+  motoristas para *Entregar compras* (MOVI LEVA) ou *Levar cliente e compras* (MOVI COMBO).
+- **Admin** (só no computador): https://movi-admin.mercado-frete-pagamentos.workers.dev — senha ADMIN_TOKEN.
+  Publicar de novo: `APP_VARIANT=admin npx expo export --clear --platform web --output-dir dist-admin &&
+  node admin-web/gerar.mjs && npx wrangler deploy --config admin-web/wrangler.jsonc`.
+
+### Mapas sem Google (OpenStreetMap)
+
+| Parte | Serviço | Custo |
+|---|---|---|
+| Mapa na tela | MapLibre GL + tiles do **OpenFreeMap** (estilo escuro) | grátis, sem chave |
+| Rota, km e tempo (preço e chegada) | **OSRM** no servidor, com cache de 30 dias | servidor público = só para teste |
+| Endereço → coordenada | geocodificador do celular + Nominatim (OSM) | grátis, uso moderado |
+
+Para produção, troque `OSRM_URL` em `server/src/rotas.ts` por um OSRM/Valhalla próprio (VPS de ~US$ 5–10/mês
+com o mapa de SC) ou um provedor pago (Stadia, OpenRouteService). Sem resposta do OSRM, o servidor usa o mapa
+de Guaramirim embutido ou a linha reta × 1,35.
+
+**Cidades (para teste):** Guaramirim, Jaraguá do Sul, Schroeder, Massaranduba e Joinville — 33 mercados da
+região já cadastrados (OpenStreetMap). Admin → *Serviços e cidades* liga/desliga cada cidade.
+
 **Lançamento: só mercados.** Os demais serviços e as categorias (padarias, farmácias, gás e bebidas, doces
 e festa, mecânicos, borracharias) já estão prontos e ficam desligados até o Admin liberar em
 *Serviços liberados*. O servidor recusa pedidos de serviços/categorias desligados.
