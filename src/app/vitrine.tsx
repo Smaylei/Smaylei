@@ -3,11 +3,13 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import EscolherFoto from '../components/EscolherFoto';
 import { cores, raio } from '../components/tema';
+import TrocarChavePix from '../components/TrocarChavePix';
 import { CATEGORIAS_LOJA, type CategoriaLoja } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
 import { irParaPagamento } from '../services/pagamento';
 import { enviarFoto, ErroApi } from '../services/api';
 import * as D from '../services/delivery';
+import { mostrarChavePix, nomeTipoChave } from '../services/pix';
 import { formatarReais } from '../services/preco';
 
 const data = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -19,7 +21,8 @@ export default function Vitrine() {
   const { config } = useApp();
   const [v, setV] = useState<D.MinhaVitrine | null>(null);
   const [produtos, setProdutos] = useState<D.Produto[]>([]);
-  const [form, setForm] = useState({ descricao: '', categoria: 'mercado' as CategoriaLoja, minimo: '', preparo: '', pix: '' });
+  const [form, setForm] = useState({ descricao: '', categoria: 'mercado' as CategoriaLoja, minimo: '', preparo: '' });
+  const [trocandoPix, setTrocandoPix] = useState(false);
   const [logo, setLogo] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -31,7 +34,7 @@ export default function Vitrine() {
       setV(x);
       setAgora(Date.now());
       setProdutos(ps);
-      setForm({ descricao: x.descricao, categoria: x.categoria, minimo: x.pedidoMinimo ? br(x.pedidoMinimo) : '', preparo: String(x.preparoMin), pix: x.pix ?? '' });
+      setForm({ descricao: x.descricao, categoria: x.categoria, minimo: x.pedidoMinimo ? br(x.pedidoMinimo) : '', preparo: String(x.preparoMin) });
       setErro(null);
     } catch (e) {
       setErro((e as Error).message);
@@ -69,7 +72,7 @@ export default function Vitrine() {
         await enviarFoto('lojista', 'foto', logo);
         setLogo(null);
       }
-      await D.salvarVitrine({ descricao: form.descricao, categoria: form.categoria, pedidoMinimo: numero(form.minimo || '0'), preparoMin: numero(form.preparo), pix: form.pix });
+      await D.salvarVitrine({ descricao: form.descricao, categoria: form.categoria, pedidoMinimo: numero(form.minimo || '0'), preparoMin: numero(form.preparo) });
       await carregar();
       Alert.alert('Vitrine', 'Dados salvos.');
     } catch (e) {
@@ -98,12 +101,18 @@ export default function Vitrine() {
       </View>
 
       {config.gateway === 'pagarme' && (
-        <Pressable style={s.linhaSwitch} onPress={() => router.push('/conta-recebimento')}>
+        <Pressable style={[s.linhaSwitch, !v.recebedor?.ativo && { borderColor: cores.alerta }]} onPress={() => router.push('/conta-recebimento')}>
           <View style={{ flex: 1 }}>
-            <Text style={s.item}>🏦 Conta para receber</Text>
-            <Text style={s.sub}>Cadastre a conta da loja: as vendas do delivery caem direto nela (Pagar.me).</Text>
+            <Text style={s.item}>{v.recebedor?.ativo ? '✅ Conta para receber ativa' : '🏦 Conta para receber'}</Text>
+            <Text style={s.sub}>
+              {v.recebedor?.ativo
+                ? 'As vendas do delivery caem direto na conta da loja (Pagar.me).'
+                : v.recebedor?.temConta
+                  ? 'Falta a prova de vida da Pagar.me para começar a receber direto.'
+                  : 'Cadastre a conta da loja (leva 3 minutos): as vendas caem direto nela. Até lá, a MOVI repassa por Pix.'}
+            </Text>
           </View>
-          <Text style={s.link}>Abrir</Text>
+          <Text style={s.link}>{v.recebedor?.ativo ? 'Ver' : 'Abrir'}</Text>
         </Pressable>
       )}
 
@@ -151,8 +160,25 @@ export default function Vitrine() {
             <TextInput style={s.input} value={form.preparo} onChangeText={(t) => setForm({ ...form, preparo: t })} keyboardType="number-pad" maxLength={3} />
           </View>
         </View>
-        <Text style={s.rotulo}>Chave Pix para receber as vendas</Text>
-        <TextInput style={s.input} value={form.pix} onChangeText={(t) => setForm({ ...form, pix: t })} placeholder="CNPJ, e-mail, celular ou chave aleatória" placeholderTextColor={cores.apagado} autoCapitalize="none" />
+        <Text style={s.rotulo}>Chave Pix para receber os repasses</Text>
+        <View style={[s.input, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+          <Text style={{ flex: 1, color: cores.texto, fontSize: 15 }} numberOfLines={1}>
+            {nomeTipoChave(v.pixTipo)} {mostrarChavePix(v.pix)}
+          </Text>
+          <Pressable onPress={() => setTrocandoPix(true)} hitSlop={8}>
+            <Text style={s.link}>Trocar</Text>
+          </Pressable>
+        </View>
+        <TrocarChavePix
+          visivel={trocandoPix}
+          papel="lojista"
+          aoFechar={() => setTrocandoPix(false)}
+          aoSalvar={(r) => {
+            setTrocandoPix(false);
+            setV({ ...v, pix: r.pix, pixTipo: r.pixTipo });
+            Alert.alert('Chave Pix', 'Pronto! Os próximos repasses vão para a nova chave.');
+          }}
+        />
         <Pressable style={[s.botao, salvando && { opacity: 0.5 }]} disabled={salvando} onPress={salvar}>
           {salvando ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Salvar dados</Text>}
         </Pressable>

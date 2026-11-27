@@ -8,6 +8,7 @@ import { api, ErroApi, type CorridaCliente, type Gorjeta } from '../services/api
 import * as D from '../services/delivery';
 import * as P from '../services/pagamento';
 import { formatarReais } from '../services/preco';
+import { comTaxa } from '../services/taxas';
 import { SOLICITANTE } from '../variante';
 
 type Resumo = { titulo: string; valor: number; pendente: boolean; prazo: string | null };
@@ -121,6 +122,10 @@ export default function Pagar() {
 
   if (!r) return msg ? <Text style={[s.erro, { padding: 20 }]}>{msg}</Text> : <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   const pixPronto = cob?.metodo === 'pix' && cob.status === 'pendente';
+  // Taxa do meio de pagamento por cima do valor: o cliente paga, quem trabalha recebe o valor combinado.
+  const jaGerada = cob?.metodo === metodo && cob.status === 'pendente' && cob.taxa !== undefined;
+  const conta = jaGerada ? { total: cob!.valor, taxa: cob!.taxa ?? 0 } : comTaxa(r.valor, config.taxasPagamento?.[metodo] ?? { pct: 0, fixo: 0 });
+  const nomeTaxa = metodo === 'pix' ? 'Taxa do Pix' : 'Taxa do cartão';
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -128,7 +133,12 @@ export default function Pagar() {
         <Stack.Screen options={{ title: 'Pagamento' }} />
         <View style={s.topo}>
           <Text style={s.titulo}>{r.titulo}</Text>
-          <Text style={s.valor}>{formatarReais(r.valor)}</Text>
+          <Text style={s.valor}>{formatarReais(conta.total)}</Text>
+          {conta.taxa > 0 && (
+            <Text style={s.composicao}>
+              {formatarReais(r.valor)} + {nomeTaxa.toLowerCase()} {formatarReais(conta.taxa)}
+            </Text>
+          )}
           {r.prazo && <Text style={s.prazo}>Pague até {new Date(r.prazo).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</Text>}
         </View>
 
@@ -155,7 +165,7 @@ export default function Pagar() {
             </View>
           ) : (
             <Pressable style={[s.botao, ocupado && { opacity: 0.5 }]} disabled={ocupado} onPress={gerarPix}>
-              {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Gerar Pix de {formatarReais(r.valor)}</Text>}
+              {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Gerar Pix de {formatarReais(conta.total)}</Text>}
             </Pressable>
           ))}
 
@@ -178,13 +188,30 @@ export default function Pagar() {
             <Text style={s.rotulo}>CEP de cobrança</Text>
             <TextInput style={s.input} value={cartao.cep} onChangeText={(t) => setCartao({ ...cartao, cep: t })} keyboardType="number-pad" placeholder="89270-000" placeholderTextColor={cores.apagado} maxLength={9} autoComplete="postal-code" />
             <Pressable style={[s.botao, ocupado && { opacity: 0.5 }]} disabled={ocupado} onPress={pagarCartao}>
-              {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Pagar {formatarReais(r.valor)} à vista</Text>}
+              {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Pagar {formatarReais(conta.total)} à vista</Text>}
             </Pressable>
             <Text style={s.suave}>Os dados do cartão vão direto para a Pagar.me; a MOVI não guarda o número do seu cartão. Sem parcelamento.</Text>
           </View>
         )}
 
         {msg && <Text style={s.erro}>{msg}</Text>}
+        {conta.taxa > 0 && (
+          <View style={s.detalhe}>
+            <View style={s.linha}>
+              <Text style={s.suave}>{tipo === 'corrida' ? 'Frete' : tipo === 'pedido' ? 'Pedido (produtos + entrega)' : tipo === 'gorjeta' ? 'Gorjeta' : 'Valor'}</Text>
+              <Text style={s.suave}>{formatarReais(r.valor)}</Text>
+            </View>
+            <View style={s.linha}>
+              <Text style={s.suave}>{nomeTaxa}</Text>
+              <Text style={s.suave}>{formatarReais(conta.taxa)}</Text>
+            </View>
+            <View style={s.linha}>
+              <Text style={[s.suave, { color: cores.texto, fontWeight: '800' }]}>Total</Text>
+              <Text style={[s.suave, { color: cores.texto, fontWeight: '800' }]}>{formatarReais(conta.total)}</Text>
+            </View>
+            <Text style={s.suave}>A taxa é da operadora do pagamento. Assim, {tipo === 'pedido' ? 'a loja e o entregador recebem' : tipo === 'mensalidade' ? 'a MOVI recebe' : 'o motorista recebe'} o valor combinado, sem desconto.</Text>
+          </View>
+        )}
         <Text style={s.info}>
           🔒 Pagamento processado pela Pagar.me (Stone).{' '}
           {tipo === 'pedido' ? 'Se a loja não aceitar, o valor volta automaticamente.' : tipo === 'corrida' ? 'Se a corrida for cancelada antes da chegada, o valor volta automaticamente.' : ''}
@@ -200,6 +227,9 @@ const s = StyleSheet.create({
   titulo: { fontSize: 15, color: cores.texto, fontWeight: '600', textAlign: 'center' },
   valor: { fontSize: 32, fontWeight: '800', color: cores.texto },
   prazo: { fontSize: 13, color: cores.alerta, fontWeight: '700' },
+  composicao: { fontSize: 13, color: cores.suave },
+  detalhe: { backgroundColor: cores.cartao, borderRadius: raio, padding: 14, gap: 6, borderWidth: 1, borderColor: cores.borda },
+  linha: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
   abas: { flexDirection: 'row', gap: 8 },
   aba: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: cores.borda, backgroundColor: cores.cartao },
   abaAtiva: { backgroundColor: cores.primaria, borderColor: cores.primaria },

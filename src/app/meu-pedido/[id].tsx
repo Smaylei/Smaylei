@@ -121,9 +121,15 @@ export default function MeuPedido() {
           <Text style={s.suave}>Entrega MOVI ({p.veiculo === 'moto' ? 'moto' : 'carro'})</Text>
           <Text style={s.suave}>{formatarReais(p.frete)}</Text>
         </View>
+        {p.taxaPagamento > 0 && (
+          <View style={s.linha}>
+            <Text style={s.suave}>Taxa do {p.metodo === 'pix' ? 'Pix' : 'cartão'}</Text>
+            <Text style={s.suave}>{formatarReais(p.taxaPagamento)}</Text>
+          </View>
+        )}
         <View style={s.linha}>
           <Text style={[s.texto, { fontWeight: '800' }]}>Total</Text>
-          <Text style={[s.texto, { fontWeight: '800' }]}>{formatarReais(p.total)}</Text>
+          <Text style={[s.texto, { fontWeight: '800' }]}>{formatarReais(p.total + (p.taxaPagamento || 0))}</Text>
         </View>
         {!!p.observacao && <Text style={s.suave}>Obs.: {p.observacao}</Text>}
         {p.pagoEm && <Text style={s.suave}>Pago por {p.metodo === 'pix' ? 'Pix' : 'cartão'} · valor retido até a entrega</Text>}

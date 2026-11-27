@@ -3,13 +3,13 @@ import { useCallback, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { cores, raio, sombra } from '../components/tema';
 import * as Admin from '../services/admin';
-import { formatarCpf } from '../services/cpf';
 import { formatarReais } from '../services/preco';
+import { mostrarChavePix } from '../services/pix';
 
 const data = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
 
 /**
- * Ordens de saque dos motoristas. Você faz o Pix pelo app da InfinitePay (chave = CPF do motorista)
+ * Ordens de saque dos motoristas. Você faz o Pix pelo app da InfinitePay (na chave Pix que o motorista escolheu; padrão CPF)
  * e marca a ordem como paga aqui; o motorista vê o status no app dele.
  */
 export default function SaquesAdmin() {
@@ -45,7 +45,7 @@ export default function SaquesAdmin() {
   return (
     <ScrollView contentContainerStyle={s.conteudo} refreshControl={<RefreshControl refreshing={false} onRefresh={carregar} />}>
       <Text style={s.ajuda}>
-        Para pagar: abra o app da InfinitePay → Pix → Pagar com chave → CPF do motorista → valor. Depois toque em “Marcar como pago”.
+        Para pagar: abra o app da InfinitePay → Pix → Pagar com chave → a chave mostrada abaixo → valor. Depois toque em “Marcar como pago”.
       </Text>
       <Text style={s.secao}>A pagar ({pendentes.length})</Text>
       {pendentes.length === 0 && <Text style={s.vazio}>Nenhum saque pendente.</Text>}
@@ -57,7 +57,7 @@ export default function SaquesAdmin() {
           </View>
           <Text style={s.detalhe}>Pedido em {data(q.criado_em)}</Text>
           <Text style={s.pix} selectable>
-            Pix (CPF): {formatarCpf(q.chave_pix)}
+            Pix: {mostrarChavePix(q.chave_pix)}
           </Text>
           <View style={s.botoes}>
             <Mini texto="Copiar chave" onPress={() => Share.share({ message: q.chave_pix })} />

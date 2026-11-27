@@ -120,6 +120,9 @@ export default function Ajustes() {
       <Pressable style={s.cartao} onPress={() => router.push('/tarifas')}>
         <Text style={s.item}>Tarifas Uber/99, margem e urgência ›</Text>
       </Pressable>
+      <Pressable style={s.cartao} onPress={() => router.push({ pathname: '/servicos-admin', params: { secao: 'moto' } })}>
+        <Text style={s.item}>🏍️ Tabela do motoboy (moto) ›</Text>
+      </Pressable>
 
       <Text style={s.secao}>Agenda do celular</Text>
       <View style={s.cartao}>

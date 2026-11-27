@@ -5,6 +5,7 @@ import { cores, raio } from '../components/tema';
 import { ErroApi } from '../services/api';
 import * as D from '../services/delivery';
 import { formatarReais } from '../services/preco';
+import { mostrarChavePix } from '../services/pix';
 
 const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 const MOTIVOS = ['Acabou um produto', 'Loja fechando', 'Muito movimento agora'];
@@ -143,7 +144,7 @@ export default function PedidosLoja() {
             <Text style={s.suave}>
               {vendas.proximoRepasseEm
                 ? `Próximo repasse a partir de ${new Date(vendas.proximoRepasseEm).toLocaleDateString('pt-BR')}.`
-                : `1 repasse a cada ${vendas.intervaloDias} dias, na chave Pix ${vendas.chavePix}.`}{' '}
+                : `1 repasse a cada ${vendas.intervaloDias} dias, na chave Pix ${mostrarChavePix(vendas.chavePix)} (troque em Minha vitrine).`}{' '}
               As vendas entram aqui quando o cliente recebe o pedido.
             </Text>
             {vendas.repasses.length > 0 && <Text style={s.secao}>Repasses</Text>}

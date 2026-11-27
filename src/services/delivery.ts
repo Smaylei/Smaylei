@@ -48,6 +48,8 @@ export type Pedido = {
   liberadoEm: string | null;
   reembolso: number;
   reembolsadoEm: string | null;
+  /** Taxa do Pix/cartão paga por cima do total (Pagar.me). */
+  taxaPagamento: number;
   aceiteAte: string | null;
   corridaId: string | null;
   corridaStatus: string | null;
@@ -67,6 +69,7 @@ export type MinhaVitrine = {
   pedidoMinimo: number;
   preparoMin: number;
   pix: string;
+  pixTipo?: string;
   temFoto: boolean;
   fotoV: string | null;
   aceiteMin: number;
@@ -75,10 +78,12 @@ export type MinhaVitrine = {
   pedidosNovos: number;
   pedidosAndamento: number;
   saldo: SaldoLoja;
+  /** Conta de recebimento na Pagar.me (as vendas caem direto nela quando ativa). */
+  recebedor?: { temConta: boolean; status: string | null; ativo: boolean };
 };
 export type SaldoLoja = { disponivel: number; emAndamento: number; totalVendido: number; recebidoDireto?: number; proximoRepasseEm: string | null };
 export type Repasse = { id: string; valor: number; status: 'solicitado' | 'pago' | 'recusado'; chavePix: string; criadoEm: string; pagoEm: string | null; motivo: string | null };
-export type Vendas = SaldoLoja & { chavePix: string; intervaloDias: number; vendas: { id: string; codigo: string; subtotal: number; liberadoEm: string }[]; repasses: Repasse[] };
+export type Vendas = SaldoLoja & { chavePix: string; pixTipo?: string; intervaloDias: number; vendas: { id: string; codigo: string; subtotal: number; liberadoEm: string }[]; repasses: Repasse[] };
 
 export const fotoLoja = (l: { id: string; fotoV: string | null }) => `${API}/v2/lojas/${l.id}/foto?v=${l.fotoV ?? ''}`;
 export const fotoProduto = (p: { id: string; fotoV: string | null }) => `${API}/v2/produtos/${p.id}/foto?v=${p.fotoV ?? ''}`;
@@ -96,7 +101,7 @@ export const cancelarPedido = (id: string) => api<Pedido>('cliente', `/v2/pedido
 
 // lojista
 export const minhaVitrine = () => api<MinhaVitrine>('lojista', '/v2/loja');
-export const salvarVitrine = (c: Partial<Pick<MinhaVitrine, 'descricao' | 'categoria' | 'pedidoMinimo' | 'preparoMin' | 'pix' | 'aberta'>>) => api('lojista', '/v2/loja', { method: 'PUT', corpo: c });
+export const salvarVitrine = (c: Partial<Pick<MinhaVitrine, 'descricao' | 'categoria' | 'pedidoMinimo' | 'preparoMin' | 'aberta'>>) => api('lojista', '/v2/loja', { method: 'PUT', corpo: c });
 export const pagarMensalidade = () => api<{ id: string; valor: number; checkoutUrl: string }>('lojista', '/v2/loja/mensalidade', { method: 'POST' });
 export const mensalidade = (id: string) => api<{ id: string; valor: number; status: string; checkoutUrl: string | null }>('lojista', `/v2/loja/mensalidades/${id}`);
 export const meusProdutos = () => api<Produto[]>('lojista', '/v2/loja/produtos');

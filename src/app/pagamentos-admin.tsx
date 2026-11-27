@@ -4,6 +4,9 @@ import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleS
 import { cores, raio } from '../components/tema';
 import * as Admin from '../services/admin';
 import { formatarReais } from '../services/preco';
+import { comTaxa } from '../services/taxas';
+
+const num = (t: string) => Number(String(t).replace(',', '.')) || 0;
 
 const SITUACAO: Record<string, string> = {
   active: 'Ativa', registration: 'Falta a prova de vida', affiliation: 'Em análise', refused: 'Recusada', suspended: 'Suspensa', blocked: 'Bloqueada', inactive: 'Inativa',
@@ -14,7 +17,7 @@ export default function PagamentosAdmin() {
   const { width } = useWindowDimensions();
   const largo = width >= 900;
   const [d, setD] = useState<Admin.PagamentosAdmin | null>(null);
-  const [f, setF] = useState({ recebedor: '', chave: '', prazo: '3' });
+  const [f, setF] = useState({ recebedor: '', chave: '', prazo: '3', pixPct: '0', pixFixo: '0', cartaoPct: '0', cartaoFixo: '0' });
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -22,7 +25,11 @@ export default function PagamentosAdmin() {
     try {
       const x = await Admin.pagamentos();
       setD(x);
-      setF({ recebedor: x.recebedorMovi, chave: x.chavePublica, prazo: String(x.pagarAoAceitarMin) });
+      const t = (v: number) => String(v ?? 0).replace('.', ',');
+      setF({
+        recebedor: x.recebedorMovi, chave: x.chavePublica, prazo: String(x.pagarAoAceitarMin),
+        pixPct: t(x.taxaPixPct), pixFixo: t(x.taxaPixFixo), cartaoPct: t(x.taxaCartaoPct), cartaoFixo: t(x.taxaCartaoFixo),
+      });
       setErro(null);
     } catch (e) {
       setErro((e as Error).message);
@@ -40,7 +47,11 @@ export default function PagamentosAdmin() {
   async function salvar(gateway?: 'infinitepay' | 'pagarme') {
     setSalvando(true);
     try {
-      await Admin.salvarConfig({ pagarmeRecebedorMovi: f.recebedor.trim(), pagarmeChavePublica: f.chave.trim(), pagarAoAceitarMin: Math.round(Number(f.prazo)), ...(gateway ? { gateway } : {}) });
+      await Admin.salvarConfig({
+        pagarmeRecebedorMovi: f.recebedor.trim(), pagarmeChavePublica: f.chave.trim(), pagarAoAceitarMin: Math.round(Number(f.prazo)),
+        taxaPixPct: num(f.pixPct), taxaPixFixo: num(f.pixFixo), taxaCartaoPct: num(f.cartaoPct), taxaCartaoFixo: num(f.cartaoFixo),
+        ...(gateway ? { gateway } : {}),
+      });
       await carregar();
       if (gateway) Alert.alert('Pagamentos', gateway === 'pagarme' ? 'Pagar.me ligada: os próximos pagamentos já usam Pix e cartão dentro do app.' : 'Voltamos para a InfinitePay.');
     } catch (e) {
@@ -58,6 +69,16 @@ export default function PagamentosAdmin() {
       Alert.alert('Contas de recebimento', (e as Error).message);
     }
   }
+  const exemplo = (pct: string, fixo: string) => comTaxa(50, { pct: num(pct), fixo: num(fixo) });
+  const campoTaxa = (rotulo: string, k: 'pixPct' | 'pixFixo' | 'cartaoPct' | 'cartaoFixo', sufixo: string) => (
+    <View style={[s.campo, { maxWidth: largo ? 170 : undefined }]}>
+      <Text style={s.rotulo}>{rotulo}</Text>
+      <View style={s.linhaConta}>
+        <TextInput style={[s.input, { flex: 1 }]} value={f[k]} onChangeText={(t) => setF({ ...f, [k]: t })} keyboardType="decimal-pad" />
+        <Text style={s.sub}>{sufixo}</Text>
+      </View>
+    </View>
+  );
   const lista = (titulo: string, itens: Admin.RecebedorAdmin[]) => (
     <View style={{ flex: 1, gap: 8 }}>
       <Text style={s.secao}>{titulo}</Text>
@@ -125,6 +146,26 @@ export default function PagamentosAdmin() {
           {d.webhook}
         </Text>
         <Text style={s.sub}>O recebedor da MOVI fica em Pagar.me → Recebedores (o recebedor padrão da conta). O split com Pix precisa estar liberado pela Pagar.me na sua conta.</Text>
+      </View>
+
+      <View style={s.cartao}>
+        <Text style={s.titulo}>Taxas por cima do valor</Text>
+        <Text style={s.sub}>
+          A taxa da Pagar.me é somada ao que o cliente paga. Assim o motorista recebe o ganho mostrado, a loja recebe os produtos e a MOVI recebe a parte dela, sem desconto. Use as taxas do seu contrato com a
+          Pagar.me (no cartão, inclua a antecipação, se usar).
+        </Text>
+        <View style={[s.campos, !largo && { flexDirection: 'column' }]}>
+          {campoTaxa('Pix', 'pixPct', '%')}
+          {campoTaxa('Pix (fixo por venda)', 'pixFixo', 'R$')}
+          {campoTaxa('Cartão à vista', 'cartaoPct', '%')}
+          {campoTaxa('Cartão (fixo por venda)', 'cartaoFixo', 'R$')}
+          <Pressable style={s.ok} disabled={salvando} onPress={() => salvar()}>
+            <Text style={s.okTexto}>Salvar</Text>
+          </Pressable>
+        </View>
+        <Text style={s.sub}>
+          Exemplo de frete de {formatarReais(50)}: no Pix o cliente paga {formatarReais(exemplo(f.pixPct, f.pixFixo).total)}; no cartão, {formatarReais(exemplo(f.cartaoPct, f.cartaoFixo).total)}.
+        </Text>
       </View>
 
       {d.estornosComErro.length > 0 && (

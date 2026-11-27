@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API, api, apagarToken, ErroApi, lerToken } from '../services/api';
 import { carregarEndereco, salvarEndereco, type Endereco } from '../services/cadastro';
 import { URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../services/preco';
+import type { TaxaMeio } from '../services/taxas';
 import { MODO, SOLICITANTE } from '../variante';
 
 type Config = Liberacao &
@@ -20,6 +21,8 @@ type Config = Liberacao &
     gateway: 'infinitepay' | 'pagarme';
     pagarmeChavePublica: string;
     pagarAoAceitarMin: number;
+    /** Taxa do Pix/cartão somada ao valor na Pagar.me (o cliente paga; quem trabalha recebe o valor mostrado). */
+    taxasPagamento: { pix: TaxaMeio; cartao: TaxaMeio } | null;
   };
 
 /** Cadastro no servidor de quem pede (cliente ou loja). */
@@ -58,6 +61,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     gateway: 'infinitepay',
     pagarmeChavePublica: '',
     pagarAoAceitarMin: 3,
+    taxasPagamento: null,
     ...LIBERACAO_PADRAO,
     ...MOTO_PADRAO,
   });
@@ -79,6 +83,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             gateway: c.gateway === 'pagarme' ? 'pagarme' : 'infinitepay',
             pagarmeChavePublica: c.pagarmeChavePublica ?? '',
             pagarAoAceitarMin: c.pagarAoAceitarMin ?? 3,
+            taxasPagamento: c.taxasPagamento ?? null,
             servicosAtivos: c.servicosAtivos ?? LIBERACAO_PADRAO.servicosAtivos,
             categoriasAtivas: c.categoriasAtivas ?? LIBERACAO_PADRAO.categoriasAtivas,
             outroEnderecoLoja: c.outroEnderecoLoja ?? LIBERACAO_PADRAO.outroEnderecoLoja,

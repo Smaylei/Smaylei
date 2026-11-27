@@ -20,7 +20,7 @@ const formatarCnpj = (t: string) =>
 
 /** Cadastro da loja: depois de aprovada pela MOVI, a loja pede transporte das compras e dos clientes dela. */
 export default function CadastroLojista() {
-  const { casa, temConta, eu, salvarCasa, recarregarEu } = useApp();
+  const { casa, temConta, eu, salvarCasa, recarregarEu, config } = useApp();
   const [loja, setLoja] = useState(eu?.lojaNome ?? '');
   const [cnpj, setCnpj] = useState('');
   const [nome, setNome] = useState(eu?.nome ?? '');
@@ -61,6 +61,8 @@ export default function CadastroLojista() {
       await salvarCasa({ nome: loja.trim(), endereco: endereco.trim(), telefone, lat: pin.lat, lon: pin.lon });
       recarregarEu();
       router.replace('/lojista');
+      // Pagar.me ligada: logo depois do cadastro, a conta para receber as vendas (dados bancários + prova de vida).
+      if (!temConta && config.gateway === 'pagarme') router.push({ pathname: '/conta-recebimento', params: { depois: '1' } });
     } catch (e) {
       setMsg(e instanceof ErroApi ? e.message : 'Sem conexão. Tente de novo.');
     } finally {

@@ -6,12 +6,14 @@ import CamposSenha, { senhaOk } from '../components/CamposSenha';
 import { BotaoInicio } from '../components/Marca';
 import { cores, raio, sombra } from '../components/tema';
 import { VEICULOS, type Veiculo } from '../data/servicos';
+import { useApp } from '../estado/AppContext';
 import { api, enviarFoto, ErroApi, guardarToken, lerToken } from '../services/api';
 import { cpfValido, formatarCpf } from '../services/cpf';
 
 type Eu = { nome: string; telefone: string; carro: string; placa: string; veiculo?: Veiculo; cor?: string; pix?: string; temSelfie: boolean; temCnh: boolean };
 
 export default function CadastroMotorista() {
+  const { config } = useApp();
   const [temConta, setTemConta] = useState(false);
   const [eu, setEu] = useState<Eu | null>(null);
   const [nome, setNome] = useState('');
@@ -64,6 +66,7 @@ export default function CadastroMotorista() {
   async function salvar() {
     setOcupado(true);
     setMsg(null);
+    const novo = !temConta;
     try {
       if (!temConta) {
         const r = await api<{ token: string }>(null, '/v2/motoristas', { method: 'POST', corpo: { nome: nome.trim(), cpf, telefone, carro, placa, cor, veiculo, senha } });
@@ -79,6 +82,8 @@ export default function CadastroMotorista() {
       await envia('selfie', selfie);
       await envia('cnh', cnh);
       router.replace('/motorista');
+      // Pagar.me ligada: logo depois do cadastro, a conta para receber (dados bancários + prova de vida).
+      if (novo && config.gateway === 'pagarme') router.push({ pathname: '/conta-recebimento', params: { depois: '1' } });
     } catch (e) {
       setMsg((e as Error).message);
     } finally {

@@ -6,6 +6,7 @@ import * as Admin from '../services/admin';
 import { fonteImagem } from '../services/api';
 import { formatarCpf } from '../services/cpf';
 import { formatarReais } from '../services/preco';
+import { mostrarChavePix, nomeTipoChave } from '../services/pix';
 
 type Fonte = { uri: string; headers?: Record<string, string> };
 
@@ -69,7 +70,9 @@ export default function MotoristasAdmin() {
 
           {aberto === m.id && (
             <View style={{ gap: 8, marginTop: 8 }}>
-              <Text style={s.detalhe}>CPF (chave Pix) {formatarCpf(m.cpf)} · Tel. {m.telefone}</Text>
+              <Text style={s.detalhe}>
+                CPF {formatarCpf(m.cpf)} · Tel. {m.telefone} · Pix {m.pixTipo && m.pixTipo !== 'cpf' ? `(${nomeTipoChave(m.pixTipo)}) ${mostrarChavePix(m.pix)}` : '= CPF'}
+              </Text>
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <Doc rotulo="Selfie" fonte={m.selfie ? fotos[m.selfie] : undefined} />
                 <Doc rotulo="CNH" fonte={m.cnh ? fotos[m.cnh] : undefined} largo />

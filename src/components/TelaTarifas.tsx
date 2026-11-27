@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { TARIFAS_PADRAO } from '../data/tarifas';
@@ -148,6 +149,9 @@ export default function TelaTarifas({ tarifas, margem, urgencia, incentivo, comi
         <Text style={s.botaoSecTexto}>Restaurar valores padrão</Text>
       </Pressable>
       {msg && <Text style={s.msg}>{msg}</Text>}
+      <Pressable style={s.botaoSec} onPress={() => router.push({ pathname: '/servicos-admin', params: { secao: 'moto' } })}>
+        <Text style={s.botaoSecTexto}>🏍️ Tabela do motoboy (moto) ›</Text>
+      </Pressable>
     </ScrollView>
   );
 }

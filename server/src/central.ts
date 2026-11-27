@@ -53,6 +53,8 @@ import {
   type ConfigAgenda,
 } from '../../src/services/agenda';
 import { cpfValido } from '../../src/services/cpf';
+import { chavePixValida, nomeTipoChave } from '../../src/services/pix';
+import { comTaxa } from '../../src/services/taxas';
 import { distanciaDoMapa, rotaEntre } from '../../src/services/grafo';
 import { caminhoOsrm, tabelaOsrm, trajetoEstimado, type Trajeto } from './rotas';
 import { conferir, gerarHash, senhaProvisoria, senhaValida } from './senha';
@@ -86,6 +88,11 @@ export type Config = ConfigAgenda & Liberacao & ConfigMoto & ConfigDelivery & {
   pagarmeRecebedorMovi: string; // recebedor da MOVI na Pagar.me (rp_...), para o split
   pagarmeChavePublica: string; // chave pública (pk_...) que o app usa para gerar o token do cartão
   pagarAoAceitarMin: number; // corrida "agora" na Pagar.me: minutos para o cliente pagar depois do aceite
+  // Taxa da Pagar.me somada ao valor (o cliente paga), para motorista, loja e MOVI receberem o valor mostrado
+  taxaPixPct: number;
+  taxaPixFixo: number;
+  taxaCartaoPct: number;
+  taxaCartaoFixo: number;
   taxaDeslocamento: number; // R$ do motorista se o cliente cancelar/não aparecer com ele já no local
   esperaPagamentoMin: number; // prazo para pagar depois de pedir (o horário fica reservado)
   esperaConfirmacaoMin: number; // quanto o motorista espera o cliente confirmar no local
@@ -106,6 +113,10 @@ export const CONFIG_PADRAO: Config = {
   pagarmeRecebedorMovi: '',
   pagarmeChavePublica: '',
   pagarAoAceitarMin: 3,
+  taxaPixPct: 0.99,
+  taxaPixFixo: 0,
+  taxaCartaoPct: 4.19,
+  taxaCartaoFixo: 0,
   taxaDeslocamento: 5,
   esperaPagamentoMin: 15,
   esperaConfirmacaoMin: 10,
@@ -202,7 +213,12 @@ const COLUNAS_NOVAS = [`ALTER TABLE corridas ADD COLUMN pagamento_ate TEXT`, `AL
   ...['pagarme_recebedor TEXT', 'pagarme_status TEXT', 'email TEXT'].flatMap((c) => [`ALTER TABLE motoristas ADD COLUMN ${c}`, `ALTER TABLE clientes ADD COLUMN ${c}`]),
   'ALTER TABLE gorjetas ADD COLUMN cobranca_id TEXT',
   'ALTER TABLE corridas ADD COLUMN km_desloc REAL',
-  ...["tipo TEXT NOT NULL DEFAULT 'cliente'", 'loja_nome TEXT', 'cnpj TEXT', "status TEXT NOT NULL DEFAULT 'aprovado'"].map((c) => `ALTER TABLE clientes ADD COLUMN ${c}`)];
+  ...["tipo TEXT NOT NULL DEFAULT 'cliente'", 'loja_nome TEXT', 'cnpj TEXT', "status TEXT NOT NULL DEFAULT 'aprovado'"].map((c) => `ALTER TABLE clientes ADD COLUMN ${c}`),
+  // Taxa do Pix/cartão paga pelo cliente por cima do valor; chave Pix escolhida para receber
+  'ALTER TABLE cobrancas ADD COLUMN taxa REAL NOT NULL DEFAULT 0',
+  'ALTER TABLE corridas ADD COLUMN taxa_pagamento REAL NOT NULL DEFAULT 0',
+  'ALTER TABLE motoristas ADD COLUMN pix_tipo TEXT',
+  'ALTER TABLE clientes ADD COLUMN pix_tipo TEXT'];
 
 export const ROTULO: Record<string, string> = {
   pagamento_pendente: 'Aguardando pagamento',
@@ -394,13 +410,14 @@ export class Central extends DurableObject<Env> {
     const cfg = this.config();
     let reembolso = 0, taxa = 0;
     if (c.pago_em && !c.liberado_em) {
+      const tp = Number(c.taxa_pagamento ?? 0); // taxa do Pix/cartão que o cliente pagou: volta junto
       if (c.status === 'no_local') {
         taxa = Math.min(cfg.taxaDeslocamento, Number(c.valor));
         // Split direto: no estorno parcial o motorista já fica com a parte proporcional; a MOVI completa a taxa.
-        const jaFica = c.repasse_direto ? r2((this.ganhoDe(c) * taxa) / Number(c.valor)) : 0;
+        const jaFica = c.repasse_direto ? r2((this.ganhoDe(c) * taxa) / (Number(c.valor) + tp)) : 0;
         this.creditar(c.motorista_id, c.id, 'taxa', r2(taxa - jaFica));
       }
-      reembolso = r2(Number(c.valor) - taxa);
+      reembolso = r2(Number(c.valor) + tp - taxa);
     }
     this.sql.exec(
       `UPDATE corridas SET status='cancelado', motivo=?, cancelado_por=?, cancelado_em=?, taxa_aplicada=?, reembolso=?, fim=? WHERE id=?`,
@@ -477,7 +494,7 @@ export class Central extends DurableObject<Env> {
     // Só contagens (sem dados pessoais): ajuda a entender um "nenhum motorista livre".
     const n = (q: string, ...x: unknown[]) => Number(this.um(q, ...x)?.n ?? 0);
     const diag = {
-      v: 5,
+      v: 6,
       online: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1`),
       comPosicao: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1 AND loc_em > ?`, iso(agora - LOC_VALIDA_MIN * MIN)),
       livres,
@@ -610,7 +627,7 @@ export class Central extends DurableObject<Env> {
     return {
       id: c.id, status: c.status, agendado: !!c.agendado, janela: c.janela, inicio: c.inicio, mercadoId: c.mercado_id, mercadoNome: c.mercado_nome,
       valor: c.valor, checkoutUrl: c.status === 'pagamento_pendente' ? c.checkout_url : null, pagamentoAte: c.pagamento_ate,
-      receiptUrl: c.receipt_url, metodo: c.metodo, motivo: c.motivo, taxaAplicada: c.taxa_aplicada, reembolso: c.reembolso, reembolsadoEm: c.reembolsado_em,
+      receiptUrl: c.receipt_url, metodo: c.metodo, motivo: c.motivo, taxaAplicada: c.taxa_aplicada, reembolso: c.reembolso, reembolsadoEm: c.reembolsado_em, taxaPagamento: Number(c.taxa_pagamento ?? 0),
       criadoEm: c.criado_em, pagoEm: c.pago_em, chegouEm: c.chegou_em, liberadoEm: c.liberado_em, entregueEm: c.entregue_em,
       esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, taxaDeslocamento: cfg.taxaDeslocamento,
       motorista: comMotorista ? this.motoristaPublico(c.motorista_id) : null,
@@ -757,7 +774,7 @@ export class Central extends DurableObject<Env> {
     const atual = this.corrida(id)!;
     const cfg = this.config();
     const agora = Date.now();
-    this.sql.exec(`UPDATE corridas SET pago_em=?, metodo=?, receipt_url=?, slug=?, transaction_nsu=?, valor_cobrado=valor WHERE id=?`, iso(agora), metodo, receiptUrl ?? null, slug, tx, id);
+    this.sql.exec(`UPDATE corridas SET pago_em=?, metodo=?, receipt_url=?, slug=?, transaction_nsu=?, valor_cobrado=valor + taxa_pagamento WHERE id=?`, iso(agora), metodo, receiptUrl ?? null, slug, tx, id);
     if (atual.status === 'pagamento_pendente') {
       const inicio = atual.agendado ? Date.parse(String(atual.inicio)) : agora;
       const ofertaAte = atual.agendado ? inicio - 30 * MIN : agora + cfg.ofertaMin * MIN;
@@ -767,7 +784,7 @@ export class Central extends DurableObject<Env> {
       return pago;
     }
     // Pagou depois do prazo (pedido já cancelado): devolver.
-    this.sql.exec(`UPDATE corridas SET reembolso=valor WHERE id=?`, id);
+    this.sql.exec(`UPDATE corridas SET reembolso=valor + taxa_pagamento WHERE id=?`, id);
     const tarde = this.corrida(id)!;
     this.avisar(this.textoCorrida(tarde, '⚠️ PAGAMENTO APÓS O PRAZO — pedido já estava cancelado'), id);
     return tarde;
@@ -794,7 +811,8 @@ export class Central extends DurableObject<Env> {
   }
   private cobrancaView(c: Linha) {
     return {
-      id: c.id, tipo: c.ref_tipo, ref: c.ref_id, status: c.status, metodo: c.metodo, valor: Number(c.valor), qrCode: c.qr_code, qrCodeUrl: c.qr_code_url,
+      id: c.id, tipo: c.ref_tipo, ref: c.ref_id, status: c.status, metodo: c.metodo, valor: Number(c.valor), taxa: Number(c.taxa ?? 0), liquido: r2(Number(c.valor) - Number(c.taxa ?? 0)),
+      qrCode: c.qr_code, qrCodeUrl: c.qr_code_url,
       expiraEm: c.expira_em, pagoEm: c.pago_em, erro: c.erro, split: !!c.split,
     };
   }
@@ -868,30 +886,58 @@ export class Central extends DurableObject<Env> {
     const alvo = this.alvoPagamento(cli, b.tipo, b.id);
     if ('erro' in alvo) return erro(alvo.erro, alvo.status);
     const agora = Date.now();
+    // Taxa do Pix/cartão por cima: o cliente paga valor + taxa; motorista e loja recebem o valor deles
+    // inteiro no split e a MOVI (que paga a taxa da Pagar.me) fica com a parte dela sem desconto.
+    const { itens, split, total, taxa } = this.comTaxaPagamento(alvo.itens, alvo.split, metodo);
     if (metodo === 'pix') {
-      // Pix já gerado e ainda válido: mostra o mesmo QR Code.
-      const ja = this.um(`SELECT * FROM cobrancas WHERE ref_tipo=? AND ref_id=? AND metodo='pix' AND status='pendente' AND expira_em > ? ORDER BY criado_em DESC LIMIT 1`, alvo.refTipo, alvo.refId, iso(agora + 30_000));
+      // Pix já gerado, do mesmo valor e ainda válido: mostra o mesmo QR Code.
+      const ja = this.um(
+        `SELECT * FROM cobrancas WHERE ref_tipo=? AND ref_id=? AND metodo='pix' AND status='pendente' AND expira_em > ? AND ABS(valor - ?) < 0.005 ORDER BY criado_em DESC LIMIT 1`,
+        alvo.refTipo, alvo.refId, iso(agora + 30_000), total,
+      );
       if (ja) return json(this.cobrancaView(ja));
     }
     const id = novoId('cob');
     let r: Pagarme.ResultadoPedido;
     try {
       r = await Pagarme.criarPedido(sk, {
-        codigo: id, itens: alvo.itens, cliente: { nome: String(cli.nome), cpf: String(cli.cpf ?? ''), telefone: String(cli.telefone ?? '') }, metodo,
-        pixExpiraSeg: alvo.expiraSeg, cardToken: b.cardToken, split: alvo.split,
+        codigo: id, itens, cliente: { nome: String(cli.nome), cpf: String(cli.cpf ?? ''), telefone: String(cli.telefone ?? '') }, metodo,
+        pixExpiraSeg: alvo.expiraSeg, cardToken: b.cardToken, split,
         cobranca: metodo === 'cartao' ? { endereco: String(cli.endereco), cep: String(b.cep), cidade: nomeCidade(cidadeDe({ lat: Number(cli.lat), lon: Number(cli.lon) })) || 'Guaramirim', uf: 'SC' } : undefined,
       });
     } catch (e) {
       return erro((e as Error).message, 502);
     }
     this.sql.exec(
-      `INSERT INTO cobrancas (id, ref_tipo, ref_id, valor, metodo, order_id, charge_id, status, qr_code, qr_code_url, expira_em, split, criado_em, erro) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      id, alvo.refTipo, alvo.refId, r2(alvo.valor), metodo, r.orderId, r.chargeId, r.status === 'failed' || r.status === 'canceled' ? 'falhou' : 'pendente',
-      r.qrCode, r.qrCodeUrl, r.expiraEm ?? (metodo === 'pix' ? iso(agora + alvo.expiraSeg * 1000) : null), alvo.split ? JSON.stringify(alvo.split) : null, iso(agora),
+      `INSERT INTO cobrancas (id, ref_tipo, ref_id, valor, taxa, metodo, order_id, charge_id, status, qr_code, qr_code_url, expira_em, split, criado_em, erro) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      id, alvo.refTipo, alvo.refId, total, taxa, metodo, r.orderId, r.chargeId, r.status === 'failed' || r.status === 'canceled' ? 'falhou' : 'pendente',
+      r.qrCode, r.qrCodeUrl, r.expiraEm ?? (metodo === 'pix' ? iso(agora + alvo.expiraSeg * 1000) : null), split ? JSON.stringify(split) : null, iso(agora),
       r.status === 'failed' ? (r.motivoFalha ?? 'Pagamento recusado. Confira os dados ou use outro cartão.') : null,
     );
     if (r.status === 'paid') this.confirmarCobranca(id);
     return json(this.cobrancaView(this.um(`SELECT * FROM cobrancas WHERE id=?`, id)!));
+  }
+
+  /** Chave Pix dos saques do motorista: a escolhida por ele (com tipo) ou, se nunca trocou, o CPF. */
+  private chavePix(mot: Linha): { pix: string; pixTipo: string } {
+    return mot.pix_tipo && mot.pix ? { pix: String(mot.pix), pixTipo: String(mot.pix_tipo) } : { pix: String(mot.cpf), pixTipo: 'cpf' };
+  }
+  /** Itens e split com a taxa do meio de pagamento somada (item "Taxa do Pix/cartão"); a MOVI (principal) absorve a taxa. */
+  private comTaxaPagamento(itensBase: Pagarme.ItemCobranca[], splitBase: Pagarme.SplitRegra[] | undefined, metodo: 'pix' | 'cartao') {
+    const cfg = this.config();
+    const base = itensBase.reduce((sm, i) => sm + i.centavos * i.qtd, 0);
+    const meio = metodo === 'cartao' ? { pct: cfg.taxaCartaoPct, fixo: cfg.taxaCartaoFixo } : { pct: cfg.taxaPixPct, fixo: cfg.taxaPixFixo };
+    const taxaCent = Math.max(0, Math.round(comTaxa(base / 100, meio).total * 100) - base);
+    const itens = taxaCent > 0 ? [...itensBase, { codigo: 'taxa', descricao: metodo === 'cartao' ? 'Taxa do cartão' : 'Taxa do Pix', centavos: taxaCent, qtd: 1 }] : itensBase;
+    const totalCent = base + taxaCent;
+    const outros = (splitBase ?? []).filter((x) => !x.principal).reduce((sm, x) => sm + x.centavos, 0);
+    const split = splitBase?.map((x) => (x.principal ? { ...x, centavos: totalCent - outros } : x));
+    return { itens, split, total: totalCent / 100, taxa: taxaCent / 100 };
+  }
+  /** Taxas configuradas (o app mostra "valor + taxa = total" antes de pagar). */
+  private taxasPagamento() {
+    const cfg = this.config();
+    return { pix: { pct: cfg.taxaPixPct, fixo: cfg.taxaPixFixo }, cartao: { pct: cfg.taxaCartaoPct, fixo: cfg.taxaCartaoFixo } };
   }
 
   /** Confere na Pagar.me uma cobrança ainda pendente (chamado pelo app e pelo webhook). */
@@ -913,16 +959,19 @@ export class Central extends DurableObject<Env> {
     const metodo = cob.metodo === 'cartao' ? 'credit_card' : 'pix';
     const direto = !!cob.split;
     const ref = String(cob.ref_id);
+    const taxaCob = Number(cob.taxa ?? 0);
+    const maisTaxa = taxaCob > 0 ? ` + taxa ${brl(taxaCob)}` : '';
     if (cob.ref_tipo === 'corrida') {
       const c = this.corrida(ref);
       if (!c) return;
+      if (!c.pago_em) this.sql.exec(`UPDATE corridas SET taxa_pagamento=? WHERE id=?`, taxaCob, ref);
       if (c.pagar_ao_aceitar) {
         if (c.status === 'aceito' && !c.pago_em) {
-          this.sql.exec(`UPDATE corridas SET pago_em=?, metodo=?, valor_cobrado=valor, cobranca_id=?, repasse_direto=? WHERE id=?`, agora, metodo, id, direto ? 1 : 0, ref);
-          this.avisar(this.textoCorrida(this.corrida(ref)!, `💰 PAGO NO ACEITE ${brl(Number(c.valor))} (${metodo === 'pix' ? 'Pix' : 'cartão'})${direto ? ' — ganho já direto na conta do motorista' : ' — valor retido'}; motorista pode sair`), ref);
+          this.sql.exec(`UPDATE corridas SET pago_em=?, metodo=?, valor_cobrado=valor + taxa_pagamento, cobranca_id=?, repasse_direto=? WHERE id=?`, agora, metodo, id, direto ? 1 : 0, ref);
+          this.avisar(this.textoCorrida(this.corrida(ref)!, `💰 PAGO NO ACEITE ${brl(Number(c.valor))}${maisTaxa} (${metodo === 'pix' ? 'Pix' : 'cartão'})${direto ? ' — ganho já direto na conta do motorista' : ' — valor retido'}; motorista pode sair`), ref);
         } else {
-          // Pagou depois do prazo (corrida já cancelada): estorno automático.
-          this.sql.exec(`UPDATE corridas SET pago_em=COALESCE(pago_em, ?), metodo=?, cobranca_id=?, repasse_direto=?, reembolso=valor WHERE id=?`, agora, metodo, id, direto ? 1 : 0, ref);
+          // Pagou depois do prazo (corrida já cancelada): estorno automático (com a taxa).
+          this.sql.exec(`UPDATE corridas SET pago_em=COALESCE(pago_em, ?), metodo=?, cobranca_id=?, repasse_direto=?, reembolso=valor + taxa_pagamento WHERE id=?`, agora, metodo, id, direto ? 1 : 0, ref);
           this.avisar(this.textoCorrida(this.corrida(ref)!, '⚠️ PAGAMENTO APÓS O PRAZO — corrida já cancelada; estorno automático pela Pagar.me'), ref);
         }
       } else {
@@ -932,7 +981,15 @@ export class Central extends DurableObject<Env> {
     } else if (cob.ref_tipo === 'pacote') {
       if (this.um(`SELECT pago_em FROM pacotes WHERE id=?`, ref)?.pago_em) return;
       this.sql.exec(`UPDATE pacotes SET pago_em=? WHERE id=?`, agora, ref);
-      const lista = this.q(`SELECT id FROM corridas WHERE pacote_id=? ORDER BY inicio`, ref);
+      const lista = this.q(`SELECT id, valor FROM corridas WHERE pacote_id=? ORDER BY inicio`, ref);
+      // A taxa do pacote é dividida entre as viagens (proporcional ao valor), para o estorno de cada uma.
+      const soma = lista.reduce((sm, c) => sm + Number(c.valor), 0);
+      let resto = Math.round(taxaCob * 100);
+      lista.forEach((c, i) => {
+        const parte = i === lista.length - 1 ? resto : Math.min(resto, Math.round((taxaCob * 100 * Number(c.valor)) / (soma || 1)));
+        resto -= parte;
+        this.sql.exec(`UPDATE corridas SET taxa_pagamento=? WHERE id=?`, parte / 100, c.id);
+      });
       for (const c of lista) {
         this.marcarPago(String(c.id), metodo, 'pagarme', String(cob.order_id), null, false);
         this.sql.exec(`UPDATE corridas SET cobranca_id=? WHERE id=?`, id, c.id);
@@ -940,7 +997,7 @@ export class Central extends DurableObject<Env> {
       const p = this.um(`SELECT * FROM corridas WHERE pacote_id=? ORDER BY inicio LIMIT 1`, ref);
       if (p) this.avisar(this.textoCorrida(p, `💰 📅 PACOTE PAGO: ${lista.length} viagens, ${brl(Number(cob.valor))} (${metodo === 'pix' ? 'Pix' : 'cartão'}) — valor retido`), p.id);
     } else if (cob.ref_tipo === 'pedido' || cob.ref_tipo === 'mensalidade') {
-      this.delivery.aplicarPago(ref, metodo, { slug: 'pagarme', tx: String(cob.order_id), cobrancaId: id, direto });
+      this.delivery.aplicarPago(ref, metodo, { slug: 'pagarme', tx: String(cob.order_id), cobrancaId: id, direto, taxa: taxaCob });
     } else if (cob.ref_tipo === 'gorjeta') {
       this.aplicarGorjeta(ref, metodo, 'pagarme', String(cob.order_id), null, id);
     }
@@ -1098,6 +1155,7 @@ export class Central extends DurableObject<Env> {
         motoAcrescimoPct: r2((fatorMoto(cfg) - 1) * 100), // APKs antigos calculam com o acréscimo
         deslocamentoPadraoKm: cfg.deslocamentoPadraoKm, deliveryMensalidade: cfg.deliveryMensalidade, deliveryUrgencia: cfg.deliveryUrgencia,
         gateway: this.pagarme() ? 'pagarme' : 'infinitepay', pagarmeChavePublica: this.pagarme() ? cfg.pagarmeChavePublica : '', pagarAoAceitarMin: cfg.pagarAoAceitarMin,
+        taxasPagamento: this.pagarme() ? this.taxasPagamento() : null,
         locais: this.locais().filter((l) => cfg.categoriasAtivas.includes(l.categoria as never) && !!l.cidade && cfg.cidadesAtivas.includes(l.cidade)),
       });
     if (metodo === 'GET' && p === '/v2/disponibilidade') return json(this.disponibilidade());
@@ -1268,6 +1326,31 @@ export class Central extends DurableObject<Env> {
       if (guardada && !(await conferir(String(b.atual ?? ''), String(guardada)))) return erro('A senha atual está incorreta.', 401);
       this.sql.exec(`UPDATE ${tabela} SET senha_hash=? WHERE id=?`, await gerarHash(String(b.nova)), eu.id);
       return json({ ok: true });
+    }
+
+    // Chave Pix para receber (saques do motorista, repasses da loja): qualquer tipo de chave, pede a senha da conta.
+    if (metodo === 'PUT' && p === '/v2/eu/pix' && (eu.tipo === 'motorista' || eu.linha?.tipo === 'lojista')) {
+      const b = await this.corpo<{ tipo?: string; chave?: string; senha?: string }>(req);
+      const nova = chavePixValida(b.tipo, b.chave);
+      if (!nova) return erro('Chave Pix inválida. Confira o tipo e o valor digitado.');
+      const linha = eu.linha!;
+      if (!linha.senha_hash) return erro('Crie a sua senha primeiro (Conta → Senha) para poder trocar a chave Pix.', 409);
+      const lim = `pix:${eu.id}`;
+      const t = this.um(`SELECT * FROM login_tentativas WHERE chave=?`, lim);
+      if (t && Number(t.falhas) >= 5 && String(t.ate) > iso(Date.now())) return erro('Muitas tentativas erradas. Tente de novo em 15 minutos.', 429);
+      if (!(await conferir(String(b.senha ?? ''), String(linha.senha_hash)))) {
+        const falhas = t && String(t.ate) > iso(Date.now()) ? Number(t.falhas) + 1 : 1;
+        this.sql.exec(`INSERT OR REPLACE INTO login_tentativas (chave, falhas, ate) VALUES (?,?,?)`, lim, falhas, iso(Date.now() + 15 * MIN));
+        return erro('Senha incorreta.', 401);
+      }
+      this.sql.exec(`DELETE FROM login_tentativas WHERE chave=?`, lim);
+      const ehMot = eu.tipo === 'motorista';
+      const antes = ehMot ? this.chavePix(linha).pix : String(linha.pix_repasse ?? linha.cnpj ?? linha.cpf);
+      if (ehMot) this.sql.exec(`UPDATE motoristas SET pix=?, pix_tipo=? WHERE id=?`, nova.chave, nova.tipo, eu.id);
+      else this.sql.exec(`UPDATE clientes SET pix_repasse=?, pix_tipo=? WHERE id=?`, nova.chave, nova.tipo, eu.id);
+      if (antes !== nova.chave)
+        this.avisar(`🔑 CHAVE PIX ALTERADA\n${ehMot ? `${linha.veiculo === 'moto' ? 'Motoboy' : 'Motorista'} ${linha.nome}` : `Loja ${linha.loja_nome ?? linha.nome}`}\nAntes: ${antes}\nAgora (${nomeTipoChave(nova.tipo)}): ${nova.chave}\nOs próximos ${ehMot ? 'saques' : 'repasses'} vão para a nova chave.`);
+      return json({ ok: true, pix: nova.chave, pixTipo: nova.tipo });
     }
 
     // Preço e rota (mapa sem Google: OSRM/OpenStreetMap). O preço é o mesmo cobrado no pedido.
@@ -1552,7 +1635,7 @@ export class Central extends DurableObject<Env> {
     if (metodo === 'GET' && p === '/v2/eu') {
       const s = this.saldo(mot.id);
       return json({
-        tipo: 'motorista', id: mot.id, nome: mot.nome, telefone: mot.telefone, carro: mot.carro, placa: mot.placa, cor: mot.cor, pix: mot.cpf, veiculo: mot.veiculo ?? 'carro',
+        tipo: 'motorista', id: mot.id, nome: mot.nome, telefone: mot.telefone, carro: mot.carro, placa: mot.placa, cor: mot.cor, ...this.chavePix(mot), veiculo: mot.veiculo ?? 'carro',
         status: mot.status, online: !!mot.online, temSenha: !!mot.senha_hash, temSelfie: !!mot.selfie, temCnh: !!mot.cnh, docsObrigatorios: !!this.env.DOCS,
         ...s, comissaoPct: cfg.comissaoMotoristaPct, ...this.notaMotorista(mot.id),
         gateway: this.pagarme() ? 'pagarme' : 'infinitepay', recebedor: { temConta: !!mot.pagarme_recebedor, status: mot.pagarme_status ?? null, ativo: this.recebedorAtivo(mot) },
@@ -1561,7 +1644,7 @@ export class Central extends DurableObject<Env> {
     }
     if (metodo === 'GET' && p === '/v2/saldo') {
       return json({
-        ...this.saldo(mot.id), chavePix: mot.cpf, saqueDias: cfg.saqueDias,
+        ...this.saldo(mot.id), chavePix: this.chavePix(mot).pix, pixTipo: this.chavePix(mot).pixTipo, saqueDias: cfg.saqueDias,
         creditos: this.q(`SELECT cr.id, cr.tipo, cr.valor, cr.criado_em AS criadoEm, c.mercado_nome AS mercado FROM creditos cr LEFT JOIN corridas c ON c.id=cr.corrida_id WHERE cr.motorista_id=? ORDER BY cr.criado_em DESC, cr.rowid DESC LIMIT 50`, mot.id),
         saques: this.q(`SELECT id, valor, status, chave_pix AS chavePix, criado_em AS criadoEm, pago_em AS pagoEm, motivo FROM saques WHERE motorista_id=? ORDER BY criado_em DESC LIMIT 30`, mot.id),
       });
@@ -1571,8 +1654,9 @@ export class Central extends DurableObject<Env> {
       if (s.proximoSaqueEm) return erro(`Você poderá pedir o próximo saque em ${new Date(s.proximoSaqueEm).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}.`, 409);
       if (s.disponivel < 1) return erro('Sem saldo disponível para saque.', 409);
       const id = novoId('saq');
-      this.sql.exec(`INSERT INTO saques (id, motorista_id, valor, chave_pix, status, criado_em) VALUES (?,?,?,?,?,?)`, id, mot.id, s.disponivel, mot.cpf, 'solicitado', iso(agora));
-      this.avisar(`💸 SAQUE SOLICITADO\n${mot.nome}: ${brl(s.disponivel)}\nPix (CPF): ${mot.cpf}\nVeja em Saques para marcar como pago.`);
+      const { pix, pixTipo } = this.chavePix(mot);
+      this.sql.exec(`INSERT INTO saques (id, motorista_id, valor, chave_pix, status, criado_em) VALUES (?,?,?,?,?,?)`, id, mot.id, s.disponivel, pix, 'solicitado', iso(agora));
+      this.avisar(`💸 SAQUE SOLICITADO\n${mot.nome}: ${brl(s.disponivel)}\nPix (${nomeTipoChave(pixTipo)}): ${pix}\nVeja em Saques para marcar como pago.`);
       return json({ ok: true, valor: s.disponivel });
     }
     if (metodo === 'POST' && (p === '/v2/eu/online' || p === '/v2/eu/local')) {
@@ -1740,6 +1824,7 @@ export class Central extends DurableObject<Env> {
       return json({
         gateway: cfg.gateway, ativo: !!this.pagarme(), chaveConfigurada: !!sk, ambiente: sk ? (sk.startsWith('sk_test_') ? 'teste' : 'produção') : null,
         recebedorMovi: cfg.pagarmeRecebedorMovi, chavePublica: cfg.pagarmeChavePublica, pagarAoAceitarMin: cfg.pagarAoAceitarMin,
+        taxaPixPct: cfg.taxaPixPct, taxaPixFixo: cfg.taxaPixFixo, taxaCartaoPct: cfg.taxaCartaoPct, taxaCartaoFixo: cfg.taxaCartaoFixo,
         webhook: `${url.origin}/webhook/pagarme`,
         lojas: lista('clientes', "AND tipo='lojista'"), motoristas: lista('motoristas', ''),
         estornosComErro: [
@@ -1835,9 +1920,9 @@ export class Central extends DurableObject<Env> {
       );
     if (metodo === 'GET' && p === '/v2/admin/motoristas')
       return json(
-        this.q(`SELECT id, nome, cpf, telefone, carro, placa, cor, status, online, lat, lon, loc_em, criado_em, selfie, cnh, veiculo,
+        this.q(`SELECT id, nome, cpf, telefone, carro, placa, cor, status, online, lat, lon, loc_em, criado_em, selfie, cnh, veiculo, pix, pix_tipo,
           (SELECT COUNT(*) FROM corridas c WHERE c.motorista_id=motoristas.id AND c.status IN ('em_andamento','entregue')) AS corridas
-          FROM motoristas ORDER BY (status='pendente') DESC, nome`).map((m) => ({ ...m, ...this.saldo(m.id), ...this.notaMotorista(m.id) })),
+          FROM motoristas ORDER BY (status='pendente') DESC, nome`).map(({ pix: _p, pix_tipo: _t, ...m }) => ({ ...m, ...this.chavePix({ ...m, pix: _p, pix_tipo: _t }), ...this.saldo(m.id), ...this.notaMotorista(m.id) })),
       );
     if (metodo === 'GET' && p === '/v2/admin/lojistas')
       return json(this.q(`SELECT id, nome, cpf, telefone, endereco, lat, lon, loja_nome, cnpj, status, criado_em,
@@ -1976,6 +2061,9 @@ export class Central extends DurableObject<Env> {
       if (cfg.pagarmeChavePublica && !/^pk_\w+$/.test(cfg.pagarmeChavePublica)) return erro('Chave pública inválida (começa com pk_).');
       if (cfg.gateway === 'pagarme' && !cfg.pagarmeChavePublica) return erro('Informe a chave pública (pk_...) para o pagamento com cartão.');
       if (!(cfg.pagarAoAceitarMin >= 1 && cfg.pagarAoAceitarMin <= 30)) return erro('Prazo para pagar depois do aceite: de 1 a 30 minutos.');
+      for (const k of ['taxaPixPct', 'taxaPixFixo', 'taxaCartaoPct', 'taxaCartaoFixo'] as const) cfg[k] = r2(Number(cfg[k]));
+      if (!(cfg.taxaPixPct >= 0 && cfg.taxaPixPct <= 20 && cfg.taxaCartaoPct >= 0 && cfg.taxaCartaoPct <= 20)) return erro('Taxa percentual do Pix/cartão: de 0 a 20%.');
+      if (!(cfg.taxaPixFixo >= 0 && cfg.taxaPixFixo <= 10 && cfg.taxaCartaoFixo >= 0 && cfg.taxaCartaoFixo <= 10)) return erro('Taxa fixa do Pix/cartão: de R$ 0 a R$ 10.');
       if (!(cfg.deliveryMensalidade >= 1 && cfg.deliveryMensalidade <= 1000 && cfg.deliveryAceiteMin >= 3 && cfg.deliveryAceiteMin <= 60)) return erro('Valores do delivery inválidos.');
       cfg.deliveryUrgencia = !!cfg.deliveryUrgencia;
       cfg.motoAtivo = !!cfg.motoAtivo;

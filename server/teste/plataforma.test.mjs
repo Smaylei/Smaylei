@@ -712,7 +712,8 @@ test('delivery das lojas: vitrine com mensalidade, pedido pago pela MOVI, loja a
   assert.equal(fechada.length, 1); // aparece como fechada
   assert.equal(fechada[0].aberta, false);
   assert.match((await call('/v2/pedidos', { metodo: 'POST', token: cli, corpo: { lojaId: lj.d.id, itens: [{ produtoId: xb.id, qtd: 1 }] } })).d.erro, /fechada/);
-  assert.equal((await call('/v2/loja', { metodo: 'PUT', token: loja, corpo: { aberta: true, categoria: 'restaurante', pedidoMinimo: 10, pix: 'pix@lanches.com', descricao: 'Lanches na chapa' } })).s, 200);
+  assert.equal((await call('/v2/loja', { metodo: 'PUT', token: loja, corpo: { aberta: true, categoria: 'restaurante', pedidoMinimo: 10, descricao: 'Lanches na chapa' } })).s, 200);
+  assert.equal((await call('/v2/eu/pix', { metodo: 'PUT', token: loja, corpo: { tipo: 'email', chave: 'pix@lanches.com', senha: 'lanche123' } })).s, 200);
   const lojas = (await call('/v2/lojas', { token: cli })).d;
   assert.equal(lojas.lojas.length, 1);
   assert.equal(lojas.lojas[0].categoria, 'restaurante');
@@ -864,7 +865,7 @@ test('urgência (pedido agora): o cliente paga, o motorista recebe 80% sem a urg
 test('Pagar.me: conta de recebimento (motorista e loja), corrida agora paga no aceite com split, cartão, estorno automático e delivery com a loja recebendo direto', async () => {
   // Admin liga a Pagar.me (exige a chave pública e o segredo no Worker)
   assert.match((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'pagarme' } })).d.erro, /chave pública/);
-  assert.equal((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'pagarme', pagarmeChavePublica: 'pk_test_abc', pagarmeRecebedorMovi: 'rp_movi', urgencia: { tipo: 'reais', valor: 10 } } })).s, 200);
+  assert.equal((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'pagarme', pagarmeChavePublica: 'pk_test_abc', pagarmeRecebedorMovi: 'rp_movi', urgencia: { tipo: 'reais', valor: 10 }, taxaPixPct: 0, taxaCartaoPct: 0 } })).s, 200); // taxas por cima: teste próprio abaixo
   const cfgApp = (await call('/v2/config')).d;
   assert.equal(cfgApp.gateway, 'pagarme');
   assert.equal(cfgApp.pagarmeChavePublica, 'pk_test_abc');
@@ -1006,4 +1007,138 @@ test('Pagar.me: conta de recebimento (motorista e loja), corrida agora paga no a
   assert.equal((await call('/webhook/pagarme', { metodo: 'POST', corpo: { type: 'order.paid', data: { id: 'or_inexistente' } } })).s, 200);
   await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'infinitepay' } });
   assert.equal((await call('/v2/config')).d.gateway, 'infinitepay');
+});
+
+test('taxas por cima (Pagar.me): cliente paga valor + taxa do Pix/cartão; motorista, loja e MOVI recebem o valor mostrado; estorno devolve a taxa. Chave Pix escolhida com senha', async () => {
+  const PIX = 0.99, CARTAO = 4.19, FIXO_CARTAO = 0.5;
+  const r = await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'pagarme', taxaPixPct: PIX, taxaPixFixo: 0, taxaCartaoPct: CARTAO, taxaCartaoFixo: FIXO_CARTAO } });
+  assert.equal(r.s, 200, JSON.stringify(r.d));
+  assert.match((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { taxaPixPct: 30 } })).d.erro, /0 a 20%/);
+  assert.deepEqual((await call('/v2/config')).d.taxasPagamento, { pix: { pct: PIX, fixo: 0 }, cartao: { pct: CARTAO, fixo: FIXO_CARTAO } });
+  // O que a Pagar.me desconta (arredondando a taxa para cima) da parte da MOVI, que é a principal do split.
+  const taxaPg = (totalCent, pct, fixoCent) => Math.ceil((totalCent * pct) / 100) + fixoCent;
+  const soma = (itens) => itens.reduce((sm, i) => sm + i.amount * i.quantity, 0);
+
+  // motorista com conta ativa
+  const m = await call('/v2/motoristas', { metodo: 'POST', corpo: { nome: 'Tito Taxa', cpf: gerarCpf(311122233), telefone: '47966662222', carro: 'HB20', placa: 'TIT1A23' } });
+  const mot = m.d.token;
+  await call(`/v2/admin/motoristas/${m.d.id}/status`, { metodo: 'POST', token: ADM, corpo: { status: 'aprovado' } });
+  await call('/v2/arquivos?tipo=selfie', { metodo: 'POST', token: mot, bruto: JPG, tipo: 'image/jpeg' });
+  await call('/v2/arquivos?tipo=cnh', { metodo: 'POST', token: mot, bruto: JPG, tipo: 'image/jpeg' });
+  const conta = {
+    email: 'tito@exemplo.com', nascimento: '1988-03-10', rendaMensal: 3000, profissao: 'Motorista de aplicativo',
+    endereco: { rua: 'Rua A', numero: '1', bairro: 'Centro', cidade: 'Guaramirim', uf: 'SC', cep: '89270-000' },
+    conta: { banco: '260', agencia: '0001', conta: '654321', contaDv: '0', tipo: 'checking' },
+  };
+  assert.equal((await call('/v2/eu/recebedor', { metodo: 'POST', token: mot, corpo: conta })).s, 200);
+  const rpMot = [...pg.recebedores.keys()].at(-1);
+  pg.recebedores.get(rpMot).status = 'active';
+  assert.equal((await call('/v2/eu/recebedor', { token: mot })).d.ativo, true);
+  const cli = (await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Lia Taxa', cpf: gerarCpf(322233344), telefone: '47911113333', endereco: 'Rua T, 3, Centro', lat: -26.479, lon: -48.99 } })).d.token;
+  await call('/v2/eu/livre', { metodo: 'POST', token: mot });
+  await online(mot, COOPER);
+
+  // Pix: total = valor + taxa; o motorista recebe o ganho cheio e a MOVI, depois da taxa, a parte dela
+  const c1 = (await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', coleta: { localId: 'cooper' }, agendado: false } })).d;
+  await call(`/v2/ofertas/${c1.id}/aceitar`, { metodo: 'POST', token: mot });
+  const pix = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: c1.id, metodo: 'pix' } })).d;
+  const vc = Math.round(c1.valor * 100);
+  const totalCent = Math.round(pix.valor * 100);
+  assert.equal(pix.liquido, c1.valor);
+  assert.ok(pix.taxa > 0 && totalCent === vc + Math.round(pix.taxa * 100));
+  assert.equal(totalCent, Math.ceil((vc / (1 - PIX / 100)) - 1e-6)); // por cima: total × (1 − taxa) ≥ valor
+  assert.equal(soma(pg.ultimo.items), totalCent);
+  assert.deepEqual(pg.ultimo.items.at(-1), { code: 'taxa', description: 'Taxa do Pix', amount: totalCent - vc, quantity: 1 });
+  const ganho = await ganhoEsperado(c1.id);
+  const sp = pg.ultimo.payments[0].split;
+  assert.equal(sp[0].recipient_id, rpMot);
+  assert.equal(sp[0].amount, Math.round(ganho * 100)); // motorista: exatamente o ganho mostrado
+  assert.equal(sp[0].amount + sp[1].amount, totalCent);
+  assert.ok(sp[1].amount - taxaPg(totalCent, PIX, 0) >= vc - Math.round(ganho * 100)); // MOVI: a parte dela inteira
+  pg.pedidos.get(`or_${pg.n}`).status = 'paid';
+  assert.equal((await call(`/v2/cobrancas/${pix.id}`, { token: cli })).d.status, 'paga');
+  const pago = (await call(`/v2/corridas/${c1.id}`, { token: cli })).d;
+  assert.equal(pago.taxaPagamento, pix.taxa);
+  assert.match(await ultimoAviso(), /PAGO NO ACEITE .* \+ taxa R\$/);
+  // cliente cancela antes da chegada: estorno de tudo o que pagou (com a taxa)
+  await call(`/v2/corridas/${c1.id}/cancelar`, { metodo: 'POST', token: cli });
+  await call('/v2/disponibilidade');
+  assert.deepEqual(pg.estornos.at(-1), { charge: `ch_${pg.n}`, amount: totalCent });
+
+  // cartão com taxa fixa
+  await call('/v2/eu/livre', { metodo: 'POST', token: mot });
+  const c2 = (await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', coleta: { localId: 'cooper' }, agendado: false } })).d;
+  await call(`/v2/ofertas/${c2.id}/aceitar`, { metodo: 'POST', token: mot });
+  const cart = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: c2.id, metodo: 'cartao', cardToken: 'tok_ok', cep: '89270000' } })).d;
+  assert.equal(cart.status, 'paga');
+  const t2 = Math.round(cart.valor * 100), v2 = Math.round(c2.valor * 100);
+  assert.equal(pg.ultimo.items.at(-1).description, 'Taxa do cartão');
+  assert.ok(t2 - taxaPg(t2, CARTAO, 50) >= v2 && t2 - taxaPg(t2, CARTAO, 50) <= v2 + 1);
+  const g2 = Math.round((await ganhoEsperado(c2.id)) * 100);
+  assert.equal(pg.ultimo.payments[0].split[0].amount, g2);
+  assert.ok(pg.ultimo.payments[0].split[1].amount - taxaPg(t2, CARTAO, 50) >= v2 - g2);
+  // motorista já no local e o cliente cancela: taxa de deslocamento fica, o resto (com a taxa do cartão) volta
+  await call(`/v2/corridas/${c2.id}/cheguei`, { metodo: 'POST', token: mot, corpo: COOPER });
+  await call(`/v2/corridas/${c2.id}/cancelar`, { metodo: 'POST', token: cli });
+  await call('/v2/disponibilidade');
+  assert.equal(pg.estornos.at(-1).amount, t2 - 700); // R$ 7 de deslocamento (configurado num teste anterior)
+
+  // delivery: loja recebe os produtos cheios; MOVI o frete; cliente paga a taxa
+  const lj = await call('/v2/lojistas', { metodo: 'POST', corpo: { lojaNome: 'Pão da Praça', nome: 'Rui Praça', cpf: gerarCpf(333344455), telefone: '47 98888-5555', senha: 'pao12345', endereco: 'Rua Praça, 9, Centro', lat: -26.477, lon: -48.993 } });
+  const loja = lj.d.token;
+  await call(`/v2/admin/lojistas/${lj.d.id}/status`, { metodo: 'POST', token: ADM, corpo: { status: 'aprovado' } });
+  assert.deepEqual((await call('/v2/loja', { token: loja })).d.recebedor, { temConta: false, status: null, ativo: false });
+  assert.equal((await call('/v2/loja/recebedor', { metodo: 'POST', token: loja, corpo: { ...conta, email: 'rui@exemplo.com' } })).s, 200);
+  const rpLoja = [...pg.recebedores.keys()].at(-1);
+  pg.recebedores.get(rpLoja).status = 'active';
+  await call('/v2/admin/recebedores/atualizar', { metodo: 'POST', token: ADM });
+  assert.equal((await call('/v2/loja', { token: loja })).d.recebedor.ativo, true);
+  const mens = (await call('/v2/loja/mensalidade', { metodo: 'POST', token: loja })).d;
+  const pm = (await call('/v2/pagar', { metodo: 'POST', token: loja, corpo: { tipo: 'mensalidade', id: mens.id, metodo: 'pix' } })).d;
+  assert.equal(pm.liquido, mens.valor); // a MOVI recebe a mensalidade cheia
+  assert.ok(pm.valor > mens.valor);
+  pg.pedidos.get(`or_${pg.n}`).status = 'paid';
+  await call(`/v2/cobrancas/${pm.id}`, { token: loja });
+  const pao = (await call('/v2/loja/produtos', { metodo: 'POST', token: loja, corpo: { nome: 'Pão francês (10)', preco: 9.5 } })).d;
+  await call('/v2/loja', { metodo: 'PUT', token: loja, corpo: { aberta: true } });
+  const ped = (await call('/v2/pedidos', { metodo: 'POST', token: cli, corpo: { lojaId: lj.d.id, itens: [{ produtoId: pao.id, qtd: 2 }] } })).d;
+  const pp = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'pedido', id: ped.id, metodo: 'pix' } })).d;
+  const tp = Math.round(pp.valor * 100), vp = Math.round(ped.total * 100);
+  assert.equal(pg.ultimo.items.length, 3); // produto, entrega e taxa
+  assert.equal(soma(pg.ultimo.items), tp);
+  const spp = pg.ultimo.payments[0].split;
+  assert.deepEqual([spp[0].recipient_id, spp[0].amount], [rpLoja, 1900]); // loja: os produtos cheios
+  assert.ok(spp[1].amount - taxaPg(tp, PIX, 0) >= Math.round(ped.frete * 100)); // MOVI: o frete inteiro
+  pg.pedidos.get(`or_${pg.n}`).status = 'paid';
+  await call('/webhook/pagarme', { metodo: 'POST', corpo: { type: 'order.paid', data: { id: `or_${pg.n}` } } });
+  const pv = (await call(`/v2/pedidos/${ped.id}`, { token: cli })).d;
+  assert.equal(pv.status, 'aguardando_loja');
+  assert.equal(pv.taxaPagamento, pp.taxa);
+  await call(`/v2/loja/pedidos/${ped.id}/recusar`, { metodo: 'POST', token: loja, corpo: { motivo: 'acabou' } });
+  const pc = (await call(`/v2/pedidos/${ped.id}`, { token: cli })).d;
+  assert.equal(Math.round(pc.reembolso * 100), tp); // devolve tudo, com a taxa
+  await call('/v2/disponibilidade');
+  assert.equal(pg.estornos.at(-1).amount, tp);
+
+  // chave Pix: qualquer tipo, só com a senha; saques e repasses vão para ela e o Admin é avisado
+  assert.match((await call('/v2/eu/pix', { metodo: 'PUT', token: mot, corpo: { tipo: 'email', chave: 'tito@exemplo.com', senha: 'x' } })).d.erro, /Crie a sua senha/);
+  await call('/v2/eu/senha', { metodo: 'POST', token: mot, corpo: { nova: 'tito1234' } });
+  assert.match((await call('/v2/eu/pix', { metodo: 'PUT', token: mot, corpo: { tipo: 'email', chave: 'tito@', senha: 'tito1234' } })).d.erro, /Chave Pix inválida/);
+  assert.equal((await call('/v2/eu/pix', { metodo: 'PUT', token: mot, corpo: { tipo: 'email', chave: 'Tito@Exemplo.com', senha: 'errada' } })).s, 401);
+  const tr = await call('/v2/eu/pix', { metodo: 'PUT', token: mot, corpo: { tipo: 'celular', chave: '(47) 96666-2222', senha: 'tito1234' } });
+  assert.deepEqual(tr.d, { ok: true, pix: '+5547966662222', pixTipo: 'celular' });
+  assert.match(await ultimoAviso(), /CHAVE PIX ALTERADA[\s\S]*Tito Taxa[\s\S]*Celular\): \+5547966662222/);
+  const eu = (await call('/v2/eu', { token: mot })).d;
+  assert.deepEqual([eu.pix, eu.pixTipo], ['+5547966662222', 'celular']);
+  assert.equal((await call('/v2/saldo', { token: mot })).d.chavePix, '+5547966662222');
+  assert.ok((await call('/v2/saques', { metodo: 'POST', token: mot })).s === 200); // taxa de deslocamento a sacar
+  assert.match(await ultimoAviso(), /SAQUE SOLICITADO[\s\S]*Pix \(Celular\): \+5547966662222/);
+  const aleat = '123E4567-E89B-12D3-A456-426614174000';
+  assert.match((await call('/v2/loja', { metodo: 'PUT', token: loja, corpo: { pix: 'outra@chave.com' } })).d.erro, /Trocar chave Pix/);
+  assert.equal((await call('/v2/loja', { metodo: 'PUT', token: loja, corpo: { pix: (await call('/v2/loja', { token: loja })).d.pix, preparoMin: 25 } })).s, 200); // app antigo mandando a mesma chave
+  assert.deepEqual((await call('/v2/eu/pix', { metodo: 'PUT', token: loja, corpo: { tipo: 'aleatoria', chave: aleat, senha: 'pao12345' } })).d, { ok: true, pix: aleat.toLowerCase(), pixTipo: 'aleatoria' });
+  assert.equal((await call('/v2/loja/saldo', { token: loja })).d.chavePix, aleat.toLowerCase());
+  assert.equal((await call('/v2/eu/pix', { metodo: 'PUT', token: cli, corpo: { tipo: 'cpf', chave: gerarCpf(322233344), senha: 'x' } })).s, 404); // cliente não recebe
+
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'infinitepay' } });
 });

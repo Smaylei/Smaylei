@@ -69,6 +69,16 @@ export default function Lojista() {
           </View>
         </Pressable>
       )}
+      {vitrine && config.gateway === 'pagarme' && !vitrine.recebedor?.ativo && (
+        <Pressable style={s.aviso} onPress={() => router.push('/conta-recebimento')}>
+          <Text style={s.avisoTitulo}>{vitrine.recebedor?.temConta ? '🏦 Falta a prova de vida' : '🏦 Cadastre a conta para receber'}</Text>
+          <Text style={s.avisoTexto}>
+            {vitrine.recebedor?.temConta
+              ? 'Toque para fazer a selfie da Pagar.me e começar a receber as vendas direto na conta da loja.'
+              : 'As vendas do delivery caem direto na conta da loja. Leva uns 3 minutos.'}
+          </Text>
+        </Pressable>
+      )}
 
       {ativas.map((c) => (
         <Pressable key={c.id} style={[s.status, c.status === 'no_local' ? s.statusAtencao : s.statusOk]} onPress={() => router.push(`/corrida/${c.id}`)}>

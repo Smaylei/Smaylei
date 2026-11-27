@@ -172,6 +172,15 @@ export default function Painel() {
           <Text style={s.atalhoTexto}>🏪 Locais</Text>
         </Pressable>
       </View>
+      <Pressable style={[s.atalho, { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' }]} onPress={() => router.push({ pathname: '/servicos-admin', params: { secao: 'moto' } })}>
+        <Text style={s.atalhoTexto}>
+          🏍️ Tabela do motoboy
+          {res.config?.motoMinimo !== undefined
+            ? ` · mínimo ${formatarReais(res.config.motoMinimo)} até ${res.config.motoKmIncluso} km · ${formatarReais(res.config.motoPorKm)}/km · motoboy recebe ${res.config.motoRepassePct}%`
+            : ''}
+          {res.config && !res.config.motoAtivo ? ' · desligado' : ''}
+        </Text>
+      </Pressable>
       <Pressable style={[s.atalho, { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' }]} onPress={() => router.push('/pagamentos-admin')}>
         <Text style={s.atalhoTexto}>💳 Pagamentos · {res.config?.gateway === 'pagarme' ? 'Pagar.me (split)' : 'InfinitePay'}</Text>
       </Pressable>

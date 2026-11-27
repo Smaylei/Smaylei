@@ -22,6 +22,10 @@ export type ConfigServidor = {
   pagarmeRecebedorMovi: string;
   pagarmeChavePublica: string;
   pagarAoAceitarMin: number;
+  taxaPixPct: number;
+  taxaPixFixo: number;
+  taxaCartaoPct: number;
+  taxaCartaoFixo: number;
   taxaDeslocamento: number;
   esperaPagamentoMin: number;
   esperaConfirmacaoMin: number;
@@ -119,6 +123,9 @@ export type CorridaAdmin = {
 
 export type MotoristaAdmin = {
   id: string;
+  /** Chave Pix dos saques (a escolhida pelo motorista ou o CPF). */
+  pix?: string;
+  pixTipo?: string;
   veiculo?: 'carro' | 'moto';
   nome: string;
   cpf: string;
@@ -307,6 +314,10 @@ export type PagamentosAdmin = {
   recebedorMovi: string;
   chavePublica: string;
   pagarAoAceitarMin: number;
+  taxaPixPct: number;
+  taxaPixFixo: number;
+  taxaCartaoPct: number;
+  taxaCartaoFixo: number;
   webhook: string;
   lojas: RecebedorAdmin[];
   motoristas: RecebedorAdmin[];

@@ -1,6 +1,6 @@
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ScrollViewInstance } from 'react-native';
 import { cores, raio, sombra } from '../components/tema';
 import { CIDADES } from '../data/cidades';
 import { CATEGORIAS, fatorMoto, MODALIDADES, precoMoto, SERVICOS, tarifaMoto, type CategoriaId, type ConfigMoto, type Liberacao, type ServicoId } from '../data/servicos';
@@ -14,6 +14,9 @@ type Ajustes = Liberacao & ConfigMoto & { deslocamentoPadraoKm: number; deslocam
  * quando você ligar aqui. No lançamento, apenas os mercados.
  */
 export default function ServicosAdmin() {
+  const { secao } = useLocalSearchParams<{ secao?: string }>(); // 'moto': abre direto na tabela do motoboy
+  const rolagem = useRef<ScrollViewInstance>(null);
+  const rolou = useRef(false);
   const [lib, setLib] = useState<Ajustes | null>(null);
   const [tabela, setTabela] = useState({ minimo: '', incluso: '', porKm: '', repasse: '' });
   const [desloc, setDesloc] = useState('');
@@ -74,7 +77,7 @@ export default function ServicosAdmin() {
     salvar({ ...lib, categoriasAtivas: lib.categoriasAtivas.includes(id) ? lib.categoriasAtivas.filter((x) => x !== id) : [...lib.categoriasAtivas, id] });
 
   return (
-    <ScrollView contentContainerStyle={s.conteudo}>
+    <ScrollView ref={rolagem} contentContainerStyle={s.conteudo}>
       <Text style={s.intro}>Ligue um serviço quando houver demanda: ele aparece na hora no app do cliente. Desligar não afeta pedidos já feitos.</Text>
 
       {MODALIDADES.map((m) => (
@@ -126,7 +129,15 @@ export default function ServicosAdmin() {
           />
         ))}
       </View>
-      <View style={s.cartao}>
+      <View
+        style={[s.cartao, secao === 'moto' && { borderWidth: 1.5, borderColor: cores.primaria }]}
+        onLayout={(e) => {
+          if (secao !== 'moto' || rolou.current) return;
+          rolou.current = true;
+          const y = e.nativeEvent.layout.y;
+          setTimeout(() => rolagem.current?.scrollTo({ y: Math.max(0, y - 12), animated: true }), 50);
+        }}
+      >
         <Text style={s.titulo}>🏍️ Moto (motoboy)</Text>
         <Text style={s.desc}>O motorista escolhe carro ou moto no cadastro. Corridas de moto só vão para motos.</Text>
         <Linha

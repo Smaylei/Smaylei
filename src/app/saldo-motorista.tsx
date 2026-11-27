@@ -2,12 +2,14 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { cores, raio, sombra } from '../components/tema';
+import TrocarChavePix from '../components/TrocarChavePix';
 import { api, type Saldo } from '../services/api';
-import { formatarCpf } from '../services/cpf';
+import { mostrarChavePix, nomeTipoChave } from '../services/pix';
 import { formatarReais } from '../services/preco';
 
 type Detalhe = Saldo & {
   chavePix: string;
+  pixTipo?: string;
   saqueDias: number;
   creditos: { id: string; tipo: 'corrida' | 'taxa' | 'gorjeta'; valor: number; criadoEm: string; mercado: string | null }[];
   saques: { id: string; valor: number; status: 'solicitado' | 'pago' | 'recusado'; criadoEm: string; pagoEm: string | null; motivo: string | null }[];
@@ -20,6 +22,7 @@ const ROTULO_SAQUE = { solicitado: '⏳ Solicitado', pago: '✓ Pago', recusado:
 export default function SaldoMotorista() {
   const [d, setD] = useState<Detalhe | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const [trocando, setTrocando] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -38,7 +41,7 @@ export default function SaldoMotorista() {
 
   function sacar() {
     if (!d) return;
-    Alert.alert('Pedir saque', `Enviar ${formatarReais(d.disponivel)} para o Pix (CPF ${formatarCpf(d.chavePix)})?`, [
+    Alert.alert('Pedir saque', `Enviar ${formatarReais(d.disponivel)} para o Pix (${nomeTipoChave(d.pixTipo ?? 'cpf')} ${mostrarChavePix(d.chavePix)})?`, [
       { text: 'Voltar', style: 'cancel' },
       {
         text: 'Pedir saque',
@@ -60,6 +63,7 @@ export default function SaldoMotorista() {
 
   if (!d) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   const podeSacar = d.disponivel >= 1 && !d.proximoSaqueEm;
+  const chave = `${nomeTipoChave(d.pixTipo ?? 'cpf')} ${mostrarChavePix(d.chavePix)}`;
 
   return (
     <ScrollView contentContainerStyle={s.conteudo} refreshControl={<RefreshControl refreshing={false} onRefresh={carregar} />}>
@@ -76,8 +80,27 @@ export default function SaldoMotorista() {
       <Text style={s.ajuda}>
         {d.proximoSaqueEm
           ? `Saques são semanais: o próximo pode ser pedido em ${data(d.proximoSaqueEm)}.`
-          : `1 saque a cada ${d.saqueDias} dias, por Pix na chave CPF ${formatarCpf(d.chavePix)}.`}
+          : `1 saque a cada ${d.saqueDias} dias, por Pix.`}
       </Text>
+      <View style={s.chave}>
+        <View style={{ flex: 1 }}>
+          <Text style={s.detalhe}>Chave Pix dos saques</Text>
+          <Text style={s.texto}>{chave}</Text>
+        </View>
+        <Pressable onPress={() => setTrocando(true)} hitSlop={8}>
+          <Text style={s.link}>Trocar</Text>
+        </Pressable>
+      </View>
+      <TrocarChavePix
+        visivel={trocando}
+        papel="motorista"
+        aoFechar={() => setTrocando(false)}
+        aoSalvar={(r) => {
+          setTrocando(false);
+          setD({ ...d, chavePix: r.pix, pixTipo: r.pixTipo });
+          Alert.alert('Chave Pix', 'Pronto! Os próximos saques vão para a nova chave.');
+        }}
+      />
       <Text style={s.ajuda}>Cada corrida entra no saldo quando o cliente confirma que você chegou ao local da coleta.</Text>
 
       <Text style={s.secao}>Saques</Text>
@@ -126,4 +149,6 @@ const s = StyleSheet.create({
   texto: { fontSize: 15, fontWeight: '600', color: cores.texto },
   detalhe: { fontSize: 12, color: cores.suave },
   itemValor: { fontSize: 16, fontWeight: '700', color: cores.texto },
+  chave: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: cores.cartao, borderRadius: raio, ...sombra, padding: 12 },
+  link: { color: cores.primaria, fontWeight: '700', fontSize: 14 },
 });

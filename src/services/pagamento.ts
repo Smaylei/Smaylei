@@ -12,7 +12,10 @@ export type Cobranca = {
   ref: string;
   status: 'pendente' | 'paga' | 'falhou';
   metodo: 'pix' | 'cartao';
+  /** Total cobrado (valor + taxa do Pix/cartão). */
   valor: number;
+  taxa?: number;
+  liquido?: number;
   qrCode: string | null;
   qrCodeUrl: string | null;
   expiraEm: string | null;

@@ -1,4 +1,4 @@
-import { Stack, useFocusEffect } from 'expo-router';
+import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -32,6 +32,7 @@ const num = (t: string) => Number(t.replace(/\./g, '').replace(',', '.'));
  */
 export default function ContaRecebimento() {
   const ehLoja = MODO === 'lojista';
+  const { depois } = useLocalSearchParams<{ depois?: string }>(); // veio direto do cadastro
   const papel = ehLoja ? 'lojista' : 'motorista';
   const raiz = ehLoja ? '/v2/loja/recebedor' : '/v2/eu/recebedor';
   const [estado, setEstado] = useState<Estado | null>(null);
@@ -128,7 +129,18 @@ export default function ContaRecebimento() {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={s.conteudo} keyboardShouldPersistTaps="handled">
-        <Stack.Screen options={{ title: 'Conta para receber' }} />
+        <Stack.Screen options={{ title: depois ? 'Último passo' : 'Conta para receber' }} />
+        {!!depois && (
+          <View style={s.cartao}>
+            <Text style={s.titulo}>Cadastro enviado ✓</Text>
+            <Text style={s.texto}>
+              Agora cadastre a conta onde você vai receber{ehLoja ? ' as vendas' : ' as corridas'}. Leva uns 3 minutos e depois a Pagar.me pede uma selfie (prova de vida), exigência do Banco Central.
+            </Text>
+            <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace(ehLoja ? '/lojista' : '/motorista'))} hitSlop={8}>
+              <Text style={s.link}>Fazer depois</Text>
+            </Pressable>
+          </View>
+        )}
         {!estado.disponivel && <Text style={s.aviso}>O recebimento direto pela Pagar.me ainda não foi ligado pela MOVI. Você pode voltar aqui depois.</Text>}
         <Text style={s.texto}>
           {ehLoja

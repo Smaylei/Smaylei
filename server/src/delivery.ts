@@ -11,6 +11,7 @@
 import type { Config } from './central';
 import { cidadeDe, type CidadeId } from '../../src/data/cidades';
 import { aceitaMoto, CATEGORIAS_LOJA, DIAS_MENSALIDADE, type Veiculo } from '../../src/data/servicos';
+import { nomeTipoChave } from '../../src/services/pix';
 import { distanciaRetaKm } from '../../src/services/preco';
 import { brl, DIA, erro, iso, json, MIN, novoId, r2, type Linha } from './util';
 
@@ -65,7 +66,14 @@ export const COLUNAS_DELIVERY = [
   // Pagar.me: produtos direto para a loja (split), cobrança e estorno automático
   ...['repasse_direto INTEGER NOT NULL DEFAULT 0', 'cobranca_id TEXT', 'estorno_tentado_em TEXT', 'estorno_erro TEXT'].map((c) => `ALTER TABLE pedidos ADD COLUMN ${c}`),
   'ALTER TABLE mensalidades ADD COLUMN cobranca_id TEXT',
+  'ALTER TABLE pedidos ADD COLUMN taxa_pagamento REAL NOT NULL DEFAULT 0', // taxa do Pix/cartão paga pelo cliente por cima
 ];
+
+/** Chave Pix dos repasses da loja: a escolhida (com tipo) ou, se nunca trocou, o CNPJ/CPF. */
+function chavePixLoja(loja: Linha): { pix: string; pixTipo: string } {
+  if (loja.pix_repasse) return { pix: String(loja.pix_repasse), pixTipo: String(loja.pix_tipo ?? '') || 'chave' };
+  return loja.cnpj ? { pix: String(loja.cnpj), pixTipo: 'cnpj' } : { pix: String(loja.cpf), pixTipo: 'cpf' };
+}
 
 const ROTULO_PEDIDO: Record<string, string> = {
   pagamento_pendente: 'Aguardando pagamento',
@@ -139,6 +147,7 @@ export class Delivery {
       checkoutUrl: para === 'cliente' && p.status === 'pagamento_pendente' ? p.checkout_url : null, pagamentoAte: p.pagamento_ate, metodo: p.metodo,
       criadoEm: p.criado_em, pagoEm: p.pago_em, aceitoEm: p.aceito_em, entregueEm: p.entregue_em, canceladoEm: p.cancelado_em,
       liberadoEm: p.liberado_em, reembolso: Number(p.reembolso ?? 0), reembolsadoEm: p.reembolsado_em, repasseDireto: p.repasse_direto === 1,
+      taxaPagamento: Number(p.taxa_pagamento ?? 0),
       aceiteAte: p.status === 'aguardando_loja' && p.pago_em ? iso(Date.parse(String(p.pago_em)) + this.cfg.deliveryAceiteMin * MIN) : null,
       corridaId: p.corrida_id, ...this.motoristaDaCorrida(p.corrida_id),
     };
@@ -169,8 +178,10 @@ export class Delivery {
   }
 
   // ---------- ciclo do pedido ----------
+  /** Cancela o pedido; `reembolso` é a parte de produtos + frete (a taxa do Pix/cartão paga pelo cliente volta junto). */
   private cancelarPedido(p: Linha, motivo: string, por: string, reembolso: number, cab: string) {
     const agora = iso(Date.now());
+    if (p.pago_em && reembolso > 0) reembolso += Number(p.taxa_pagamento ?? 0);
     this.b.exec(`UPDATE pedidos SET status='cancelado', motivo=?, cancelado_por=?, cancelado_em=?, reembolso=? WHERE id=?`, motivo, por, agora, r2(reembolso), p.id);
     if (p.pago_em) this.b.avisar(this.textoPedido(this.pedido(p.id)!, cab), p.corrida_id);
   }
@@ -180,7 +191,7 @@ export class Delivery {
     const itens = (JSON.parse(String(p.itens)) as Item[]).map((i) => `${i.qtd}× ${i.nome}`).join(', ');
     return [
       cab, `🛍️ Pedido #${p.codigo} · ${loja?.loja_nome ?? 'loja'}`, `Cliente: ${cli?.nome ?? '-'}`, `Itens: ${itens}`,
-      `Produtos ${brl(Number(p.subtotal))} + frete ${brl(Number(p.frete))} = ${brl(Number(p.total))}${p.metodo ? ` (${p.metodo === 'pix' ? 'Pix' : 'cartão'})` : ''}`,
+      `Produtos ${brl(Number(p.subtotal))} + frete ${brl(Number(p.frete))} = ${brl(Number(p.total))}${Number(p.taxa_pagamento) > 0 ? ` (+ taxa ${brl(Number(p.taxa_pagamento))} paga pelo cliente)` : ''}${p.metodo ? ` (${p.metodo === 'pix' ? 'Pix' : 'cartão'})` : ''}`,
       Number(p.reembolso) > 0 ? `⚠️ ESTORNAR ${brl(Number(p.reembolso))} ao cliente pelo app da InfinitePay` : '',
     ].filter(Boolean).join('\n');
   }
@@ -221,20 +232,20 @@ export class Delivery {
   }
 
   /** Pagamento confirmado (InfinitePay ou Pagar.me). `direto`: os produtos já foram para a loja pelo split. */
-  aplicarPago(id: string, metodo: string | null, extra: { slug?: string; tx?: string; receiptUrl?: string | null; cobrancaId?: string; direto?: boolean } = {}) {
+  aplicarPago(id: string, metodo: string | null, extra: { slug?: string; tx?: string; receiptUrl?: string | null; cobrancaId?: string; direto?: boolean; taxa?: number } = {}) {
     if (id.startsWith('mens-')) return this.aplicarMensalidade(id, metodo, extra);
     const p = this.pedido(id);
     if (!p || p.pago_em) return p ?? null;
     const agora = iso(Date.now());
     this.b.exec(
-      `UPDATE pedidos SET pago_em=?, metodo=?, slug=?, transaction_nsu=?, receipt_url=?, cobranca_id=?, repasse_direto=? WHERE id=?`,
-      agora, metodo, extra.slug ?? null, extra.tx ?? null, extra.receiptUrl ?? null, extra.cobrancaId ?? null, extra.direto ? 1 : 0, id,
+      `UPDATE pedidos SET pago_em=?, metodo=?, slug=?, transaction_nsu=?, receipt_url=?, cobranca_id=?, repasse_direto=?, taxa_pagamento=? WHERE id=?`,
+      agora, metodo, extra.slug ?? null, extra.tx ?? null, extra.receiptUrl ?? null, extra.cobrancaId ?? null, extra.direto ? 1 : 0, extra.taxa ?? 0, id,
     );
     if (p.status === 'pagamento_pendente') {
       this.b.exec(`UPDATE pedidos SET status='aguardando_loja' WHERE id=?`, id);
       this.b.avisar(this.textoPedido(this.pedido(id)!, `💰 PEDIDO PAGO — aguardando a loja aceitar (até ${this.cfg.deliveryAceiteMin} min)`));
     } else {
-      this.b.exec(`UPDATE pedidos SET reembolso=total WHERE id=?`, id);
+      this.b.exec(`UPDATE pedidos SET reembolso=total + taxa_pagamento WHERE id=?`, id);
       this.b.avisar(this.textoPedido(this.pedido(id)!, '⚠️ PEDIDO PAGO APÓS O PRAZO — já estava cancelado'));
     }
     return this.pedido(id)!;
@@ -397,11 +408,13 @@ export class Delivery {
         liberado: this.liberado(), aprovada, mensalidade: cfg.deliveryMensalidade, diasMensalidade: DIAS_MENSALIDADE,
         ativaAte: loja.delivery_ate ?? null, ativa: this.vitrineAtiva(loja, agora), aberta: !!loja.delivery_aberta,
         descricao: loja.delivery_desc ?? '', categoria: loja.delivery_categoria ?? 'mercado', pedidoMinimo: Number(loja.pedido_minimo ?? 0),
-        preparoMin: Number(loja.preparo_min ?? 20), pix: loja.pix_repasse ?? loja.cnpj ?? loja.cpf, temFoto: !!loja.foto, fotoV: versao(loja.foto), id: loja.id, aceiteMin: cfg.deliveryAceiteMin,
+        preparoMin: Number(loja.preparo_min ?? 20), ...chavePixLoja(loja), temFoto: !!loja.foto, fotoV: versao(loja.foto), id: loja.id, aceiteMin: cfg.deliveryAceiteMin,
         produtos: n(`SELECT COUNT(*) AS n FROM produtos WHERE loja_id=?`), produtosAtivos: n(`SELECT COUNT(*) AS n FROM produtos WHERE loja_id=? AND ativo=1`),
         pedidosNovos: n(`SELECT COUNT(*) AS n FROM pedidos WHERE loja_id=? AND status='aguardando_loja'`),
         pedidosAndamento: n(`SELECT COUNT(*) AS n FROM pedidos WHERE loja_id=? AND status='aceito'`),
         saldo: this.saldoLoja(loja.id),
+        gateway: this.b.pagarmeAtivo() ? 'pagarme' : 'infinitepay',
+        recebedor: { temConta: !!loja.pagarme_recebedor, status: loja.pagarme_status ?? null, ativo: !!loja.pagarme_recebedor && loja.pagarme_status === 'active' },
       });
     }
     if (metodo === 'PUT' && p === '/v2/loja') {
@@ -413,8 +426,9 @@ export class Delivery {
       if (!(minimo >= 0 && minimo <= 1000)) return erro('Pedido mínimo inválido.');
       const preparo = b.preparoMin !== undefined ? Math.round(Number(b.preparoMin)) : Number(loja.preparo_min ?? 20);
       if (!(preparo >= 5 && preparo <= 180)) return erro('Tempo de preparo entre 5 e 180 minutos.');
-      const pix = b.pix !== undefined ? String(b.pix).trim().slice(0, 120) : loja.pix_repasse;
-      if (b.pix !== undefined && String(pix).length < 5) return erro('Informe a chave Pix para receber os repasses.');
+      // A chave Pix só muda pela rota própria (PUT /v2/eu/pix), que pede a senha e avisa o Admin.
+      if (b.pix !== undefined && String(b.pix).trim() !== chavePixLoja(loja).pix) return erro('Para trocar a chave Pix, toque em "Trocar chave Pix" (pede a sua senha).', 409);
+      const pix = loja.pix_repasse;
       const aberta = b.aberta !== undefined ? (b.aberta ? 1 : 0) : Number(loja.delivery_aberta ?? 0);
       if (aberta && !aprovada) return erro('A loja precisa estar aprovada para abrir a vitrine.', 403);
       this.b.exec(`UPDATE clientes SET delivery_desc=?, delivery_categoria=?, pedido_minimo=?, preparo_min=?, pix_repasse=?, delivery_aberta=? WHERE id=?`, desc ?? null, cat, minimo, preparo, pix ?? null, aberta, loja.id);
@@ -508,7 +522,7 @@ export class Delivery {
     // Saldo e repasses
     if (metodo === 'GET' && p === '/v2/loja/saldo')
       return json({
-        ...this.saldoLoja(loja.id), chavePix: loja.pix_repasse ?? loja.cnpj ?? loja.cpf, intervaloDias: cfg.saqueDias,
+        ...this.saldoLoja(loja.id), chavePix: chavePixLoja(loja).pix, pixTipo: chavePixLoja(loja).pixTipo, intervaloDias: cfg.saqueDias,
         vendas: this.b.q(`SELECT id, codigo, subtotal, liberado_em AS liberadoEm FROM pedidos WHERE loja_id=? AND liberado_em IS NOT NULL ORDER BY liberado_em DESC LIMIT 50`, loja.id),
         repasses: this.b.q(`SELECT id, valor, status, chave_pix AS chavePix, criado_em AS criadoEm, pago_em AS pagoEm, motivo FROM repasses_loja WHERE loja_id=? ORDER BY criado_em DESC LIMIT 30`, loja.id),
       });
@@ -516,10 +530,10 @@ export class Delivery {
       const s = this.saldoLoja(loja.id);
       if (s.proximoRepasseEm) return erro(`Você poderá pedir o próximo repasse em ${new Date(s.proximoRepasseEm).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}.`, 409);
       if (s.disponivel < 1) return erro('Sem vendas a receber.', 409);
-      const chave = String(loja.pix_repasse ?? loja.cnpj ?? loja.cpf);
+      const { pix: chave, pixTipo } = chavePixLoja(loja);
       const id = novoId('rep');
       this.b.exec(`INSERT INTO repasses_loja (id, loja_id, valor, chave_pix, status, criado_em) VALUES (?,?,?,?, 'solicitado', ?)`, id, loja.id, s.disponivel, chave, iso(agora));
-      this.b.avisar(`💸 REPASSE DE LOJA SOLICITADO\n${loja.loja_nome}: ${brl(s.disponivel)}\nPix: ${chave}\nVeja em Delivery para marcar como pago.`);
+      this.b.avisar(`💸 REPASSE DE LOJA SOLICITADO\n${loja.loja_nome}: ${brl(s.disponivel)}\nPix (${nomeTipoChave(pixTipo)}): ${chave}\nVeja em Delivery para marcar como pago.`);
       return json({ ok: true, valor: s.disponivel });
     }
     return erro('Rota não encontrada.', 404);
