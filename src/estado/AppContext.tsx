@@ -9,7 +9,18 @@ import { carregarEndereco, salvarEndereco, type Endereco } from '../services/cad
 import { URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../services/preco';
 import { MODO, SOLICITANTE } from '../variante';
 
-type Config = Liberacao & ConfigMoto & { tarifas: Tarifa[]; margem: number; urgencia: Urgencia; esperaBorrachariaMin: number; comissaoMotoristaPct: number };
+type Config = Liberacao &
+  ConfigMoto & {
+    tarifas: Tarifa[];
+    margem: number;
+    urgencia: Urgencia;
+    esperaBorrachariaMin: number;
+    comissaoMotoristaPct: number;
+    /** Quem processa os pagamentos: InfinitePay (link) ou Pagar.me (Pix e cartão dentro do app). */
+    gateway: 'infinitepay' | 'pagarme';
+    pagarmeChavePublica: string;
+    pagarAoAceitarMin: number;
+  };
 
 /** Cadastro no servidor de quem pede (cliente ou loja). */
 export type Eu = { tipo: 'cliente' | 'lojista'; nome: string; temSenha?: boolean; status?: 'pendente' | 'aprovado' | 'bloqueado'; lojaNome?: string; cidade?: CidadeId | null };
@@ -44,6 +55,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     urgencia: URGENCIA_PADRAO,
     esperaBorrachariaMin: 20,
     comissaoMotoristaPct: 80,
+    gateway: 'infinitepay',
+    pagarmeChavePublica: '',
+    pagarAoAceitarMin: 3,
     ...LIBERACAO_PADRAO,
     ...MOTO_PADRAO,
   });
@@ -62,6 +76,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
             urgencia: c.urgencia ?? URGENCIA_PADRAO,
             esperaBorrachariaMin: c.esperaBorrachariaMin ?? 20,
             comissaoMotoristaPct: c.comissaoMotoristaPct ?? 80,
+            gateway: c.gateway === 'pagarme' ? 'pagarme' : 'infinitepay',
+            pagarmeChavePublica: c.pagarmeChavePublica ?? '',
+            pagarAoAceitarMin: c.pagarAoAceitarMin ?? 3,
             servicosAtivos: c.servicosAtivos ?? LIBERACAO_PADRAO.servicosAtivos,
             categoriasAtivas: c.categoriasAtivas ?? LIBERACAO_PADRAO.categoriasAtivas,
             outroEnderecoLoja: c.outroEnderecoLoja ?? LIBERACAO_PADRAO.outroEnderecoLoja,

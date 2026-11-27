@@ -134,6 +134,7 @@ export default function PedidosLoja() {
               <Text style={s.saldoValor}>{formatarReais(vendas.disponivel)}</Text>
               <Text style={s.saldoSub}>
                 Em andamento: {formatarReais(vendas.emAndamento)} · total vendido: {formatarReais(vendas.totalVendido)}
+                {vendas.recebidoDireto ? ` · ${formatarReais(vendas.recebidoDireto)} já caíram direto na conta da loja` : ''}
               </Text>
             </View>
             <Pressable style={[s.aceitar, (vendas.disponivel < 1 || !!vendas.proximoRepasseEm) && { opacity: 0.45 }]} disabled={vendas.disponivel < 1 || !!vendas.proximoRepasseEm} onPress={repasse}>

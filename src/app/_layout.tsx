@@ -61,6 +61,8 @@ export default function Layout() {
               <Stack.Screen name="chat/[id]" options={{ title: 'Chat' }} />
               <Stack.Screen name="pagamento" options={{ title: 'Pagamento' }} />
               <Stack.Screen name="checkout/[id]" options={{ title: 'Pagamento seguro' }} />
+              <Stack.Screen name="pagar" options={{ title: 'Pagamento' }} />
+              <Stack.Screen name="conta-recebimento" options={{ title: 'Conta para receber' }} />
               <Stack.Screen name="delivery" options={{ title: 'Delivery' }} />
               <Stack.Screen name="loja/[id]" options={{ title: 'Loja' }} />
               <Stack.Screen name="carrinho" options={{ title: 'Carrinho' }} />
@@ -91,6 +93,7 @@ export default function Layout() {
               <Stack.Screen name="lojistas-admin" options={{ title: 'Lojistas' }} />
               <Stack.Screen name="mapa-admin" options={{ title: 'Mapa ao vivo' }} />
               <Stack.Screen name="delivery-admin" options={{ title: 'Delivery das lojas' }} />
+              <Stack.Screen name="pagamentos-admin" options={{ title: 'Pagamentos (Pagar.me)' }} />
               <Stack.Screen name="ajustes" options={{ title: 'Ajustes' }} />
               <Stack.Screen name="tarifas" options={{ title: 'Tarifas' }} />
             </Stack>

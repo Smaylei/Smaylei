@@ -6,6 +6,7 @@ import AvaliarFrete from '../../components/AvaliarFrete';
 import MapaRuas, { type EstadoMapa } from '../../components/MapaRuas';
 import { cores, raio, sombra } from '../../components/tema';
 import { useApp } from '../../estado/AppContext';
+import { irParaPagamento } from '../../services/pagamento';
 import { api, fonteImagem, ROTULO_STATUS, type CorridaCliente } from '../../services/api';
 import { useRota } from '../../services/eta';
 import { SOLICITANTE } from '../../variante';
@@ -16,7 +17,7 @@ const ETAPAS: CorridaCliente['status'][] = ['buscando', 'aceito', 'no_local', 'e
 
 export default function Corrida() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { casa } = useApp();
+  const { casa, config } = useApp();
   const [c, setC] = useState<CorridaCliente | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [foto, setFoto] = useState<{ uri: string; headers?: Record<string, string> } | null>(null);
@@ -130,8 +131,9 @@ export default function Corrida() {
   const km = (v: number) => v.toFixed(1).replace('.', ',');
 
   const nomeDestino = entrega?.nome === 'Casa' ? 'sua casa' : (entrega?.nome ?? 'o destino');
-  const titulo =
-    !naColeta && c.status === 'no_local'
+  const titulo = c.aguardandoPagamento
+    ? `${c.motorista?.nome ?? 'O motorista'} aceitou! Pague para ele sair`
+    : !naColeta && c.status === 'no_local'
       ? 'Motorista retirando na coleta'
       : !naColeta && c.status === 'em_andamento'
         ? c.chegouDestinoEm
@@ -149,7 +151,7 @@ export default function Corrida() {
         <Text style={[s.topoTitulo, c.status === 'cancelado' && { color: cores.erro }, c.status === 'no_local' && { color: cores.alerta }]}>
           {titulo}
         </Text>
-        {eta && c.status === 'aceito' && (
+        {eta && c.status === 'aceito' && !c.aguardandoPagamento && (
           <Text style={s.eta}>
             Chega à coleta em <Text style={s.etaForte}>~{eta.min} min</Text> ({km(eta.km)} km)
             {etaCasaDepois ? `\nDepois, ~${etaCasaDepois.min} min até ${nomeDestino}` : ''}
@@ -164,7 +166,15 @@ export default function Corrida() {
         {c.status === 'buscando' && (
           <Text style={s.eta}>
             {c.agendado ? `Agendado para ${c.janela}. Avisamos quando um motorista aceitar.` : 'Avisando os motoristas próximos…'}
-            {'\n'}🔒 Seu pagamento está retido com segurança.
+            {'\n'}
+            {c.pagarAoAceitar ? '💳 Você paga quando um motorista aceitar (Pix ou cartão à vista).' : '🔒 Seu pagamento está retido com segurança.'}
+          </Text>
+        )}
+        {c.aguardandoPagamento && (
+          <Text style={s.eta}>
+            Pague até{' '}
+            <Text style={s.etaForte}>{c.pagamentoAte ? new Date(c.pagamentoAte).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : 'agora'}</Text> com Pix ou cartão. Se não pagar
+            a tempo, a corrida é cancelada.
           </Text>
         )}
         {c.status === 'cancelado' && (
@@ -182,8 +192,8 @@ export default function Corrida() {
         )}
       </View>
 
-      {c.status === 'pagamento_pendente' && (
-        <Pressable style={s.botao} onPress={() => router.push(`/checkout/${c.id}`)}>
+      {(c.status === 'pagamento_pendente' || c.aguardandoPagamento) && (
+        <Pressable style={s.botao} onPress={() => irParaPagamento(config.gateway, 'corrida', c.id)}>
           <Text style={s.botaoTexto}>Pagar {formatarReais(c.pacote?.valor ?? c.valor)}</Text>
         </Pressable>
       )}

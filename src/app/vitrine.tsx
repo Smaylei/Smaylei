@@ -4,6 +4,8 @@ import { ActivityIndicator, Alert, Image, Pressable, RefreshControl, ScrollView,
 import EscolherFoto from '../components/EscolherFoto';
 import { cores, raio } from '../components/tema';
 import { CATEGORIAS_LOJA, type CategoriaLoja } from '../data/servicos';
+import { useApp } from '../estado/AppContext';
+import { irParaPagamento } from '../services/pagamento';
 import { enviarFoto, ErroApi } from '../services/api';
 import * as D from '../services/delivery';
 import { formatarReais } from '../services/preco';
@@ -14,6 +16,7 @@ const br = (n: number) => String(n).replace('.', ',');
 
 /** Vitrine do lojista no Delivery: mensalidade, loja aberta/fechada, dados da loja e produtos. */
 export default function Vitrine() {
+  const { config } = useApp();
   const [v, setV] = useState<D.MinhaVitrine | null>(null);
   const [produtos, setProdutos] = useState<D.Produto[]>([]);
   const [form, setForm] = useState({ descricao: '', categoria: 'mercado' as CategoriaLoja, minimo: '', preparo: '', pix: '' });
@@ -47,7 +50,7 @@ export default function Vitrine() {
   async function ativar() {
     try {
       const m = await D.pagarMensalidade();
-      router.push({ pathname: '/checkout/[id]', params: { id: m.id, tipo: 'mensalidade' } });
+      irParaPagamento(config.gateway, 'mensalidade', m.id);
     } catch (e) {
       Alert.alert('Vitrine', e instanceof ErroApi ? e.message : 'Tente de novo.');
     }
@@ -93,6 +96,16 @@ export default function Vitrine() {
           <Text style={s.botaoTexto}>{v.ativa ? `Renovar +${v.diasMensalidade} dias · ${formatarReais(v.mensalidade)}` : `Ativar vitrine · ${formatarReais(v.mensalidade)}`}</Text>
         </Pressable>
       </View>
+
+      {config.gateway === 'pagarme' && (
+        <Pressable style={s.linhaSwitch} onPress={() => router.push('/conta-recebimento')}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.item}>🏦 Conta para receber</Text>
+            <Text style={s.sub}>Cadastre a conta da loja: as vendas do delivery caem direto nela (Pagar.me).</Text>
+          </View>
+          <Text style={s.link}>Abrir</Text>
+        </Pressable>
+      )}
 
       <View style={s.linhaSwitch}>
         <View style={{ flex: 1 }}>

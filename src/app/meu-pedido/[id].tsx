@@ -2,6 +2,8 @@ import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { cores, raio } from '../../components/tema';
+import { useApp } from '../../estado/AppContext';
+import { irParaPagamento } from '../../services/pagamento';
 import { ErroApi } from '../../services/api';
 import * as D from '../../services/delivery';
 import { formatarReais } from '../../services/preco';
@@ -18,6 +20,7 @@ function passoAtual(p: D.Pedido) {
 /** Pedido do delivery: etapa, itens, valores e o acompanhamento da entrega no mapa. */
 export default function MeuPedido() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { config } = useApp();
   const [p, setP] = useState<D.Pedido | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -85,7 +88,7 @@ export default function MeuPedido() {
       </View>
 
       {p.status === 'pagamento_pendente' && (
-        <Pressable style={s.botao} onPress={() => router.push({ pathname: '/checkout/[id]', params: { id: p.id, tipo: 'pedido' } })}>
+        <Pressable style={s.botao} onPress={() => irParaPagamento(config.gateway, 'pedido', p.id)}>
           <Text style={s.botaoTexto}>Pagar {formatarReais(p.total)}</Text>
         </Pressable>
       )}

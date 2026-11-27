@@ -5,7 +5,7 @@ import { erro, type Env } from './central';
 export { Central } from './central';
 
 // Marca da versão publicada (para conferir se a Cloudflare já está com o código novo).
-const VERSAO = 'urgencia-incentivo-4';
+const VERSAO = 'pagarme-5';
 
 const CORS = {
   'access-control-allow-origin': '*',

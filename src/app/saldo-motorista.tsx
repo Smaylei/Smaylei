@@ -67,6 +67,7 @@ export default function SaldoMotorista() {
         <Text style={s.rotulo}>Disponível para saque</Text>
         <Text style={s.valor}>{formatarReais(d.disponivel)}</Text>
         <Text style={s.sub}>Em liberação: {formatarReais(d.emLiberacao)} · Total já ganho: {formatarReais(d.totalGanho)}</Text>
+        {!!d.recebidoDireto && <Text style={s.sub}>Recebido direto na sua conta (Pagar.me): {formatarReais(d.recebidoDireto)}</Text>}
       </View>
 
       <Pressable style={[s.botao, (!podeSacar || ocupado) && { opacity: 0.45 }]} disabled={!podeSacar || ocupado} onPress={sacar}>

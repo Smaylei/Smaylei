@@ -18,6 +18,10 @@ export type ConfigServidor = {
   urgencia: Urgencia;
   comissaoMotoristaPct: number;
   incentivoUrgencia: number;
+  gateway: 'infinitepay' | 'pagarme';
+  pagarmeRecebedorMovi: string;
+  pagarmeChavePublica: string;
+  pagarAoAceitarMin: number;
   taxaDeslocamento: number;
   esperaPagamentoMin: number;
   esperaConfirmacaoMin: number;
@@ -292,3 +296,21 @@ export const delivery = () => api<DeliveryAdmin>('admin', '/v2/admin/delivery');
 export const diasVitrine = (id: string, dias: number) => api<{ ativaAte: string }>('admin', `/v2/admin/lojistas/${id}/delivery-dias`, { method: 'POST', corpo: { dias } });
 export const repasseLoja = (id: string, acao: 'pagar' | 'recusar', motivo?: string) => api('admin', `/v2/admin/repasses-loja/${id}/${acao}`, { method: 'POST', corpo: { motivo } });
 export const cancelarPedido = (id: string) => api('admin', `/v2/admin/pedidos/${id}/cancelar`, { method: 'POST' });
+
+// ---------- pagamentos (Pagar.me) ----------
+export type RecebedorAdmin = { id: string; nome: string; loja_nome: string; pagarme_recebedor: string | null; pagarme_status: string | null };
+export type PagamentosAdmin = {
+  gateway: 'infinitepay' | 'pagarme';
+  ativo: boolean;
+  chaveConfigurada: boolean;
+  ambiente: 'teste' | 'produção' | null;
+  recebedorMovi: string;
+  chavePublica: string;
+  pagarAoAceitarMin: number;
+  webhook: string;
+  lojas: RecebedorAdmin[];
+  motoristas: RecebedorAdmin[];
+  estornosComErro: { id: string; reembolso: number; estorno_erro: string }[];
+};
+export const pagamentos = () => api<PagamentosAdmin>('admin', '/v2/admin/pagamentos');
+export const atualizarRecebedores = () => api<{ atualizados: number }>('admin', '/v2/admin/recebedores/atualizar', { method: 'POST' });

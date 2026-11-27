@@ -140,7 +140,12 @@ export default function CorridaMotoristaTela() {
       <Stack.Screen options={{ title: c.agendado ? `Corrida · ${c.janela}` : 'Corrida agora' }} />
       <View style={s.topo}>
         {c.servicoTitulo ? <Text style={s.servico}>{c.servicoTitulo}</Text> : null}
-        <Text style={s.topoTitulo}>{!naColeta && c.status === 'no_local' ? 'Retire o pedido' : ROTULO_STATUS[c.status]}</Text>
+        <Text style={s.topoTitulo}>{c.aguardandoPagamento ? '⏳ Aguardando o cliente pagar' : !naColeta && c.status === 'no_local' ? 'Retire o pedido' : ROTULO_STATUS[c.status]}</Text>
+        {c.aguardandoPagamento && (
+          <Text style={s.eta}>
+            Não saia ainda: o cliente tem até {c.pagamentoAte ? new Date(c.pagamentoAte).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : 'alguns minutos'} para pagar. Se não pagar, a corrida cai e você fica livre.
+          </Text>
+        )}
         {eta && ['aceito', 'em_andamento'].includes(c.status) && (
           <Text style={s.eta}>
             {indoAoCliente ? 'Até a entrega' : 'Até a coleta'}: <Text style={{ fontWeight: '700' }}>~{eta.min} min</Text> · {km(eta.km)} km
@@ -149,13 +154,19 @@ export default function CorridaMotoristaTela() {
         <Text style={s.ganho}>
           Ganho: {formatarReais(c.ganho)}
           {c.incentivo ? ` (inclui +${formatarReais(c.incentivo)} de incentivo)` : ''}{' '}
-          {c.liberadoEm ? '· liberado no seu saldo' : naColeta ? '· liberado quando o cliente confirmar sua chegada' : '· liberado quando o cliente confirmar o recebimento'}
+          {c.repasseDireto
+            ? '· vai direto para a sua conta (Pagar.me)'
+            : c.liberadoEm
+              ? '· liberado no seu saldo'
+              : naColeta
+                ? '· liberado quando o cliente confirmar sua chegada'
+                : '· liberado quando o cliente confirmar o recebimento'}
         </Text>
       </View>
 
       {estadoMapa && <MapaRuas estado={estadoMapa} style={{ height: 300 }} />}
 
-      {destino && ATIVA.includes(c.status) && (
+      {destino && ATIVA.includes(c.status) && !c.aguardandoPagamento && (
         <Pressable style={[s.botao, s.botaoNav]} onPress={() => navegar(destino.lat, destino.lon)}>
           <Text style={s.botaoTexto}>🧭 Navegar até {indoAoCliente ? (c.retorno ? destino.nome : 'o destino') : 'a coleta'}</Text>
         </Pressable>
@@ -191,9 +202,13 @@ export default function CorridaMotoristaTela() {
 
       {c.status === 'aceito' && (
         <>
+          {c.aguardandoPagamento ? (
+            <Text style={s.ajuda}>Assim que o cliente pagar, a navegação e o botão “Cheguei” aparecem aqui.</Text>
+          ) : (
           <Pressable style={s.botao} onPress={() => cheguei()} disabled={ocupado}>
             {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Cheguei ao local da coleta</Text>}
           </Pressable>
+          )}
           <Text style={s.ajuda}>
             Funciona a até {c.raioChegadaM} m da coleta (confere pelo GPS).{naColeta ? ' O cliente recebe o aviso para confirmar.' : ''}
           </Text>

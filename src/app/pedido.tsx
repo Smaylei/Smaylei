@@ -6,6 +6,7 @@ import SeletorPonta, { escolhaCasa, type Escolha } from '../components/SeletorPo
 import { cores, raio, sombra } from '../components/tema';
 import { aceitaMoto, precoMoto, servicoPorId, VEICULOS, type Veiculo } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
+import { irParaPagamento } from '../services/pagamento';
 import { useCotacoes } from '../hooks/useCotacoes';
 import { api, type CorridaCliente, type Disponibilidade } from '../services/api';
 import { formatarReais } from '../services/preco';
@@ -109,7 +110,8 @@ export default function PedidoTela() {
           inicios: agendado ? viagens.idas : undefined, voltas: agendado && viagens.voltas.length ? viagens.voltas : undefined,
         },
       });
-      router.replace(`/checkout/${c.id}`);
+      if (c.status === 'buscando') router.replace(`/corrida/${c.id}`); // paga quando o motorista aceitar
+      else irParaPagamento(config.gateway, 'corrida', c.id, { substituir: true });
     } catch (e) {
       setErro((e as Error).message);
       setInicio(null);

@@ -1,7 +1,8 @@
-import { router } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useApp } from '../estado/AppContext';
 import { api, type CorridaCliente, type Gorjeta } from '../services/api';
+import { irParaPagamento } from '../services/pagamento';
 import { SOLICITANTE } from '../variante';
 import { formatarReais } from '../services/preco';
 import { cores, raio, sombra } from './tema';
@@ -14,6 +15,7 @@ const FRASE = ['', 'Ruim', 'Poderia ser melhor', 'Bom', 'Muito bom', 'Excelente!
  * e caixa de sugestões, que só a administração lê.
  */
 export default function AvaliarFrete({ c, onAtualizar }: { c: CorridaCliente; onAtualizar: (c: CorridaCliente) => void }) {
+  const { config } = useApp();
   const [nota, setNota] = useState(0);
   const [gorjeta, setGorjeta] = useState(0);
   const [outro, setOutro] = useState('');
@@ -45,7 +47,7 @@ export default function AvaliarFrete({ c, onAtualizar }: { c: CorridaCliente; on
       }
       if (valorGorjeta > 0) {
         const g = await api<Gorjeta>(SOLICITANTE, `/v2/corridas/${c.id}/gorjeta`, { method: 'POST', corpo: { valor: valorGorjeta } });
-        router.push({ pathname: '/checkout/[id]', params: { id: g.id, tipo: 'gorjeta', corrida: c.id } });
+        irParaPagamento(config.gateway, 'gorjeta', g.id, { corrida: c.id });
       }
     } catch (e) {
       Alert.alert('Não foi possível enviar', (e as Error).message);

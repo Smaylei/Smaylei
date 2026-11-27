@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 import { cores, raio } from '../components/tema';
 import { VEICULOS, type Veiculo } from '../data/servicos';
 import { useApp } from '../estado/AppContext';
+import { irParaPagamento } from '../services/pagamento';
 import { alterarItem, esvaziar, subtotal, useCarrinho } from '../estado/carrinho';
 import { ErroApi } from '../services/api';
 import * as D from '../services/delivery';
@@ -12,7 +13,7 @@ import { formatarReais } from '../services/preco';
 /** Carrinho do delivery: itens, entrega em casa, frete calculado pelo servidor e pagamento único. */
 export default function CarrinhoTela() {
   const carrinho = useCarrinho();
-  const { casa } = useApp();
+  const { casa, config } = useApp();
   const [veiculo, setVeiculo] = useState<Veiculo>('carro');
   const [moto, setMoto] = useState(false);
   const [minimo, setMinimo] = useState(0);
@@ -66,7 +67,7 @@ export default function CarrinhoTela() {
     try {
       const p = await D.fazerPedido({ lojaId, itens: carrinho.itens.map((i) => ({ produtoId: i.produto.id, qtd: i.qtd })), observacao: obs, veiculo });
       esvaziar();
-      router.replace({ pathname: '/checkout/[id]', params: { id: p.id, tipo: 'pedido' } });
+      irParaPagamento(config.gateway, 'pedido', p.id, { substituir: true });
     } catch (e) {
       setErro(e instanceof ErroApi ? e.message : 'Não foi possível fazer o pedido.');
     } finally {

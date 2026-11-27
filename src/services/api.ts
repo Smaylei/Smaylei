@@ -135,6 +135,9 @@ export type CorridaCliente = Viagem & {
   pacote: { id: string; valor: number; viagens: number } | null;
   /** Entrega de um pedido do delivery (cancelamento só pelo suporte). */
   pedidoId?: string | null;
+  /** Pagar.me: pedido para agora é pago quando o motorista aceita. */
+  pagarAoAceitar?: boolean;
+  aguardandoPagamento?: boolean;
 };
 
 export type CorridaMotorista = Viagem & {
@@ -153,6 +156,11 @@ export type CorridaMotorista = Viagem & {
   ganho: number;
   /** Extra do pedido "agora" (já somado ao ganho). */
   incentivo?: number;
+  /** Pagar.me: aceitou, mas o cliente ainda não pagou (não sair ainda). */
+  aguardandoPagamento?: boolean;
+  pagamentoAte?: string | null;
+  /** Ganho pago direto na conta Pagar.me do motorista (split). */
+  repasseDireto?: boolean;
   gorjeta: number | null;
   chegouEm?: string;
   liberadoEm?: string;
@@ -167,6 +175,8 @@ export type Saldo = {
   disponivel: number;
   emLiberacao: number;
   totalGanho: number;
+  /** Recebido direto na conta Pagar.me (split), fora do saldo de saque. */
+  recebidoDireto?: number;
   proximoSaqueEm: string | null;
 };
 

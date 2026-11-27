@@ -172,6 +172,9 @@ export default function Painel() {
           <Text style={s.atalhoTexto}>🏪 Locais</Text>
         </Pressable>
       </View>
+      <Pressable style={[s.atalho, { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' }]} onPress={() => router.push('/pagamentos-admin')}>
+        <Text style={s.atalhoTexto}>💳 Pagamentos · {res.config?.gateway === 'pagarme' ? 'Pagar.me (split)' : 'InfinitePay'}</Text>
+      </Pressable>
       <Pressable
         style={[s.atalho, { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' }, (res.repassesLojaPendentesQtd ?? 0) > 0 && s.atalhoAlerta]}
         onPress={() => router.push('/delivery-admin')}

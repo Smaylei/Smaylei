@@ -25,6 +25,9 @@ type Eu = {
   gorjetasTotal: number;
   carro: string;
   placa: string;
+  gateway?: 'infinitepay' | 'pagarme';
+  recebedor?: { temConta: boolean; status: string | null; ativo: boolean };
+  recebidoDireto?: number;
 };
 
 const ATUALIZAR_MS = 5000;
@@ -157,11 +160,21 @@ export default function Motorista() {
         </View>
       )}
       {aviso && <Text style={s.aviso}>{aviso}</Text>}
+      {eu.gateway === 'pagarme' && !eu.recebedor?.ativo && (
+        <Pressable style={s.conta} onPress={() => router.push('/conta-recebimento')}>
+          <Text style={s.contaTitulo}>{eu.recebedor?.temConta ? '🏦 Conta de recebimento em análise' : '🏦 Cadastre sua conta para receber direto'}</Text>
+          <Text style={s.contaTexto}>
+            {eu.recebedor?.temConta
+              ? 'Conclua a prova de vida da Pagar.me. Assim que for aprovada, o valor das corridas cai direto na sua conta.'
+              : 'Com a conta cadastrada, o valor de cada corrida vai direto para a sua conta bancária, sem esperar o saque.'}
+          </Text>
+        </Pressable>
+      )}
 
       {atual && (
         <Pressable style={s.atual} onPress={() => router.push(`/corrida-motorista/${atual.id}`)}>
           <Text style={s.atualRotulo}>CORRIDA ATUAL</Text>
-          <Text style={s.atualTitulo}>{ROTULO_STATUS[atual.status]}</Text>
+          <Text style={s.atualTitulo}>{atual.aguardandoPagamento ? '⏳ Aguardando o cliente pagar' : ROTULO_STATUS[atual.status]}</Text>
           <Text style={[s.texto, { color: '#fff' }]}>
             {atual.mercado?.nome} → {atual.cliente?.nome} · {atual.agendado ? atual.janela : 'agora'}
           </Text>
@@ -261,6 +274,9 @@ export default function Motorista() {
 }
 
 const s = StyleSheet.create({
+  conta: { backgroundColor: cores.alertaFundo, borderRadius: raio, padding: 14, gap: 4 },
+  contaTitulo: { color: cores.alerta, fontWeight: '700', fontSize: 15 },
+  contaTexto: { color: cores.texto, fontSize: 13, lineHeight: 19 },
   incentivo: { fontSize: 13, fontWeight: '700', color: cores.sucesso, marginTop: 2 },
   reputacao: { flexDirection: 'row', gap: 10 },
   repItem: { flex: 1, backgroundColor: cores.cartao, borderRadius: raio, padding: 14, gap: 2, ...sombra },

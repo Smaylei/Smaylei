@@ -76,7 +76,7 @@ export type MinhaVitrine = {
   pedidosAndamento: number;
   saldo: SaldoLoja;
 };
-export type SaldoLoja = { disponivel: number; emAndamento: number; totalVendido: number; proximoRepasseEm: string | null };
+export type SaldoLoja = { disponivel: number; emAndamento: number; totalVendido: number; recebidoDireto?: number; proximoRepasseEm: string | null };
 export type Repasse = { id: string; valor: number; status: 'solicitado' | 'pago' | 'recusado'; chavePix: string; criadoEm: string; pagoEm: string | null; motivo: string | null };
 export type Vendas = SaldoLoja & { chavePix: string; intervaloDias: number; vendas: { id: string; codigo: string; subtotal: number; liberadoEm: string }[]; repasses: Repasse[] };
 
