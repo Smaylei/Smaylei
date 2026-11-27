@@ -58,6 +58,7 @@ import { caminhoOsrm, tabelaOsrm, trajetoEstimado, type Trajeto } from './rotas'
 import { conferir, gerarHash, senhaProvisoria, senhaValida } from './senha';
 import { brl, DIA, erro, iso, json, MIN, novoId, r2, soDigitos, type Linha } from './util';
 import { COLUNAS_DELIVERY, Delivery, ESQUEMA_DELIVERY } from './delivery';
+import * as Pagarme from './pagarme';
 
 export { erro, json } from './util';
 import { distanciaRetaKm, URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../../src/services/preco';
@@ -67,6 +68,8 @@ export interface Env {
   DOCS?: R2Bucket;
   INFINITEPAY_HANDLE: string;
   INFINITEPAY_API_KEY?: string;
+  /** Chave secreta da Pagar.me (sk_...), só como segredo do Worker. */
+  PAGARME_SECRET_KEY?: string;
   ADMIN_TOKEN: string;
   APP_SCHEME: string;
 }
@@ -79,6 +82,10 @@ export type Config = ConfigAgenda & Liberacao & ConfigMoto & ConfigDelivery & {
   urgencia: Urgencia;
   comissaoMotoristaPct: number; // parte do frete que vai para o saldo do motorista (80)
   incentivoUrgencia: number; // R$ a mais para o motorista no pedido "agora" (a taxa de urgência fica com a MOVI)
+  gateway: 'infinitepay' | 'pagarme'; // quem processa os pagamentos
+  pagarmeRecebedorMovi: string; // recebedor da MOVI na Pagar.me (rp_...), para o split
+  pagarmeChavePublica: string; // chave pública (pk_...) que o app usa para gerar o token do cartão
+  pagarAoAceitarMin: number; // corrida "agora" na Pagar.me: minutos para o cliente pagar depois do aceite
   taxaDeslocamento: number; // R$ do motorista se o cliente cancelar/não aparecer com ele já no local
   esperaPagamentoMin: number; // prazo para pagar depois de pedir (o horário fica reservado)
   esperaConfirmacaoMin: number; // quanto o motorista espera o cliente confirmar no local
@@ -95,6 +102,10 @@ export const CONFIG_PADRAO: Config = {
   urgencia: URGENCIA_PADRAO,
   comissaoMotoristaPct: 80,
   incentivoUrgencia: 4,
+  gateway: 'infinitepay',
+  pagarmeRecebedorMovi: '',
+  pagarmeChavePublica: '',
+  pagarAoAceitarMin: 3,
   taxaDeslocamento: 5,
   esperaPagamentoMin: 15,
   esperaConfirmacaoMin: 10,
@@ -164,6 +175,12 @@ CREATE TABLE IF NOT EXISTS login_tentativas (chave TEXT PRIMARY KEY, falhas INTE
 CREATE TABLE IF NOT EXISTS rotas_cache (chave TEXT PRIMARY KEY, km_ida REAL, km_volta REAL, min_ida REAL, min_volta REAL, criado_em TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS avaliacoes (
   corrida_id TEXT PRIMARY KEY, cliente_id TEXT NOT NULL, motorista_id TEXT, nota INTEGER NOT NULL, sugestao TEXT, criado_em TEXT NOT NULL, lida INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS cobrancas (
+  id TEXT PRIMARY KEY, ref_tipo TEXT NOT NULL, ref_id TEXT NOT NULL, valor REAL NOT NULL, metodo TEXT NOT NULL, order_id TEXT, charge_id TEXT,
+  status TEXT NOT NULL, qr_code TEXT, qr_code_url TEXT, expira_em TEXT, split TEXT, criado_em TEXT NOT NULL, pago_em TEXT,
+  estornado REAL NOT NULL DEFAULT 0, erro TEXT);
+CREATE INDEX IF NOT EXISTS cobrancas_ref ON cobrancas(ref_tipo, ref_id);
+CREATE INDEX IF NOT EXISTS cobrancas_order ON cobrancas(order_id);
 CREATE TABLE IF NOT EXISTS gorjetas (
   id TEXT PRIMARY KEY, corrida_id TEXT NOT NULL, cliente_id TEXT NOT NULL, motorista_id TEXT NOT NULL, valor REAL NOT NULL, status TEXT NOT NULL,
   checkout_url TEXT, slug TEXT, transaction_nsu TEXT, metodo TEXT, receipt_url TEXT, criado_em TEXT NOT NULL, pago_em TEXT)
@@ -180,6 +197,10 @@ const COLUNAS_NOVAS = [`ALTER TABLE corridas ADD COLUMN pagamento_ate TEXT`, `AL
   'ALTER TABLE clientes ADD COLUMN senha_hash TEXT',
   "ALTER TABLE corridas ADD COLUMN veiculo TEXT NOT NULL DEFAULT 'carro'",
   'ALTER TABLE corridas ADD COLUMN urgencia REAL NOT NULL DEFAULT 0',
+  // Pagar.me: corrida "agora" paga no aceite (split direto ao motorista), cobrança e estorno automático
+  ...['pagar_ao_aceitar INTEGER NOT NULL DEFAULT 0', 'repasse_direto INTEGER NOT NULL DEFAULT 0', 'cobranca_id TEXT', 'estorno_tentado_em TEXT', 'estorno_erro TEXT'].map((c) => `ALTER TABLE corridas ADD COLUMN ${c}`),
+  ...['pagarme_recebedor TEXT', 'pagarme_status TEXT', 'email TEXT'].flatMap((c) => [`ALTER TABLE motoristas ADD COLUMN ${c}`, `ALTER TABLE clientes ADD COLUMN ${c}`]),
+  'ALTER TABLE gorjetas ADD COLUMN cobranca_id TEXT',
   'ALTER TABLE corridas ADD COLUMN km_desloc REAL',
   ...["tipo TEXT NOT NULL DEFAULT 'cliente'", 'loja_nome TEXT', 'cnpj TEXT', "status TEXT NOT NULL DEFAULT 'aprovado'"].map((c) => `ALTER TABLE clientes ADD COLUMN ${c}`)];
 
@@ -213,6 +234,7 @@ export class Central extends DurableObject<Env> {
       foraDaArea: (p) => this.foraDaArea(p),
       corrida: (id) => this.corrida(id),
       cancelarCorrida: (c, motivo, por, cab) => void this.cancelar(c, motivo, por, cab),
+      pagarmeAtivo: () => !!this.pagarme(),
       docs: env.DOCS,
     });
     ctx.blockConcurrencyWhile(async () => {
@@ -349,18 +371,21 @@ export class Central extends DurableObject<Env> {
   /** Libera o valor retido para o saldo do motorista (uma vez só). */
   private liberar(c: Linha) {
     if (this.corrida(c.id)?.liberado_em) return;
-    const ganho = this.ganhoDe(this.corrida(c.id) ?? c);
+    const atual = this.corrida(c.id) ?? c;
+    const ganho = this.ganhoDe(atual);
     this.sql.exec(`UPDATE corridas SET liberado_em=?, ganho_motorista=? WHERE id=?`, iso(Date.now()), ganho, c.id);
-    this.creditar(c.motorista_id, c.id, 'corrida', ganho);
+    // Pago com split na Pagar.me: o ganho já foi direto para a conta do motorista.
+    if (!atual.repasse_direto) this.creditar(c.motorista_id, c.id, 'corrida', ganho);
     if (c.pedido_id) this.delivery.entregue(c.pedido_id); // delivery: produtos para o saldo da loja
   }
   saldo(motoristaId: unknown) {
     const creditos = Number(this.um(`SELECT COALESCE(SUM(valor),0) AS v FROM creditos WHERE motorista_id=?`, motoristaId)?.v ?? 0);
     const sacado = Number(this.um(`SELECT COALESCE(SUM(valor),0) AS v FROM saques WHERE motorista_id=? AND status IN ('solicitado','pago')`, motoristaId)?.v ?? 0);
-    const emLiberacao = this.q(`SELECT valor, urgencia FROM corridas WHERE motorista_id=? AND status IN ('aceito','no_local','em_andamento') AND liberado_em IS NULL`, motoristaId).reduce((s, c) => s + this.ganhoDe(c), 0);
+    const emLiberacao = this.q(`SELECT valor, urgencia FROM corridas WHERE motorista_id=? AND status IN ('aceito','no_local','em_andamento') AND liberado_em IS NULL AND repasse_direto=0 AND pago_em IS NOT NULL`, motoristaId).reduce((s, c) => s + this.ganhoDe(c), 0);
+    const direto = Number(this.um(`SELECT COALESCE(SUM(ganho_motorista),0) AS v FROM corridas WHERE motorista_id=? AND repasse_direto=1 AND liberado_em IS NOT NULL`, motoristaId)?.v ?? 0);
     const ultimo = this.um<{ criado_em: string }>(`SELECT criado_em FROM saques WHERE motorista_id=? AND status IN ('solicitado','pago') ORDER BY criado_em DESC LIMIT 1`, motoristaId);
     const proximo = ultimo ? Date.parse(ultimo.criado_em) + this.config().saqueDias * DIA : 0;
-    return { disponivel: r2(creditos - sacado), emLiberacao: r2(emLiberacao), totalGanho: r2(creditos), proximoSaqueEm: proximo > Date.now() ? iso(proximo) : null };
+    return { disponivel: r2(creditos - sacado), emLiberacao: r2(emLiberacao), totalGanho: r2(creditos + direto), recebidoDireto: r2(direto), proximoSaqueEm: proximo > Date.now() ? iso(proximo) : null };
   }
 
   /** Cancela a corrida. Se já foi paga e não liberada, gera estorno (menos a taxa, quando o motorista já estava no local). */
@@ -371,7 +396,9 @@ export class Central extends DurableObject<Env> {
     if (c.pago_em && !c.liberado_em) {
       if (c.status === 'no_local') {
         taxa = Math.min(cfg.taxaDeslocamento, Number(c.valor));
-        this.creditar(c.motorista_id, c.id, 'taxa', taxa);
+        // Split direto: no estorno parcial o motorista já fica com a parte proporcional; a MOVI completa a taxa.
+        const jaFica = c.repasse_direto ? r2((this.ganhoDe(c) * taxa) / Number(c.valor)) : 0;
+        this.creditar(c.motorista_id, c.id, 'taxa', r2(taxa - jaFica));
       }
       reembolso = r2(Number(c.valor) - taxa);
     }
@@ -397,6 +424,11 @@ export class Central extends DurableObject<Env> {
     for (const c of this.q(`SELECT * FROM corridas WHERE status='buscando' AND oferta_ate < ?`, iso(agora)))
       this.cancelar(c, 'sem_motorista', 'sistema', '⚠️ SEM MOTORISTA — corrida cancelada');
     this.sql.exec(`UPDATE motoristas SET online=0 WHERE online=1 AND (loc_em IS NULL OR loc_em < ?)`, iso(agora - 30 * MIN));
+    // Pagar.me: o cliente não pagou depois do aceite → cancela e libera o motorista.
+    for (const c of this.q(`SELECT * FROM corridas WHERE status='aceito' AND pagar_ao_aceitar=1 AND pago_em IS NULL AND pagamento_ate < ?`, iso(agora))) {
+      this.sql.exec(`UPDATE corridas SET status='cancelado', motivo='nao_pago', cancelado_por='sistema', cancelado_em=?, fim=? WHERE id=?`, iso(agora), iso(agora), c.id);
+      this.avisar(this.textoCorrida(c, '⏰ O CLIENTE NÃO PAGOU depois do aceite — corrida cancelada e motorista liberado'), c.id);
+    }
     this.delivery.manutencao();
     void cfg;
   }
@@ -585,6 +617,8 @@ export class Central extends DurableObject<Env> {
       ...this.viagem(c),
       pacote: c.pacote_id ? this.um(`SELECT id, valor, viagens FROM pacotes WHERE id=?`, c.pacote_id) ?? null : null,
       pedidoId: c.pedido_id ?? null,
+      // Pagar.me: paga quando o motorista aceita (até pagamentoAte); depois disso a corrida cai.
+      pagarAoAceitar: c.pagar_ao_aceitar === 1, aguardandoPagamento: c.pagar_ao_aceitar === 1 && c.status === 'aceito' && !c.pago_em,
       mensagens: Number(this.um(`SELECT COUNT(*) AS n FROM mensagens WHERE corrida_id=?`, c.id)?.n ?? 0),
       avaliacao: this.um(`SELECT nota FROM avaliacoes WHERE corrida_id=?`, c.id)?.nota ?? null,
       gorjeta: this.um(`SELECT valor FROM gorjetas WHERE corrida_id=? AND status='paga'`, c.id)?.valor ?? null,
@@ -616,6 +650,7 @@ export class Central extends DurableObject<Env> {
       km: c.km, minutos: c.minutos, valor: c.ganho_motorista ?? this.ganhoDe(c), ganho: c.ganho_motorista ?? this.ganhoDe(c), incentivo: this.incentivoDe(c),
       gorjeta: this.um(`SELECT valor FROM gorjetas WHERE corrida_id=? AND status='paga'`, c.id)?.valor ?? null,
       chegouEm: c.chegou_em, liberadoEm: c.liberado_em, esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, raioChegadaM: cfg.raioChegadaM, taxaDeslocamento: cfg.taxaDeslocamento,
+      aguardandoPagamento: c.pagar_ao_aceitar === 1 && c.status === 'aceito' && !c.pago_em, pagamentoAte: c.pagamento_ate, repasseDireto: c.repasse_direto === 1,
     };
   }
 
@@ -679,9 +714,13 @@ export class Central extends DurableObject<Env> {
     if (!g || g.status === 'paga') return g ?? null;
     const r = await this.checarPagamento(id, slug, tx);
     if (!r.pago) return g;
-    const atual = this.um(`SELECT * FROM gorjetas WHERE id=?`, id)!;
-    if (atual.status === 'paga') return atual;
-    this.sql.exec(`UPDATE gorjetas SET status='paga', pago_em=?, metodo=?, slug=?, transaction_nsu=?, receipt_url=? WHERE id=?`, iso(Date.now()), r.metodo, slug, tx, receiptUrl ?? null, id);
+    return this.aplicarGorjeta(id, r.metodo, slug, tx, receiptUrl ?? null, null);
+  }
+  private aplicarGorjeta(id: string, metodo: string | null, slug: string | null, tx: string | null, receiptUrl: string | null, cobrancaId: string | null) {
+    const atual = this.um(`SELECT * FROM gorjetas WHERE id=?`, id);
+    if (!atual || atual.status === 'paga') return atual ?? null;
+    const r = { metodo };
+    this.sql.exec(`UPDATE gorjetas SET status='paga', pago_em=?, metodo=?, slug=?, transaction_nsu=?, receipt_url=?, cobranca_id=? WHERE id=?`, iso(Date.now()), metodo, slug, tx, receiptUrl, cobrancaId, id);
     this.creditar(atual.motorista_id, atual.corrida_id, 'gorjeta', Number(atual.valor));
     const mot = this.um(`SELECT nome FROM motoristas WHERE id=?`, atual.motorista_id);
     this.avisar(`💚 GORJETA de ${brl(Number(atual.valor))} para ${mot?.nome ?? 'o motorista'} (${r.metodo === 'pix' ? 'Pix' : 'cartão'}) — já está no saldo dele`, atual.corrida_id);
@@ -734,6 +773,272 @@ export class Central extends DurableObject<Env> {
     return tarde;
   }
 
+
+  // ---------- Pagar.me (Pix e cartão dentro do app, split e estorno automático) ----------
+  /** Chave secreta quando a Pagar.me está ligada no Admin e o segredo existe no Worker. */
+  private pagarme(): string | null {
+    return this.config().gateway === 'pagarme' && this.env.PAGARME_SECRET_KEY ? this.env.PAGARME_SECRET_KEY : null;
+  }
+  private recebedorAtivo(l?: Linha | null) {
+    return !!l?.pagarme_recebedor && l.pagarme_status === 'active';
+  }
+  /** Quem pagou (dono do que foi cobrado). */
+  private alvoDono(c: Linha) {
+    const t = c.ref_tipo, id = c.ref_id;
+    const l =
+      t === 'corrida' || t === 'gorjeta' ? this.um(`SELECT cliente_id AS d FROM ${t === 'corrida' ? 'corridas' : 'gorjetas'} WHERE id=?`, id)
+        : t === 'pacote' ? this.um(`SELECT cliente_id AS d FROM pacotes WHERE id=?`, id)
+          : t === 'pedido' ? this.um(`SELECT cliente_id AS d FROM pedidos WHERE id=?`, id)
+            : t === 'mensalidade' ? this.um(`SELECT loja_id AS d FROM mensalidades WHERE id=?`, id) : undefined;
+    return l?.d ?? null;
+  }
+  private cobrancaView(c: Linha) {
+    return {
+      id: c.id, tipo: c.ref_tipo, ref: c.ref_id, status: c.status, metodo: c.metodo, valor: Number(c.valor), qrCode: c.qr_code, qrCodeUrl: c.qr_code_url,
+      expiraEm: c.expira_em, pagoEm: c.pago_em, erro: c.erro, split: !!c.split,
+    };
+  }
+
+  /** O que vai ser pago (corrida, pacote, pedido do delivery, mensalidade ou gorjeta) e o split. */
+  private alvoPagamento(cli: Linha, tipo: unknown, id: unknown):
+    | { erro: string; status: number }
+    | { refTipo: string; refId: string; titulo: string; valor: number; itens: Pagarme.ItemCobranca[]; split?: Pagarme.SplitRegra[]; expiraSeg: number } {
+    const cfg = this.config();
+    const agora = Date.now();
+    const movi = cfg.pagarmeRecebedorMovi;
+    const cent = (v: number) => Math.round(v * 100);
+    const ate = (isoTxt: unknown, padraoMin: number) => Math.max(60, Math.round(((Date.parse(String(isoTxt ?? '')) || agora + padraoMin * MIN) - agora) / 1000));
+    if (tipo === 'corrida') {
+      const c = this.um(`SELECT * FROM corridas WHERE id=? AND cliente_id=?`, id, cli.id);
+      if (!c) return { erro: 'Corrida não encontrada.', status: 404 };
+      const titulo = `${servicoPorId(c.servico).titulo}: ${c.coleta_nome ?? c.mercado_nome} → ${c.entrega_nome ?? 'casa'}`;
+      if (c.pacote_id && c.status === 'pagamento_pendente') {
+        const pac = this.um(`SELECT * FROM pacotes WHERE id=?`, c.pacote_id)!;
+        if (pac.pago_em) return { erro: 'Este pacote já está pago.', status: 409 };
+        return { refTipo: 'pacote', refId: String(pac.id), titulo: `${servicoPorId(c.servico).titulo} - ${pac.viagens} viagens`, valor: Number(pac.valor), itens: [{ codigo: String(pac.id), descricao: `${servicoPorId(c.servico).titulo} - ${pac.viagens} viagens`, centavos: cent(Number(pac.valor)), qtd: 1 }], expiraSeg: ate(c.pagamento_ate, cfg.esperaPagamentoMin) };
+      }
+      if (c.pago_em) return { erro: 'Este frete já está pago.', status: 409 };
+      const valor = Number(c.valor);
+      const itens = [{ codigo: String(c.id), descricao: titulo, centavos: cent(valor), qtd: 1 }];
+      if (c.pagar_ao_aceitar) {
+        if (c.status !== 'aceito') return { erro: c.status === 'buscando' ? 'Aguarde um motorista aceitar para pagar.' : 'Este frete não pode mais ser pago.', status: 409 };
+        if (c.pagamento_ate && Date.parse(String(c.pagamento_ate)) < agora) return { erro: 'O prazo para pagar terminou.', status: 409 };
+        const mot = this.um(`SELECT * FROM motoristas WHERE id=?`, c.motorista_id);
+        const ganho = this.ganhoDe(c);
+        // Split: o ganho do motorista vai direto para a conta Pagar.me dele; a MOVI fica com o resto e paga as taxas.
+        const split = this.recebedorAtivo(mot) && movi && ganho > 0 && cent(ganho) < cent(valor)
+          ? [{ recebedor: String(mot!.pagarme_recebedor), centavos: cent(ganho), principal: false }, { recebedor: movi, centavos: cent(valor) - cent(ganho), principal: true }]
+          : undefined;
+        return { refTipo: 'corrida', refId: String(c.id), titulo, valor, itens, split, expiraSeg: ate(c.pagamento_ate, cfg.pagarAoAceitarMin) };
+      }
+      if (c.status !== 'pagamento_pendente') return { erro: 'Este frete não está aguardando pagamento.', status: 409 };
+      return { refTipo: 'corrida', refId: String(c.id), titulo, valor, itens, expiraSeg: ate(c.pagamento_ate, cfg.esperaPagamentoMin) };
+    }
+    if (tipo === 'pedido') {
+      const p = this.um(`SELECT * FROM pedidos WHERE id=? AND cliente_id=?`, id, cli.id);
+      if (!p) return { erro: 'Pedido não encontrado.', status: 404 };
+      if (p.status !== 'pagamento_pendente' || p.pago_em) return { erro: 'Este pedido não está aguardando pagamento.', status: 409 };
+      const loja = this.um(`SELECT * FROM clientes WHERE id=?`, p.loja_id);
+      const itensPed = JSON.parse(String(p.itens)) as { produtoId: string; nome: string; preco: number; qtd: number }[];
+      const itens = [...itensPed.map((i) => ({ codigo: i.produtoId, descricao: i.nome, centavos: cent(i.preco), qtd: i.qtd })), { codigo: 'frete', descricao: 'Entrega MOVI', centavos: cent(Number(p.frete)), qtd: 1 }];
+      const total = itens.reduce((sm, i) => sm + i.centavos * i.qtd, 0);
+      const produtos = total - cent(Number(p.frete));
+      // Split: os produtos vão direto para a loja; a MOVI fica com o frete e paga as taxas.
+      const split = this.recebedorAtivo(loja) && movi ? [{ recebedor: String(loja!.pagarme_recebedor), centavos: produtos, principal: false }, { recebedor: movi, centavos: total - produtos, principal: true }] : undefined;
+      return { refTipo: 'pedido', refId: String(p.id), titulo: `Pedido #${p.codigo} - ${loja?.loja_nome ?? 'loja'}`, valor: total / 100, itens, split, expiraSeg: ate(p.pagamento_ate, cfg.esperaPagamentoMin) };
+    }
+    if (tipo === 'mensalidade') {
+      const m = this.um(`SELECT * FROM mensalidades WHERE id=? AND loja_id=?`, id, cli.id);
+      if (!m || m.status !== 'pendente') return { erro: 'Mensalidade não encontrada.', status: 404 };
+      return { refTipo: 'mensalidade', refId: String(m.id), titulo: 'Vitrine MOVI Delivery - 30 dias', valor: Number(m.valor), itens: [{ codigo: String(m.id), descricao: 'Vitrine MOVI Delivery - 30 dias', centavos: cent(Number(m.valor)), qtd: 1 }], expiraSeg: 3600 };
+    }
+    if (tipo === 'gorjeta') {
+      const g = this.um(`SELECT * FROM gorjetas WHERE id=? AND cliente_id=?`, id, cli.id);
+      if (!g || g.status !== 'pendente') return { erro: 'Gorjeta não encontrada.', status: 404 };
+      return { refTipo: 'gorjeta', refId: String(g.id), titulo: 'Gorjeta para o motorista', valor: Number(g.valor), itens: [{ codigo: String(g.id), descricao: 'Gorjeta', centavos: cent(Number(g.valor)), qtd: 1 }], expiraSeg: 3600 };
+    }
+    return { erro: 'Pagamento inválido.', status: 400 };
+  }
+
+  private async pagarComPagarme(cli: Linha, b: { tipo?: string; id?: string; metodo?: string; cardToken?: string; cep?: string }) {
+    const sk = this.pagarme();
+    if (!sk) return erro('Pagamento pela Pagar.me desligado.', 409);
+    const metodo = b.metodo === 'cartao' ? 'cartao' : 'pix';
+    if (metodo === 'cartao' && (!b.cardToken || soDigitos(b.cep).length !== 8)) return erro('Informe os dados do cartão e o CEP de cobrança.');
+    const alvo = this.alvoPagamento(cli, b.tipo, b.id);
+    if ('erro' in alvo) return erro(alvo.erro, alvo.status);
+    const agora = Date.now();
+    if (metodo === 'pix') {
+      // Pix já gerado e ainda válido: mostra o mesmo QR Code.
+      const ja = this.um(`SELECT * FROM cobrancas WHERE ref_tipo=? AND ref_id=? AND metodo='pix' AND status='pendente' AND expira_em > ? ORDER BY criado_em DESC LIMIT 1`, alvo.refTipo, alvo.refId, iso(agora + 30_000));
+      if (ja) return json(this.cobrancaView(ja));
+    }
+    const id = novoId('cob');
+    let r: Pagarme.ResultadoPedido;
+    try {
+      r = await Pagarme.criarPedido(sk, {
+        codigo: id, itens: alvo.itens, cliente: { nome: String(cli.nome), cpf: String(cli.cpf ?? ''), telefone: String(cli.telefone ?? '') }, metodo,
+        pixExpiraSeg: alvo.expiraSeg, cardToken: b.cardToken, split: alvo.split,
+        cobranca: metodo === 'cartao' ? { endereco: String(cli.endereco), cep: String(b.cep), cidade: nomeCidade(cidadeDe({ lat: Number(cli.lat), lon: Number(cli.lon) })) || 'Guaramirim', uf: 'SC' } : undefined,
+      });
+    } catch (e) {
+      return erro((e as Error).message, 502);
+    }
+    this.sql.exec(
+      `INSERT INTO cobrancas (id, ref_tipo, ref_id, valor, metodo, order_id, charge_id, status, qr_code, qr_code_url, expira_em, split, criado_em, erro) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      id, alvo.refTipo, alvo.refId, r2(alvo.valor), metodo, r.orderId, r.chargeId, r.status === 'failed' || r.status === 'canceled' ? 'falhou' : 'pendente',
+      r.qrCode, r.qrCodeUrl, r.expiraEm ?? (metodo === 'pix' ? iso(agora + alvo.expiraSeg * 1000) : null), alvo.split ? JSON.stringify(alvo.split) : null, iso(agora),
+      r.status === 'failed' ? (r.motivoFalha ?? 'Pagamento recusado. Confira os dados ou use outro cartão.') : null,
+    );
+    if (r.status === 'paid') this.confirmarCobranca(id);
+    return json(this.cobrancaView(this.um(`SELECT * FROM cobrancas WHERE id=?`, id)!));
+  }
+
+  /** Confere na Pagar.me uma cobrança ainda pendente (chamado pelo app e pelo webhook). */
+  private async atualizarCobranca(c: Linha) {
+    const sk = this.env.PAGARME_SECRET_KEY;
+    if (!sk || c.status !== 'pendente' || !c.order_id) return c;
+    const r = await Pagarme.obterPedido(sk, String(c.order_id), c.metodo === 'cartao' ? 'cartao' : 'pix').catch(() => null);
+    if (r?.status === 'paid') this.confirmarCobranca(String(c.id));
+    else if (r && (r.status === 'failed' || r.status === 'canceled')) this.sql.exec(`UPDATE cobrancas SET status='falhou', erro=COALESCE(erro, ?) WHERE id=? AND status='pendente'`, r.motivoFalha ?? 'Pagamento não concluído.', c.id);
+    return this.um(`SELECT * FROM cobrancas WHERE id=?`, c.id)!;
+  }
+
+  /** Pagamento confirmado na Pagar.me: aplica no que foi pago (uma vez só). */
+  private confirmarCobranca(id: string) {
+    const cob = this.um(`SELECT * FROM cobrancas WHERE id=?`, id);
+    if (!cob || cob.status === 'paga') return;
+    const agora = iso(Date.now());
+    this.sql.exec(`UPDATE cobrancas SET status='paga', pago_em=?, erro=NULL WHERE id=?`, agora, id);
+    const metodo = cob.metodo === 'cartao' ? 'credit_card' : 'pix';
+    const direto = !!cob.split;
+    const ref = String(cob.ref_id);
+    if (cob.ref_tipo === 'corrida') {
+      const c = this.corrida(ref);
+      if (!c) return;
+      if (c.pagar_ao_aceitar) {
+        if (c.status === 'aceito' && !c.pago_em) {
+          this.sql.exec(`UPDATE corridas SET pago_em=?, metodo=?, valor_cobrado=valor, cobranca_id=?, repasse_direto=? WHERE id=?`, agora, metodo, id, direto ? 1 : 0, ref);
+          this.avisar(this.textoCorrida(this.corrida(ref)!, `💰 PAGO NO ACEITE ${brl(Number(c.valor))} (${metodo === 'pix' ? 'Pix' : 'cartão'})${direto ? ' — ganho já direto na conta do motorista' : ' — valor retido'}; motorista pode sair`), ref);
+        } else {
+          // Pagou depois do prazo (corrida já cancelada): estorno automático.
+          this.sql.exec(`UPDATE corridas SET pago_em=COALESCE(pago_em, ?), metodo=?, cobranca_id=?, repasse_direto=?, reembolso=valor WHERE id=?`, agora, metodo, id, direto ? 1 : 0, ref);
+          this.avisar(this.textoCorrida(this.corrida(ref)!, '⚠️ PAGAMENTO APÓS O PRAZO — corrida já cancelada; estorno automático pela Pagar.me'), ref);
+        }
+      } else {
+        this.marcarPago(ref, metodo, 'pagarme', String(cob.order_id), null, true);
+        this.sql.exec(`UPDATE corridas SET cobranca_id=? WHERE id=?`, id, ref);
+      }
+    } else if (cob.ref_tipo === 'pacote') {
+      if (this.um(`SELECT pago_em FROM pacotes WHERE id=?`, ref)?.pago_em) return;
+      this.sql.exec(`UPDATE pacotes SET pago_em=? WHERE id=?`, agora, ref);
+      const lista = this.q(`SELECT id FROM corridas WHERE pacote_id=? ORDER BY inicio`, ref);
+      for (const c of lista) {
+        this.marcarPago(String(c.id), metodo, 'pagarme', String(cob.order_id), null, false);
+        this.sql.exec(`UPDATE corridas SET cobranca_id=? WHERE id=?`, id, c.id);
+      }
+      const p = this.um(`SELECT * FROM corridas WHERE pacote_id=? ORDER BY inicio LIMIT 1`, ref);
+      if (p) this.avisar(this.textoCorrida(p, `💰 📅 PACOTE PAGO: ${lista.length} viagens, ${brl(Number(cob.valor))} (${metodo === 'pix' ? 'Pix' : 'cartão'}) — valor retido`), p.id);
+    } else if (cob.ref_tipo === 'pedido' || cob.ref_tipo === 'mensalidade') {
+      this.delivery.aplicarPago(ref, metodo, { slug: 'pagarme', tx: String(cob.order_id), cobrancaId: id, direto });
+    } else if (cob.ref_tipo === 'gorjeta') {
+      this.aplicarGorjeta(ref, metodo, 'pagarme', String(cob.order_id), null, id);
+    }
+  }
+
+  /** Estornos (corridas e pedidos cancelados depois de pagos na Pagar.me): devolve sozinho pela API. */
+  private async processarEstornos() {
+    const sk = this.env.PAGARME_SECRET_KEY;
+    if (!sk) return;
+    const agora = Date.now();
+    const espera = iso(agora - 10 * MIN);
+    for (const tabela of ['corridas', 'pedidos'] as const) {
+      const lista = this.q(
+        `SELECT * FROM ${tabela} WHERE reembolso > 0 AND reembolsado_em IS NULL AND cobranca_id IS NOT NULL AND (estorno_tentado_em IS NULL OR estorno_tentado_em < ?) LIMIT 5`,
+        espera,
+      );
+      for (const x of lista) {
+        this.sql.exec(`UPDATE ${tabela} SET estorno_tentado_em=? WHERE id=?`, iso(agora), x.id);
+        const cob = this.um(`SELECT * FROM cobrancas WHERE id=?`, x.cobranca_id);
+        if (!cob?.charge_id || cob.status !== 'paga') continue;
+        try {
+          await Pagarme.estornar(sk, String(cob.charge_id), Math.round(Number(x.reembolso) * 100));
+          this.sql.exec(`UPDATE ${tabela} SET reembolsado_em=?, estorno_erro=NULL WHERE id=?`, iso(Date.now()), x.id);
+          this.sql.exec(`UPDATE cobrancas SET estornado=estornado + ? WHERE id=?`, Number(x.reembolso), cob.id);
+          this.avisar(`↩️ ESTORNO AUTOMÁTICO de ${brl(Number(x.reembolso))} feito pela Pagar.me (${tabela === 'pedidos' ? `pedido #${x.codigo}` : String(x.mercado_nome ?? 'corrida')})`, tabela === 'corridas' ? x.id : x.corrida_id);
+        } catch (e) {
+          this.sql.exec(`UPDATE ${tabela} SET estorno_erro=? WHERE id=?`, (e as Error).message.slice(0, 200), x.id);
+        }
+      }
+    }
+  }
+
+  // ---------- recebedores (lojas e motoristas recebem direto pelo split) ----------
+  private async rotasRecebedor(req: Request, linha: Linha, tabela: 'clientes' | 'motoristas', p: string, metodo: string): Promise<Response | null> {
+    const raiz = tabela === 'motoristas' ? '/v2/eu/recebedor' : '/v2/loja/recebedor';
+    if (!p.startsWith(raiz)) return null;
+    const sk = this.env.PAGARME_SECRET_KEY;
+    const view = (l: Linha) => ({
+      disponivel: !!sk, temConta: !!l.pagarme_recebedor, status: l.pagarme_status ?? null, ativo: this.recebedorAtivo(l), email: l.email ?? null,
+    });
+    if (metodo === 'GET' && p === raiz) {
+      if (sk && linha.pagarme_recebedor && linha.pagarme_status !== 'active') {
+        const r = await Pagarme.obterRecebedor(sk, String(linha.pagarme_recebedor)).catch(() => null);
+        if (r && r.status !== linha.pagarme_status) this.sql.exec(`UPDATE ${tabela} SET pagarme_status=? WHERE id=?`, r.status, linha.id);
+        return json(view(this.um(`SELECT * FROM ${tabela} WHERE id=?`, linha.id)!));
+      }
+      return json(view(linha));
+    }
+    if (!sk) return erro('O recebimento pela Pagar.me ainda não foi configurado pela MOVI.', 409);
+    if (metodo === 'POST' && p === raiz) {
+      if (linha.pagarme_recebedor) return erro('Sua conta de recebimento já foi cadastrada. Para trocar a conta bancária, fale com o suporte.', 409);
+      const b = ((await req.json().catch(() => ({}))) ?? {}) as Partial<Pagarme.DadosRecebedor> & { conta?: Partial<Pagarme.ContaBancaria>; endereco?: Partial<Pagarme.Endereco> };
+      const ehLoja = tabela === 'clientes';
+      const cnpj = ehLoja ? soDigitos(linha.cnpj) : '';
+      const tipo: 'individual' | 'corporation' = cnpj.length === 14 ? 'corporation' : 'individual';
+      const e: Partial<Pagarme.Endereco> = b.endereco ?? {}, c: Partial<Pagarme.ContaBancaria> = b.conta ?? {};
+      const faltando = [
+        [!/^\S+@\S+\.\S+$/.test(String(b.email ?? '')), 'e-mail'], [!/^\d{4}-\d{2}-\d{2}$/.test(String(b.nascimento ?? '')), 'data de nascimento'],
+        [!(Number(b.rendaMensal) > 0), 'renda mensal'], [String(b.profissao ?? '').trim().length < 3, 'profissão'],
+        [String(e.rua ?? '').trim().length < 3, 'rua'], [!String(e.numero ?? '').trim(), 'número'], [String(e.bairro ?? '').trim().length < 2, 'bairro'],
+        [String(e.cidade ?? '').trim().length < 2, 'cidade'], [String(e.uf ?? '').trim().length !== 2, 'UF'], [soDigitos(e.cep).length !== 8, 'CEP'],
+        [soDigitos(c.banco).length < 3, 'código do banco'], [!soDigitos(c.agencia), 'agência'], [!soDigitos(c.conta), 'conta'], [!soDigitos(c.contaDv), 'dígito da conta'],
+        [tipo === 'corporation' && !(Number(b.faturamentoAnual) > 0), 'faturamento anual'], [tipo === 'corporation' && !/^\d{4}-\d{2}-\d{2}$/.test(String(b.fundacao ?? '')), 'data de fundação'],
+      ].filter(([x]) => x).map(([, n]) => n);
+      if (faltando.length) return erro(`Confira: ${faltando.join(', ')}.`);
+      const dados: Pagarme.DadosRecebedor = {
+        codigo: String(linha.id), tipo, email: String(b.email).trim(), documento: tipo === 'corporation' ? cnpj : soDigitos(linha.cpf), telefone: String(linha.telefone ?? ''),
+        nome: String(linha.nome), nascimento: String(b.nascimento), rendaMensal: Number(b.rendaMensal), profissao: String(b.profissao).trim(), nomeMae: b.nomeMae ? String(b.nomeMae).trim() : undefined,
+        razaoSocial: ehLoja ? String(b.razaoSocial ?? linha.loja_nome ?? '').trim() : undefined, nomeFantasia: ehLoja ? String(linha.loja_nome ?? '') : undefined,
+        faturamentoAnual: b.faturamentoAnual ? Number(b.faturamentoAnual) : undefined, fundacao: b.fundacao, cpfResponsavel: tipo === 'corporation' ? soDigitos(linha.cpf) : undefined,
+        endereco: { rua: String(e.rua).trim(), numero: String(e.numero).trim(), complemento: e.complemento, bairro: String(e.bairro).trim(), cidade: String(e.cidade).trim(), uf: String(e.uf).trim(), cep: String(e.cep), referencia: e.referencia },
+        // A conta precisa ser do próprio titular do cadastro (CPF do motorista / CNPJ da loja).
+        conta: { banco: String(c.banco), agencia: String(c.agencia), agenciaDv: c.agenciaDv, conta: String(c.conta), contaDv: String(c.contaDv), tipo: c.tipo === 'savings' ? 'savings' : 'checking',
+          titular: tipo === 'corporation' ? String(b.razaoSocial ?? linha.loja_nome) : String(linha.nome), documentoTitular: tipo === 'corporation' ? cnpj : soDigitos(linha.cpf) },
+      };
+      let r: { id: string; status: string };
+      try {
+        r = await Pagarme.criarRecebedor(sk, dados);
+      } catch (er) {
+        return erro((er as Error).message, 502);
+      }
+      this.sql.exec(`UPDATE ${tabela} SET pagarme_recebedor=?, pagarme_status=?, email=? WHERE id=?`, r.id, r.status, dados.email, linha.id);
+      this.avisar(`🏦 CONTA DE RECEBIMENTO cadastrada na Pagar.me: ${ehLoja ? `loja ${linha.loja_nome}` : `motorista ${linha.nome}`} (${r.status})`);
+      const kyc = await Pagarme.linkKyc(sk, r.id).catch(() => null);
+      return json({ ...view(this.um(`SELECT * FROM ${tabela} WHERE id=?`, linha.id)!), kycUrl: kyc?.url ?? null });
+    }
+    if (metodo === 'POST' && p === `${raiz}/kyc`) {
+      if (!linha.pagarme_recebedor) return erro('Cadastre a conta de recebimento primeiro.', 409);
+      try {
+        const k = await Pagarme.linkKyc(sk, String(linha.pagarme_recebedor));
+        return json({ kycUrl: k.url, expiraEm: k.expiraEm });
+      } catch (er) {
+        return erro((er as Error).message, 502);
+      }
+    }
+    return erro('Rota não encontrada.', 404);
+  }
+
   // ---------- agenda (.ics) ----------
   private ics(motoristaId?: string) {
     const f = (s: unknown) => String(s).replace(/[-:]/g, '').replace(/\.\d{3}/, '');
@@ -764,6 +1069,7 @@ export class Central extends DurableObject<Env> {
   async fetch(req: Request): Promise<Response> {
     try {
       this.manutencao();
+      if (this.env.PAGARME_SECRET_KEY) this.ctx.waitUntil(this.processarEstornos().catch(() => {}));
       return await this.rotear(req);
     } catch (e) {
       return erro((e as Error).message || 'Erro interno.', 500);
@@ -791,6 +1097,7 @@ export class Central extends DurableObject<Env> {
         cidadesAtivas: cfg.cidadesAtivas, motoAtivo: cfg.motoAtivo, motoServicos: cfg.motoServicos, motoMinimo: cfg.motoMinimo, motoKmIncluso: cfg.motoKmIncluso, motoPorKm: cfg.motoPorKm, motoRepassePct: cfg.motoRepassePct,
         motoAcrescimoPct: r2((fatorMoto(cfg) - 1) * 100), // APKs antigos calculam com o acréscimo
         deslocamentoPadraoKm: cfg.deslocamentoPadraoKm, deliveryMensalidade: cfg.deliveryMensalidade, deliveryUrgencia: cfg.deliveryUrgencia,
+        gateway: this.pagarme() ? 'pagarme' : 'infinitepay', pagarmeChavePublica: this.pagarme() ? cfg.pagarmeChavePublica : '', pagarAoAceitarMin: cfg.pagarAoAceitarMin,
         locais: this.locais().filter((l) => cfg.categoriasAtivas.includes(l.categoria as never) && !!l.cidade && cfg.cidadesAtivas.includes(l.cidade)),
       });
     if (metodo === 'GET' && p === '/v2/disponibilidade') return json(this.disponibilidade());
@@ -906,6 +1213,16 @@ export class Central extends DurableObject<Env> {
       const c = slug && tx ? await this.confirmarPagamento(id, slug, tx, q.get('receipt_url')) : this.corrida(id);
       return paginaRetorno(this.env.APP_SCHEME, !!c?.pago_em, String(c?.id ?? id));
     }
+    if (metodo === 'POST' && p === '/webhook/pagarme') {
+      // A notificação só diz QUAL pedido mudou; o status é sempre conferido na API (não dá para forjar pagamento).
+      const b = await this.corpo<{ type?: string; data?: { id?: string; order?: { id?: string }; charges?: { id?: string }[] } }>(req);
+      const tipo = String(b.type ?? '');
+      const orderId = tipo.startsWith('order.') ? b.data?.id : b.data?.order?.id;
+      const chargeId = tipo.startsWith('charge.') ? b.data?.id : b.data?.charges?.[0]?.id;
+      const cob = this.um(`SELECT * FROM cobrancas WHERE (order_id IS NOT NULL AND order_id=?) OR (charge_id IS NOT NULL AND charge_id=?) ORDER BY criado_em DESC LIMIT 1`, orderId ?? '-', chargeId ?? '-');
+      if (cob) await this.atualizarCobranca(cob);
+      return new Response('ok');
+    }
     if (metodo === 'POST' && p === '/webhook') {
       const b = await this.corpo<{ order_nsu?: string; invoice_slug?: string; transaction_nsu?: string; receipt_url?: string }>(req);
       if (!b.order_nsu || !b.invoice_slug || !b.transaction_nsu) return new Response('dados incompletos', { status: 400 });
@@ -987,6 +1304,19 @@ export class Central extends DurableObject<Env> {
     const agora = Date.now();
     const cfg = this.config();
     const cli = eu.linha!;
+    if (metodo === 'POST' && p === '/v2/pagar') return this.pagarComPagarme(cli, await this.corpo(req));
+    const cbm = p.match(/^\/v2\/cobrancas\/([\w-]+)$/);
+    if (metodo === 'GET' && cbm) {
+      const c = this.um(`SELECT * FROM cobrancas WHERE id=?`, cbm[1]);
+      // Só quem é dono do que foi cobrado vê a cobrança.
+      const dono = c && this.alvoDono(c);
+      if (!c || dono !== cli.id) return erro('Cobrança não encontrada.', 404);
+      return json(this.cobrancaView(await this.atualizarCobranca(c)));
+    }
+    if (cli.tipo === 'lojista') {
+      const rr = await this.rotasRecebedor(req, cli, 'clientes', p, metodo);
+      if (rr) return rr;
+    }
     const dlv = cli.tipo === 'lojista' ? await this.delivery.loja(req, url, cli, p, metodo) : await this.delivery.cliente(req, url, cli, p, metodo);
     if (dlv) return dlv;
     if (metodo === 'GET' && p === '/v2/eu')
@@ -1056,6 +1386,8 @@ export class Central extends DurableObject<Env> {
         }
       }
       const pacote = viagens.length > 1 ? novoId('pac') : null;
+      // Pagar.me: pedido para agora é pago quando o motorista aceita (split direto para ele).
+      const pagarNoAceite = !!this.pagarme() && !agendado && !pacote;
       const ids: string[] = [];
       for (const v of viagens) {
         const [de, para] = v.volta ? [entrega, coleta] : [coleta, entrega];
@@ -1064,13 +1396,25 @@ export class Central extends DurableObject<Env> {
         const janela = agendado ? `${rotuloDia(dataLocal(v.inicio), dataLocal(agora))} · ${horaLocal(v.inicio)}` : 'Agora';
         this.sql.exec(
           `INSERT INTO corridas (id, cliente_id, mercado_id, mercado_nome, agendado, inicio, fim, janela, status, valor, km, minutos, criado_em, pagamento_ate,
-             servico, descricao, coleta_nome, coleta_endereco, coleta_lat, coleta_lon, entrega_nome, entrega_endereco, entrega_lat, entrega_lon, cliente_na_coleta, retorno, pacote_id, veiculo, km_desloc, urgencia)
-           VALUES (?,?,?,?,?,?,?,?, 'pagamento_pendente', ?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          id, cli.id, de.localId, de.nome, agendado ? 1 : 0, iso(v.inicio), iso(v.inicio + cfg.bloqueioMin * MIN), janela,
-          cot.valor, cot.km, cot.minutos, iso(agora), iso(agora + cfg.esperaPagamentoMin * MIN),
+             servico, descricao, coleta_nome, coleta_endereco, coleta_lat, coleta_lon, entrega_nome, entrega_endereco, entrega_lat, entrega_lon, cliente_na_coleta, retorno, pacote_id, veiculo, km_desloc, urgencia,
+             pagar_ao_aceitar, oferta_ate)
+           VALUES (?,?,?,?,?,?,?,?, ?, ?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?)`,
+          id, cli.id, de.localId, de.nome, agendado ? 1 : 0, iso(v.inicio), iso(v.inicio + cfg.bloqueioMin * MIN), janela, pagarNoAceite ? 'buscando' : 'pagamento_pendente',
+          cot.valor, cot.km, cot.minutos, iso(agora), pagarNoAceite ? null : iso(agora + cfg.esperaPagamentoMin * MIN),
           sv.id, descricao || null, de.nome, de.endereco, de.lat, de.lon, para.nome, para.endereco, para.lat, para.lon, sv.clienteNaColeta ? 1 : 0, sv.retorno ? 1 : 0, pacote,
           veiculo, cot.kmDesloc, agendado ? 0 : cot.urgencia,
+          pagarNoAceite ? 1 : 0, pagarNoAceite ? iso(agora + cfg.ofertaMin * MIN) : null,
         );
+      }
+      if (pagarNoAceite) {
+        const c = this.corrida(ids[0])!;
+        this.avisar(this.textoCorrida(c, `🚨 AGORA — procurando motorista (o cliente paga quando ele aceitar)`), c.id);
+        return json(this.corridaParaCliente(c));
+      }
+      if (this.pagarme()) {
+        // Agendado / vários dias: paga agora, na tela de pagamento do app (Pix ou cartão).
+        if (pacote) this.sql.exec(`INSERT INTO pacotes (id, cliente_id, valor, viagens, criado_em) VALUES (?,?,?,?,?)`, pacote, cli.id, r2(cot.valor * ids.length), ids.length, iso(agora));
+        return json(this.corridaParaCliente(this.corrida(ids[0])!));
       }
       try {
         let urlPg: string;
@@ -1155,6 +1499,11 @@ export class Central extends DurableObject<Env> {
         this.sql.exec(`UPDATE gorjetas SET status='cancelada' WHERE corrida_id=? AND status='pendente'`, c.id);
         const id = novoId('gorj');
         const mot = this.um(`SELECT nome FROM motoristas WHERE id=?`, c.motorista_id);
+        if (this.pagarme()) {
+          // Pagar.me: paga na tela de pagamento do app (Pix ou cartão); vai para o saldo do motorista.
+          this.sql.exec(`INSERT INTO gorjetas (id, corrida_id, cliente_id, motorista_id, valor, status, criado_em) VALUES (?,?,?,?,?,?,?)`, id, c.id, cli.id, c.motorista_id, valor, 'pendente', iso(agora));
+          return json({ id, valor, checkoutUrl: null, status: 'pendente' });
+        }
         let checkoutUrl: string;
         try {
           checkoutUrl = await this.linkInfinitePay({ orderNsu: id, valor, descricao: `Gorjeta para ${String(mot?.nome ?? 'motorista').split(' ')[0]}`, cli, origem: url.origin, validoMin: 60 });
@@ -1197,6 +1546,8 @@ export class Central extends DurableObject<Env> {
     const cfg = this.config();
     const mot = eu.linha!;
     const aprovado = mot.status === 'aprovado';
+    const rr = await this.rotasRecebedor(req, mot, 'motoristas', p, metodo);
+    if (rr) return rr;
 
     if (metodo === 'GET' && p === '/v2/eu') {
       const s = this.saldo(mot.id);
@@ -1204,6 +1555,7 @@ export class Central extends DurableObject<Env> {
         tipo: 'motorista', id: mot.id, nome: mot.nome, telefone: mot.telefone, carro: mot.carro, placa: mot.placa, cor: mot.cor, pix: mot.cpf, veiculo: mot.veiculo ?? 'carro',
         status: mot.status, online: !!mot.online, temSenha: !!mot.senha_hash, temSelfie: !!mot.selfie, temCnh: !!mot.cnh, docsObrigatorios: !!this.env.DOCS,
         ...s, comissaoPct: cfg.comissaoMotoristaPct, ...this.notaMotorista(mot.id),
+        gateway: this.pagarme() ? 'pagarme' : 'infinitepay', recebedor: { temConta: !!mot.pagarme_recebedor, status: mot.pagarme_status ?? null, ativo: this.recebedorAtivo(mot) },
         agendaLink: `${url.origin}/agenda.ics?m=${mot.id}&k=${await this.chaveAgenda(String(mot.id))}`,
       });
     }
@@ -1256,9 +1608,13 @@ export class Central extends DurableObject<Env> {
       if (c.status !== 'buscando') return erro('Outro motorista já aceitou essa corrida.', 409);
       if ((c.veiculo ?? 'carro') !== (mot.veiculo ?? 'carro')) return erro(c.veiculo === 'moto' ? 'Esta corrida é para moto.' : 'Esta corrida é para carro.', 409);
       if (!this.livreDoMotorista(mot.id, { inicio: Date.parse(String(c.inicio)), fim: Date.parse(String(c.fim)) })) return erro('Você já tem uma corrida nesse horário.', 409);
-      this.sql.exec(`UPDATE corridas SET status='aceito', motorista_id=?, aceito_em=? WHERE id=? AND status='buscando'`, mot.id, iso(agora), c.id);
+      const pagarAgora = c.pagar_ao_aceitar === 1 && !c.pago_em;
+      this.sql.exec(
+        `UPDATE corridas SET status='aceito', motorista_id=?, aceito_em=?, pagamento_ate=? WHERE id=? AND status='buscando'`,
+        mot.id, iso(agora), pagarAgora ? iso(agora + cfg.pagarAoAceitarMin * MIN) : c.pagamento_ate, c.id,
+      );
       const aceita = this.corrida(c.id)!;
-      this.avisar(this.textoCorrida(aceita, `✅ CORRIDA ACEITA por ${mot.nome}`), c.id);
+      this.avisar(this.textoCorrida(aceita, pagarAgora ? `✅ ACEITA por ${mot.nome} — aguardando o cliente pagar (até ${cfg.pagarAoAceitarMin} min)` : `✅ CORRIDA ACEITA por ${mot.nome}`), c.id);
       return json(this.corridaParaMotorista(aceita));
     }
     if (metodo === 'GET' && p === '/v2/agenda') {
@@ -1282,6 +1638,8 @@ export class Central extends DurableObject<Env> {
       if (!c) return erro('Corrida não encontrada.', 404);
       const acao = cm[2];
       if (metodo === 'GET' && !acao) return json(this.corridaParaMotorista(c));
+      if (metodo === 'POST' && c.pagar_ao_aceitar === 1 && !c.pago_em && acao !== '/desistir' && acao !== '/mensagens')
+        return erro('Aguarde o cliente pagar. Assim que o pagamento cair, a corrida libera aqui.', 409);
       if (metodo === 'POST' && acao === '/cheguei') {
         if (c.status !== 'aceito') return erro('Essa corrida não está indo para a coleta.', 409);
         const b = await this.corpo<{ lat?: number; lon?: number }>(req);
@@ -1331,6 +1689,17 @@ export class Central extends DurableObject<Env> {
       }
       if (metodo === 'POST' && acao === '/desistir') {
         if (c.status !== 'aceito') return erro('Não é possível desistir agora.', 409);
+        if (c.repasse_direto && c.pago_em) {
+          // O pagamento foi dividido com este motorista: cancela e devolve tudo ao cliente.
+          this.cancelar(c, 'motorista_desistiu', 'motorista', `↩️ ${mot.nome} desistiu depois do pagamento — corrida cancelada, estorno automático ao cliente`);
+          return json({ ok: true });
+        }
+        if (c.pagar_ao_aceitar === 1 && !c.pago_em) {
+          this.sql.exec(`UPDATE corridas SET status='buscando', motorista_id=NULL, aceito_em=NULL, pagamento_ate=NULL, oferta_ate=? WHERE id=?`, iso(agora + cfg.ofertaMin * MIN), c.id);
+          this.sql.exec(`INSERT OR IGNORE INTO recusas (corrida_id, motorista_id) VALUES (?,?)`, c.id, mot.id);
+          this.avisar(this.textoCorrida(c, `↩️ ${mot.nome} desistiu antes do pagamento — procurando outro motorista`), c.id);
+          return json({ ok: true });
+        }
         const ate = c.agendado ? Date.parse(String(c.inicio)) - 30 * MIN : agora + cfg.ofertaMin * MIN;
         this.sql.exec(`UPDATE corridas SET status='buscando', motorista_id=NULL, aceito_em=NULL, oferta_ate=? WHERE id=?`, iso(ate), c.id);
         this.sql.exec(`INSERT OR IGNORE INTO recusas (corrida_id, motorista_id) VALUES (?,?)`, c.id, mot.id);
@@ -1363,6 +1732,36 @@ export class Central extends DurableObject<Env> {
   // ===== admin =====
   private async rotasAdmin(req: Request, url: URL, p: string, metodo: string): Promise<Response> {
     const agora = Date.now();
+    if (metodo === 'GET' && p === '/v2/admin/pagamentos') {
+      const cfg = this.config();
+      const sk = this.env.PAGARME_SECRET_KEY ?? '';
+      const lista = (tabela: 'clientes' | 'motoristas', filtro: string) =>
+        this.q(`SELECT id, nome, ${tabela === 'clientes' ? 'loja_nome' : "'' AS loja_nome"}, pagarme_recebedor, pagarme_status FROM ${tabela} WHERE status='aprovado' ${filtro} ORDER BY nome`);
+      return json({
+        gateway: cfg.gateway, ativo: !!this.pagarme(), chaveConfigurada: !!sk, ambiente: sk ? (sk.startsWith('sk_test_') ? 'teste' : 'produção') : null,
+        recebedorMovi: cfg.pagarmeRecebedorMovi, chavePublica: cfg.pagarmeChavePublica, pagarAoAceitarMin: cfg.pagarAoAceitarMin,
+        webhook: `${url.origin}/webhook/pagarme`,
+        lojas: lista('clientes', "AND tipo='lojista'"), motoristas: lista('motoristas', ''),
+        estornosComErro: [
+          ...this.q(`SELECT id, reembolso, estorno_erro FROM corridas WHERE reembolso > 0 AND reembolsado_em IS NULL AND estorno_erro IS NOT NULL`),
+          ...this.q(`SELECT id, reembolso, estorno_erro FROM pedidos WHERE reembolso > 0 AND reembolsado_em IS NULL AND estorno_erro IS NOT NULL`),
+        ],
+      });
+    }
+    if (metodo === 'POST' && p === '/v2/admin/recebedores/atualizar') {
+      const sk = this.env.PAGARME_SECRET_KEY;
+      if (!sk) return erro('Chave da Pagar.me não configurada.', 409);
+      let n = 0;
+      for (const tabela of ['clientes', 'motoristas'] as const)
+        for (const l of this.q(`SELECT id, pagarme_recebedor, pagarme_status FROM ${tabela} WHERE pagarme_recebedor IS NOT NULL AND (pagarme_status IS NULL OR pagarme_status!='active') LIMIT 50`)) {
+          const r = await Pagarme.obterRecebedor(sk, String(l.pagarme_recebedor)).catch(() => null);
+          if (r && r.status !== l.pagarme_status) {
+            this.sql.exec(`UPDATE ${tabela} SET pagarme_status=? WHERE id=?`, r.status, l.id);
+            n++;
+          }
+        }
+      return json({ atualizados: n });
+    }
     const dlv = await this.delivery.admin(req, p, metodo);
     if (dlv) return dlv;
     if (metodo === 'GET' && p === '/v2/admin/resumo') {
@@ -1569,6 +1968,14 @@ export class Central extends DurableObject<Env> {
       if (!Array.isArray(cfg.motoServicos) || cfg.motoServicos.some((x) => !SERVICOS.some((s) => s.id === x))) return erro('Serviços de moto inválidos.');
       if (!(cfg.deslocamentoPadraoKm >= 0 && cfg.deslocamentoPadraoKm <= cfg.deslocamentoMaxKm && cfg.deslocamentoMaxKm <= 50)) return erro('Deslocamento inválido.');
       if (!(cfg.incentivoUrgencia >= 0 && cfg.incentivoUrgencia <= 100)) return erro('Incentivo de urgência inválido.');
+      if (!['infinitepay', 'pagarme'].includes(cfg.gateway)) return erro('Gateway inválido.');
+      if (cfg.gateway === 'pagarme' && !this.env.PAGARME_SECRET_KEY) return erro('Cadastre antes a chave secreta da Pagar.me (PAGARME_SECRET_KEY) nos segredos do Worker na Cloudflare.');
+      cfg.pagarmeRecebedorMovi = String(cfg.pagarmeRecebedorMovi ?? '').trim();
+      cfg.pagarmeChavePublica = String(cfg.pagarmeChavePublica ?? '').trim();
+      if (cfg.pagarmeRecebedorMovi && !/^r[ep]_\w+$/.test(cfg.pagarmeRecebedorMovi)) return erro('Recebedor da MOVI inválido (começa com rp_ ou re_).');
+      if (cfg.pagarmeChavePublica && !/^pk_\w+$/.test(cfg.pagarmeChavePublica)) return erro('Chave pública inválida (começa com pk_).');
+      if (cfg.gateway === 'pagarme' && !cfg.pagarmeChavePublica) return erro('Informe a chave pública (pk_...) para o pagamento com cartão.');
+      if (!(cfg.pagarAoAceitarMin >= 1 && cfg.pagarAoAceitarMin <= 30)) return erro('Prazo para pagar depois do aceite: de 1 a 30 minutos.');
       if (!(cfg.deliveryMensalidade >= 1 && cfg.deliveryMensalidade <= 1000 && cfg.deliveryAceiteMin >= 3 && cfg.deliveryAceiteMin <= 60)) return erro('Valores do delivery inválidos.');
       cfg.deliveryUrgencia = !!cfg.deliveryUrgencia;
       cfg.motoAtivo = !!cfg.motoAtivo;

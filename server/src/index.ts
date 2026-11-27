@@ -18,7 +18,7 @@ export default {
     if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
     const { pathname } = new URL(req.url);
     if (pathname === '/versao') return new Response(VERSAO, { headers: CORS });
-    if (pathname.startsWith('/v2/') || pathname === '/retorno' || pathname === '/webhook' || pathname === '/agenda.ics') {
+    if (pathname.startsWith('/v2/') || pathname === '/retorno' || pathname.startsWith('/webhook') || pathname === '/agenda.ics') {
       const central = env.CENTRAL.get(env.CENTRAL.idFromName('central'));
       return central.fetch(req);
     }

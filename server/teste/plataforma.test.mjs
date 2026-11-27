@@ -18,6 +18,7 @@ const ctx = { storage: { sql }, blockConcurrencyWhile: (fn) => fn(), waitUntil: 
 const arquivos = new Map();
 const env = {
   INFINITEPAY_HANDLE: 'loja',
+  PAGARME_SECRET_KEY: 'sk_test_movi',
   ADMIN_TOKEN: 'senha-admin',
   APP_SCHEME: 'mercadofrete',
   DOCS: {
@@ -29,8 +30,45 @@ const env = {
 const central = new Central(ctx, env);
 env.CENTRAL = { idFromName: () => 'x', get: () => ({ fetch: (r) => central.fetch(r) }) };
 let linkCriado;
+// Pagar.me simulada (sandbox): pedidos, estornos e recebedores.
+const pg = { pedidos: new Map(), estornos: [], recebedores: new Map(), ultimo: null, n: 0 };
+const respPg = (d, status = 200) => new Response(JSON.stringify(d), { status });
 globalThis.fetch = async (url, init) => {
   url = String(url);
+  if (url.startsWith('https://sdx-api.pagar.me/core/v5')) {
+    const caminho = url.slice('https://sdx-api.pagar.me/core/v5'.length);
+    assert.match(init.headers.authorization, /^Basic /);
+    const corpo = init.body ? JSON.parse(init.body) : {};
+    if (init.method === 'POST' && caminho === '/orders') {
+      pg.ultimo = corpo;
+      const id = `or_${++pg.n}`, ch = `ch_${pg.n}`;
+      const pay = corpo.payments[0];
+      const cartao = pay.payment_method === 'credit_card';
+      const recusado = cartao && pay.credit_card.card_token === 'tok_recusado';
+      const status = cartao ? (recusado ? 'failed' : 'paid') : 'pending';
+      pg.pedidos.set(id, { status, ch });
+      return respPg({ id, status, charges: [{ id: ch, status, last_transaction: cartao ? { status: recusado ? 'not_authorized' : 'captured', acquirer_message: recusado ? 'Transação não autorizada' : undefined } : { qr_code: '00020126PIXMOVI', qr_code_url: 'https://api.pagar.me/qr.png', expires_at: new Date(Date.now() + 600000).toISOString() } }] });
+    }
+    const om = caminho.match(/^\/orders\/(\w+)$/);
+    if (init.method === 'GET' && om) {
+      const o = pg.pedidos.get(om[1]);
+      return respPg({ id: om[1], status: o.status, charges: [{ id: o.ch, status: o.status }] });
+    }
+    const cm = caminho.match(/^\/charges\/(\w+)$/);
+    if (init.method === 'DELETE' && cm) {
+      pg.estornos.push({ charge: cm[1], amount: corpo.amount });
+      return respPg({ id: cm[1], status: 'refunded' });
+    }
+    if (init.method === 'POST' && caminho === '/recipients') {
+      const id = `rp_${++pg.n}`;
+      pg.recebedores.set(id, { status: 'registration', corpo });
+      return respPg({ id, status: 'registration' });
+    }
+    const rm = caminho.match(/^\/recipients\/(\w+)(\/kyc_link)?$/);
+    if (rm && rm[2]) return respPg({ url: 'pagar.me/kyc/abc123', expires_at: new Date(Date.now() + 86400000).toISOString() });
+    if (rm) return respPg({ id: rm[1], status: pg.recebedores.get(rm[1]).status });
+    throw new Error('Pagar.me: rota inesperada ' + init.method + ' ' + caminho);
+  }
   if (url.endsWith('/links')) {
     linkCriado = JSON.parse(init.body);
     return new Response(JSON.stringify({ url: 'https://checkout.infinitepay.io/loja?lenc=x' }));
@@ -820,4 +858,152 @@ test('urgência (pedido agora): o cliente paga, o motorista recebe 80% sem a urg
   assert.match((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { incentivoUrgencia: -1 } })).d.erro, /Incentivo/);
   await call(`/v2/corridas/${p.d.id}/cancelar`, { metodo: 'POST', token: cli });
   await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { urgencia: cfg0.urgencia, incentivoUrgencia: 4 } });
+});
+
+
+test('Pagar.me: conta de recebimento (motorista e loja), corrida agora paga no aceite com split, cartão, estorno automático e delivery com a loja recebendo direto', async () => {
+  // Admin liga a Pagar.me (exige a chave pública e o segredo no Worker)
+  assert.match((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'pagarme' } })).d.erro, /chave pública/);
+  assert.equal((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'pagarme', pagarmeChavePublica: 'pk_test_abc', pagarmeRecebedorMovi: 'rp_movi', urgencia: { tipo: 'reais', valor: 10 } } })).s, 200);
+  const cfgApp = (await call('/v2/config')).d;
+  assert.equal(cfgApp.gateway, 'pagarme');
+  assert.equal(cfgApp.pagarmeChavePublica, 'pk_test_abc');
+  const pag = (await call('/v2/admin/pagamentos', { token: ADM })).d;
+  assert.equal(pag.ambiente, 'teste');
+  assert.match(pag.webhook, /\/webhook\/pagarme$/);
+
+  // motorista com conta de recebimento (prova de vida pela Pagar.me)
+  const cpfMot = gerarCpf(223606797);
+  const m = await call('/v2/motoristas', { metodo: 'POST', corpo: { nome: 'Pedro Split', cpf: cpfMot, telefone: '47966661111', carro: 'Onix', placa: 'PED1S23' } });
+  const mot = m.d.token;
+  await call(`/v2/admin/motoristas/${m.d.id}/status`, { metodo: 'POST', token: ADM, corpo: { status: 'aprovado' } });
+  await call('/v2/arquivos?tipo=selfie', { metodo: 'POST', token: mot, bruto: JPG, tipo: 'image/jpeg' });
+  await call('/v2/arquivos?tipo=cnh', { metodo: 'POST', token: mot, bruto: JPG, tipo: 'image/jpeg' });
+  assert.equal((await call('/v2/eu/recebedor', { token: mot })).d.temConta, false);
+  assert.match((await call('/v2/eu/recebedor', { metodo: 'POST', token: mot, corpo: { email: 'x' } })).d.erro, /e-mail/);
+  const dadosConta = {
+    email: 'pedro@exemplo.com', nascimento: '1990-05-20', rendaMensal: 3000, profissao: 'Motorista de aplicativo',
+    endereco: { rua: 'Rua das Flores', numero: '50', bairro: 'Centro', cidade: 'Guaramirim', uf: 'SC', cep: '89270-000' },
+    conta: { banco: '260', agencia: '0001', conta: '123456', contaDv: '7', tipo: 'checking' },
+  };
+  const rc = await call('/v2/eu/recebedor', { metodo: 'POST', token: mot, corpo: dadosConta });
+  assert.equal(rc.s, 200, JSON.stringify(rc.d));
+  assert.equal(rc.d.status, 'registration');
+  assert.equal(rc.d.kycUrl, 'https://pagar.me/kyc/abc123');
+  const enviado = [...pg.recebedores.values()].at(-1).corpo;
+  assert.equal(enviado.register_information.type, 'individual');
+  assert.equal(enviado.register_information.document, cpfMot);
+  assert.equal(enviado.default_bank_account.holder_document, cpfMot); // conta do próprio motorista
+  pg.recebedores.get(rc.d.status === 'registration' ? [...pg.recebedores.keys()].at(-1) : '').status = 'active'; // KYC aprovado
+  assert.equal((await call('/v2/eu/recebedor', { token: mot })).d.ativo, true);
+
+  // corrida para agora: o cliente pede sem pagar; paga quando o motorista aceita
+  const c = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Rita Pix', cpf: gerarCpf(244948974), telefone: '47911112222', endereco: 'Rua Q, 3, Centro', lat: -26.4790, lon: -48.9900 } });
+  const cli = c.d.token;
+  await online(mot, COOPER);
+  const p1 = await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', coleta: { localId: 'cooper' }, agendado: false } });
+  assert.equal(p1.s, 200, JSON.stringify(p1.d));
+  assert.equal(p1.d.status, 'buscando');
+  assert.equal(p1.d.pagarAoAceitar, true);
+  assert.equal(p1.d.checkoutUrl, null);
+  assert.match((await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: p1.d.id, metodo: 'pix' } })).d.erro, /Aguarde um motorista/);
+  const of = (await call('/v2/ofertas', { token: mot })).d.find((o) => o.id === p1.d.id);
+  assert.ok(of, 'oferta antes do pagamento');
+  assert.equal((await call(`/v2/ofertas/${p1.d.id}/aceitar`, { metodo: 'POST', token: mot })).d.aguardandoPagamento, true);
+  assert.match((await call(`/v2/corridas/${p1.d.id}/cheguei`, { metodo: 'POST', token: mot, corpo: COOPER })).d.erro, /Aguarde o cliente pagar/);
+  assert.equal((await call(`/v2/corridas/${p1.d.id}`, { token: cli })).d.aguardandoPagamento, true);
+  // Pix com split: ganho direto ao motorista, resto para a MOVI (que paga as taxas)
+  const pix = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: p1.d.id, metodo: 'pix' } })).d;
+  assert.equal(pix.status, 'pendente');
+  assert.equal(pix.qrCode, '00020126PIXMOVI');
+  const ganho = await ganhoEsperado(p1.d.id);
+  const split = pg.ultimo.payments[0].split;
+  assert.deepEqual(split.map((x) => [x.recipient_id, x.amount, x.options.charge_processing_fee]), [[[...pg.recebedores.keys()].at(-1), Math.round(ganho * 100), false], ['rp_movi', Math.round(p1.d.valor * 100) - Math.round(ganho * 100), true]]);
+  assert.equal(pg.ultimo.customer.document, gerarCpf(244948974));
+  assert.equal((await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: p1.d.id, metodo: 'pix' } })).d.id, pix.id); // mesmo QR
+  assert.equal((await call(`/v2/cobrancas/${pix.id}`, { token: mot })).s, 404); // só quem paga consulta a cobrança
+  const outro = (await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Ugo Outro', cpf: gerarCpf(282842712), endereco: 'Rua R, 1, Centro', lat: -26.479, lon: -48.99 } })).d.token;
+  assert.equal((await call(`/v2/cobrancas/${pix.id}`, { token: outro })).s, 404);
+  pg.pedidos.get(`or_${pg.n}`).status = 'paid'; // cliente pagou no banco
+  assert.equal((await call(`/v2/cobrancas/${pix.id}`, { token: cli })).d.status, 'paga');
+  const pago = (await call(`/v2/corridas/${p1.d.id}`, { token: cli })).d;
+  assert.ok(pago.pagoEm && !pago.aguardandoPagamento);
+  assert.match(await ultimoAviso(), /PAGO NO ACEITE.*direto na conta do motorista/);
+  assert.equal((await call(`/v2/corridas/${p1.d.id}/cheguei`, { metodo: 'POST', token: mot, corpo: COOPER })).d.status, 'no_local');
+  await call(`/v2/corridas/${p1.d.id}/confirmar-motorista`, { metodo: 'POST', token: cli });
+  const s1 = (await call('/v2/saldo', { token: mot })).d;
+  assert.equal(s1.disponivel, 0); // nada a sacar: o ganho já foi para a conta Pagar.me dele
+  assert.equal(s1.recebidoDireto, ganho);
+  await call(`/v2/corridas/${p1.d.id}/entregue`, { metodo: 'POST', token: mot });
+
+  // cartão pago na hora; cliente cancela antes da chegada → estorno automático pela API
+  const p2 = (await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', coleta: { localId: 'cooper' }, agendado: false } })).d;
+  await call(`/v2/ofertas/${p2.id}/aceitar`, { metodo: 'POST', token: mot });
+  assert.match((await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: p2.id, metodo: 'cartao', cardToken: 'tok_ok' } })).d.erro, /CEP/);
+  const recus = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: p2.id, metodo: 'cartao', cardToken: 'tok_recusado', cep: '89270000' } })).d;
+  assert.equal(recus.status, 'falhou');
+  assert.match(recus.erro, /não autorizada/);
+  const cart = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: p2.id, metodo: 'cartao', cardToken: 'tok_ok', cep: '89270-000' } })).d;
+  assert.equal(cart.status, 'paga');
+  assert.equal(pg.ultimo.payments[0].credit_card.installments, 1); // só à vista
+  assert.equal(pg.ultimo.payments[0].credit_card.card.billing_address.zip_code, '89270000');
+  await call(`/v2/corridas/${p2.id}/cancelar`, { metodo: 'POST', token: cli });
+  await call('/v2/disponibilidade'); // próxima requisição processa o estorno
+  assert.deepEqual(pg.estornos.at(-1), { charge: `ch_${pg.n}`, amount: Math.round(p2.valor * 100) });
+  assert.ok((await call(`/v2/corridas/${p2.id}`, { token: cli })).d.reembolsadoEm);
+  assert.match(await ultimoAviso(), /ESTORNO AUTOMÁTICO/);
+
+  // aceitou e o cliente não pagou no prazo: cai e o motorista fica livre
+  const p3 = (await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', coleta: { localId: 'cooper' }, agendado: false } })).d;
+  await call(`/v2/ofertas/${p3.id}/aceitar`, { metodo: 'POST', token: mot });
+  db.prepare(`UPDATE corridas SET pagamento_ate=? WHERE id=?`).run(new Date(Date.now() - 1000).toISOString(), p3.id);
+  const p3c = (await call(`/v2/corridas/${p3.id}`, { token: cli })).d;
+  assert.equal(p3c.status, 'cancelado');
+  assert.equal(p3c.motivo, 'nao_pago');
+  assert.match(await ultimoAviso(), /NÃO PAGOU depois do aceite/);
+
+  // delivery: loja com conta de recebimento → produtos direto para a loja; mensalidade pela Pagar.me
+  const lj = await call('/v2/lojistas', { metodo: 'POST', corpo: { lojaNome: 'Açaí da Vila', nome: 'Vera Vila', cpf: gerarCpf(264575131), telefone: '47 98888-4444', senha: 'acai1234', endereco: 'Rua Vila, 5, Centro', lat: -26.4770, lon: -48.9930 } });
+  const loja = lj.d.token;
+  await call(`/v2/admin/lojistas/${lj.d.id}/status`, { metodo: 'POST', token: ADM, corpo: { status: 'aprovado' } });
+  const rl = await call('/v2/loja/recebedor', { metodo: 'POST', token: loja, corpo: { ...dadosConta, email: 'vera@exemplo.com' } });
+  assert.equal(rl.s, 200, JSON.stringify(rl.d));
+  const rpLoja = [...pg.recebedores.keys()].at(-1);
+  pg.recebedores.get(rpLoja).status = 'active';
+  assert.equal((await call('/v2/admin/recebedores/atualizar', { metodo: 'POST', token: ADM })).d.atualizados >= 1, true);
+  const mens = (await call('/v2/loja/mensalidade', { metodo: 'POST', token: loja })).d;
+  assert.equal(mens.checkoutUrl, null);
+  const pm = (await call('/v2/pagar', { metodo: 'POST', token: loja, corpo: { tipo: 'mensalidade', id: mens.id, metodo: 'cartao', cardToken: 'tok_ok', cep: '89270000' } })).d;
+  assert.equal(pm.status, 'paga');
+  assert.equal(pg.ultimo.payments[0].split, undefined); // mensalidade é da MOVI
+  assert.equal((await call('/v2/loja', { token: loja })).d.ativa, true);
+  const acai = (await call('/v2/loja/produtos', { metodo: 'POST', token: loja, corpo: { nome: 'Açaí 500 ml', preco: 18 } })).d;
+  await call('/v2/loja', { metodo: 'PUT', token: loja, corpo: { aberta: true } });
+  await call('/v2/eu/livre', { metodo: 'POST', token: mot });
+  const ped = (await call('/v2/pedidos', { metodo: 'POST', token: cli, corpo: { lojaId: lj.d.id, itens: [{ produtoId: acai.id, qtd: 2 }] } })).d;
+  assert.equal(ped.status, 'pagamento_pendente');
+  assert.equal(ped.checkoutUrl, null);
+  const pp = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'pedido', id: ped.id, metodo: 'pix' } })).d;
+  const sp = pg.ultimo.payments[0].split;
+  assert.deepEqual(sp.map((x) => [x.recipient_id, x.amount]), [[rpLoja, 3600], ['rp_movi', Math.round(ped.frete * 100)]]);
+  assert.equal(pg.ultimo.items.length, 2);
+  // confirmação pelo webhook (o status é conferido na API)
+  pg.pedidos.get(`or_${pg.n}`).status = 'paid';
+  assert.equal((await call('/webhook/pagarme', { metodo: 'POST', corpo: { type: 'order.paid', data: { id: `or_${pg.n}` } } })).s, 200);
+  assert.equal((await call(`/v2/pedidos/${ped.id}`, { token: cli })).d.status, 'aguardando_loja');
+  assert.equal((await call(`/v2/cobrancas/${pp.id}`, { token: cli })).d.status, 'paga');
+  const aceito = (await call(`/v2/loja/pedidos/${ped.id}/aceitar`, { metodo: 'POST', token: loja })).d;
+  await call(`/v2/ofertas/${aceito.corridaId}/aceitar`, { metodo: 'POST', token: mot });
+  await call(`/v2/corridas/${aceito.corridaId}/cheguei`, { metodo: 'POST', token: mot, corpo: { lat: -26.4770, lon: -48.9930 } });
+  await call(`/v2/corridas/${aceito.corridaId}/coletei`, { metodo: 'POST', token: mot });
+  await call(`/v2/corridas/${aceito.corridaId}/cheguei-destino`, { metodo: 'POST', token: mot, corpo: { lat: -26.4790, lon: -48.9900 } });
+  await call(`/v2/corridas/${aceito.corridaId}/confirmar-recebimento`, { metodo: 'POST', token: cli });
+  const sl = (await call('/v2/loja/saldo', { token: loja })).d;
+  assert.equal(sl.disponivel, 0); // nada para a MOVI repassar
+  assert.equal(sl.recebidoDireto, 36);
+
+  // webhook falso não confirma nada (sem pedido correspondente)
+  assert.equal((await call('/webhook/pagarme', { metodo: 'POST', corpo: { type: 'order.paid', data: { id: 'or_inexistente' } } })).s, 200);
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'infinitepay' } });
+  assert.equal((await call('/v2/config')).d.gateway, 'infinitepay');
 });

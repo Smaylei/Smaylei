@@ -31,6 +31,8 @@ export interface BaseDelivery {
   foraDaArea(p: Ponto): string | null;
   corrida(id: unknown): Linha | undefined;
   cancelarCorrida(c: Linha, motivo: string, por: string, cab: string): void;
+  /** Pagamentos pela Pagar.me (o app paga com Pix/cartão na tela própria; sem link da InfinitePay). */
+  pagarmeAtivo(): boolean;
   docs?: R2Bucket;
 }
 
@@ -60,6 +62,9 @@ export const COLUNAS_DELIVERY = [
     'preparo_min INTEGER NOT NULL DEFAULT 20', 'pix_repasse TEXT'].map((c) => `ALTER TABLE clientes ADD COLUMN ${c}`),
   'ALTER TABLE corridas ADD COLUMN pedido_id TEXT',
   'ALTER TABLE pedidos ADD COLUMN urgencia REAL NOT NULL DEFAULT 0',
+  // Pagar.me: produtos direto para a loja (split), cobrança e estorno automático
+  ...['repasse_direto INTEGER NOT NULL DEFAULT 0', 'cobranca_id TEXT', 'estorno_tentado_em TEXT', 'estorno_erro TEXT'].map((c) => `ALTER TABLE pedidos ADD COLUMN ${c}`),
+  'ALTER TABLE mensalidades ADD COLUMN cobranca_id TEXT',
 ];
 
 const ROTULO_PEDIDO: Record<string, string> = {
@@ -133,7 +138,7 @@ export class Delivery {
       observacao: p.observacao, entregaEndereco: para === 'loja' ? null : p.entrega_endereco,
       checkoutUrl: para === 'cliente' && p.status === 'pagamento_pendente' ? p.checkout_url : null, pagamentoAte: p.pagamento_ate, metodo: p.metodo,
       criadoEm: p.criado_em, pagoEm: p.pago_em, aceitoEm: p.aceito_em, entregueEm: p.entregue_em, canceladoEm: p.cancelado_em,
-      liberadoEm: p.liberado_em, reembolso: Number(p.reembolso ?? 0), reembolsadoEm: p.reembolsado_em,
+      liberadoEm: p.liberado_em, reembolso: Number(p.reembolso ?? 0), reembolsadoEm: p.reembolsado_em, repasseDireto: p.repasse_direto === 1,
       aceiteAte: p.status === 'aguardando_loja' && p.pago_em ? iso(Date.parse(String(p.pago_em)) + this.cfg.deliveryAceiteMin * MIN) : null,
       corridaId: p.corrida_id, ...this.motoristaDaCorrida(p.corrida_id),
     };
@@ -141,12 +146,13 @@ export class Delivery {
 
   saldoLoja(lojaId: unknown) {
     const n = (sql: string, ...a: unknown[]) => Number(this.b.um(sql, ...a)?.n ?? 0);
-    const vendido = n(`SELECT COALESCE(SUM(subtotal),0) AS n FROM pedidos WHERE loja_id=? AND liberado_em IS NOT NULL`, lojaId);
+    const vendido = n(`SELECT COALESCE(SUM(subtotal),0) AS n FROM pedidos WHERE loja_id=? AND liberado_em IS NOT NULL AND repasse_direto=0`, lojaId);
+    const direto = n(`SELECT COALESCE(SUM(subtotal),0) AS n FROM pedidos WHERE loja_id=? AND liberado_em IS NOT NULL AND repasse_direto=1`, lojaId);
     const repassado = n(`SELECT COALESCE(SUM(valor),0) AS n FROM repasses_loja WHERE loja_id=? AND status IN ('solicitado','pago')`, lojaId);
     const emAndamento = n(`SELECT COALESCE(SUM(subtotal),0) AS n FROM pedidos WHERE loja_id=? AND status IN ('aguardando_loja','aceito')`, lojaId);
     const ultimo = this.b.um<{ criado_em: string }>(`SELECT criado_em FROM repasses_loja WHERE loja_id=? AND status IN ('solicitado','pago') ORDER BY criado_em DESC LIMIT 1`, lojaId);
     const proximo = ultimo ? Date.parse(ultimo.criado_em) + this.cfg.saqueDias * DIA : 0;
-    return { disponivel: r2(vendido - repassado), emAndamento: r2(emAndamento), totalVendido: r2(vendido), proximoRepasseEm: proximo > Date.now() ? iso(proximo) : null };
+    return { disponivel: r2(vendido - repassado), emAndamento: r2(emAndamento), totalVendido: r2(vendido + direto), recebidoDireto: r2(direto), proximoRepasseEm: proximo > Date.now() ? iso(proximo) : null };
   }
 
   /** Motivo para não excluir a conta (pedidos em aberto, saldo ou estorno pendente). */
@@ -211,8 +217,19 @@ export class Delivery {
     if (!p || p.pago_em) return p ?? null;
     const r = await this.b.checar(id, slug, tx);
     if (!r.pago || this.pedido(id)?.pago_em) return this.pedido(id) ?? null;
+    return this.aplicarPago(id, r.metodo, { slug, tx, receiptUrl });
+  }
+
+  /** Pagamento confirmado (InfinitePay ou Pagar.me). `direto`: os produtos já foram para a loja pelo split. */
+  aplicarPago(id: string, metodo: string | null, extra: { slug?: string; tx?: string; receiptUrl?: string | null; cobrancaId?: string; direto?: boolean } = {}) {
+    if (id.startsWith('mens-')) return this.aplicarMensalidade(id, metodo, extra);
+    const p = this.pedido(id);
+    if (!p || p.pago_em) return p ?? null;
     const agora = iso(Date.now());
-    this.b.exec(`UPDATE pedidos SET pago_em=?, metodo=?, slug=?, transaction_nsu=?, receipt_url=? WHERE id=?`, agora, r.metodo, slug, tx, receiptUrl ?? null, id);
+    this.b.exec(
+      `UPDATE pedidos SET pago_em=?, metodo=?, slug=?, transaction_nsu=?, receipt_url=?, cobranca_id=?, repasse_direto=? WHERE id=?`,
+      agora, metodo, extra.slug ?? null, extra.tx ?? null, extra.receiptUrl ?? null, extra.cobrancaId ?? null, extra.direto ? 1 : 0, id,
+    );
     if (p.status === 'pagamento_pendente') {
       this.b.exec(`UPDATE pedidos SET status='aguardando_loja' WHERE id=?`, id);
       this.b.avisar(this.textoPedido(this.pedido(id)!, `💰 PEDIDO PAGO — aguardando a loja aceitar (até ${this.cfg.deliveryAceiteMin} min)`));
@@ -227,7 +244,16 @@ export class Delivery {
     if (!m || m.status === 'paga') return m ?? null;
     const r = await this.b.checar(id, slug, tx);
     if (!r.pago || this.b.um(`SELECT status FROM mensalidades WHERE id=?`, id)?.status === 'paga') return this.b.um(`SELECT * FROM mensalidades WHERE id=?`, id) ?? null;
-    this.b.exec(`UPDATE mensalidades SET status='paga', pago_em=?, metodo=?, slug=?, transaction_nsu=?, receipt_url=? WHERE id=?`, iso(Date.now()), r.metodo, slug, tx, receiptUrl ?? null, id);
+    return this.aplicarMensalidade(id, r.metodo, { slug, tx, receiptUrl });
+  }
+  private aplicarMensalidade(id: string, metodo: string | null, extra: { slug?: string; tx?: string; receiptUrl?: string | null; cobrancaId?: string }) {
+    const m = this.b.um(`SELECT * FROM mensalidades WHERE id=?`, id);
+    if (!m || m.status === 'paga') return m ?? null;
+    const r = { metodo };
+    this.b.exec(
+      `UPDATE mensalidades SET status='paga', pago_em=?, metodo=?, slug=?, transaction_nsu=?, receipt_url=?, cobranca_id=? WHERE id=?`,
+      iso(Date.now()), metodo, extra.slug ?? null, extra.tx ?? null, extra.receiptUrl ?? null, extra.cobrancaId ?? null, id,
+    );
     const ate = this.estender(m.loja_id, Number(m.dias));
     const loja = this.b.um(`SELECT loja_nome FROM clientes WHERE id=?`, m.loja_id);
     this.b.avisar(`🏪 MENSALIDADE DO DELIVERY paga: ${loja?.loja_nome ?? 'loja'} · ${brl(Number(m.valor))} (${r.metodo === 'pix' ? 'Pix' : 'cartão'}) — vitrine ativa até ${new Date(ate).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`);
@@ -323,6 +349,7 @@ export class Delivery {
         id, codigo, l.id, cli.id, JSON.stringify(itens), subtotal, cot.valor, total, cot.km, cot.minutos, cot.kmDesloc, veiculo, observacao,
         cli.endereco, casa.lat, casa.lon, iso(agora), iso(agora + cfg.esperaPagamentoMin * MIN), cot.urgencia,
       );
+      if (this.b.pagarmeAtivo()) return json(this.pedidoView(this.pedido(id)!, 'cliente')); // paga na tela de pagamento do app
       try {
         const urlPg = await this.b.link({
           orderNsu: id, valor: total, descricao: `Pedido #${codigo} - ${l.loja_nome}`, cli, origem: url.origin, validoMin: cfg.esperaPagamentoMin + 5,
@@ -399,6 +426,10 @@ export class Delivery {
       this.b.exec(`UPDATE mensalidades SET status='cancelada' WHERE loja_id=? AND status='pendente'`, loja.id);
       const id = novoId('mens');
       const valor = r2(cfg.deliveryMensalidade);
+      if (this.b.pagarmeAtivo()) {
+        this.b.exec(`INSERT INTO mensalidades (id, loja_id, valor, dias, status, criado_em) VALUES (?,?,?,?, 'pendente', ?)`, id, loja.id, valor, DIAS_MENSALIDADE, iso(agora));
+        return json({ id, valor, checkoutUrl: null, status: 'pendente' });
+      }
       let checkoutUrl: string;
       try {
         checkoutUrl = await this.b.link({ orderNsu: id, valor, descricao: `Vitrine MOVI Delivery - ${DIAS_MENSALIDADE} dias - ${loja.loja_nome}`, cli: loja, origem: url.origin, validoMin: 60 });
