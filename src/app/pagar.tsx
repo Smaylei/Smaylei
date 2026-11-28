@@ -136,7 +136,7 @@ export default function Pagar() {
           <Text style={s.valor}>{formatarReais(conta.total)}</Text>
           {conta.taxa > 0 && (
             <Text style={s.composicao}>
-              {formatarReais(r.valor)} + {nomeTaxa.toLowerCase()} {formatarReais(conta.taxa)}
+              {formatarReais(r.valor)} + {metodo === 'pix' ? 'taxa do Pix' : 'taxa do cartão'} {formatarReais(conta.taxa)}
             </Text>
           )}
           {r.prazo && <Text style={s.prazo}>Pague até {new Date(r.prazo).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</Text>}
