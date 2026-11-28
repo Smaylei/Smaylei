@@ -18,6 +18,7 @@ export type ConfigServidor = {
   urgencia: Urgencia;
   comissaoMotoristaPct: number;
   incentivoUrgencia: number;
+  taxaServicoPct: number;
   gateway: 'infinitepay' | 'pagarme';
   pagarmeRecebedorMovi: string;
   pagarmeChavePublica: string;

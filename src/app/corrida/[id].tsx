@@ -195,7 +195,7 @@ export default function Corrida() {
 
       {(c.status === 'pagamento_pendente' || c.aguardandoPagamento) && (
         <Pressable style={s.botao} onPress={() => irParaPagamento(config.gateway, 'corrida', c.id)}>
-          <Text style={s.botaoTexto}>Pagar {formatarReais(preco(c.pacote?.valor ?? c.valor))}</Text>
+          <Text style={s.botaoTexto}>Pagar {formatarReais(c.pacote ? preco(c.pacote.valor, c.pacote.taxaServico ?? 0) : preco(c.valor, c.taxaServico ?? 0))}</Text>
         </Pressable>
       )}
 
@@ -254,8 +254,8 @@ export default function Corrida() {
         {c.retorno ? <Linha a="Volta" b="Traz você de volta à coleta" /> : null}
         {c.descricao ? <Linha a="O que" b={c.descricao} /> : null}
         <Linha a="Quando" b={c.agendado ? c.janela : 'Agora'} />
-        <Linha a="Valor" b={formatarReais(c.pagoEm ? Math.round((c.valor + (c.taxaPagamento ?? 0)) * 100) / 100 : preco(c.valor))} />
-        {c.pacote ? <Linha a="Pacote" b={`${c.pacote.viagens} viagens · ${formatarReais(preco(c.pacote.valor))}`} /> : null}
+        <Linha a="Valor" b={formatarReais(c.pagoEm ? Math.round((c.valor + (c.taxaServico ?? 0) + (c.taxaPagamento ?? 0)) * 100) / 100 : preco(c.valor, c.taxaServico ?? 0))} />
+        {c.pacote ? <Linha a="Pacote" b={`${c.pacote.viagens} viagens · ${formatarReais(preco(c.pacote.valor, c.pacote.taxaServico ?? 0))}`} /> : null}
         {c.gorjeta ? <Linha a="Gorjeta" b={formatarReais(c.gorjeta)} /> : null}
         {c.pagoEm ? (
           <Linha a="Pagamento" b={`${c.metodo === 'pix' ? 'Pix' : 'Cartão'} · ${c.liberadoEm ? 'liberado ao motorista' : c.status === 'cancelado' ? 'devolução' : 'retido'}`} />

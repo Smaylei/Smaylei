@@ -11,6 +11,7 @@ import { useCotacoes } from '../hooks/useCotacoes';
 import { api, type CorridaCliente, type Disponibilidade } from '../services/api';
 import { formatarReais } from '../services/preco';
 import { SOLICITANTE } from '../variante';
+import { taxaServico } from '../services/taxas';
 
 export default function PedidoTela() {
   const params = useLocalSearchParams<{ servico?: string; modo?: string }>();
@@ -274,7 +275,7 @@ export default function PedidoTela() {
       <View style={[s.rodape, { paddingBottom: 12 + insets.bottom }]}>
         <View style={{ flex: 1 }}>
           <Text style={s.rodapeRotulo}>{qtd > 1 ? `${qtd} viagens` : agendado ? 'Agendado' : 'Agora'}</Text>
-          <Text style={s.rodapeValor}>{valorBase === null ? '—' : formatarReais(preco(Math.round(valorBase * Math.max(qtd, 1) * 100) / 100))}</Text>
+          <Text style={s.rodapeValor}>{valorBase === null ? '—' : formatarReais(preco(Math.round(valorBase * Math.max(qtd, 1) * 100) / 100, taxaServico(valorBase, config.taxaServicoPct) * Math.max(qtd, 1)))}</Text>
         </View>
         <Pressable style={[s.botao, (!pronto || enviando) && { opacity: 0.45 }]} disabled={!pronto || enviando} onPress={chamar}>
           {enviando ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Pagar e {agendado ? 'agendar' : 'chamar'}</Text>}

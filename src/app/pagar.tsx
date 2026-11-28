@@ -11,17 +11,20 @@ import * as P from '../services/pagamento';
 import { formatarReais } from '../services/preco';
 import { SOLICITANTE } from '../variante';
 
-type Resumo = { titulo: string; valor: number; pendente: boolean; prazo: string | null };
+type Resumo = { titulo: string; valor: number; pendente: boolean; prazo: string | null; servico?: number };
 
 async function resumo(tipo: P.TipoPagamento, id: string): Promise<Resumo> {
   if (tipo === 'corrida') {
     const c = await api<CorridaCliente>(SOLICITANTE, `/v2/corridas/${id}`);
     const pendente = c.status === 'pagamento_pendente' || !!c.aguardandoPagamento;
-    return { titulo: c.pacote ? `${c.servicoTitulo} · ${c.pacote.viagens} viagens` : (c.servicoTitulo ?? 'Frete'), valor: c.pacote?.valor ?? c.valor, pendente, prazo: c.pagamentoAte ?? null };
+    return {
+      titulo: c.pacote ? `${c.servicoTitulo} · ${c.pacote.viagens} viagens` : (c.servicoTitulo ?? 'Frete'), valor: c.pacote?.valor ?? c.valor, pendente, prazo: c.pagamentoAte ?? null,
+      servico: (c.pacote ? c.pacote.taxaServico : c.taxaServico) ?? 0,
+    };
   }
   if (tipo === 'pedido') {
     const p = await D.pedido(id);
-    return { titulo: `Pedido #${p.codigo} · ${p.loja.nome}`, valor: p.total, pendente: p.status === 'pagamento_pendente', prazo: p.pagamentoAte };
+    return { titulo: `Pedido #${p.codigo} · ${p.loja.nome}`, valor: p.total, pendente: p.status === 'pagamento_pendente', prazo: p.pagamentoAte, servico: p.taxaServico ?? 0 };
   }
   if (tipo === 'mensalidade') {
     const m = await D.mensalidade(id);
@@ -230,7 +233,7 @@ export default function Pagar() {
   if (!r) return msg ? <Text style={[s.erro, { padding: 20 }]}>{msg}</Text> : <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   const pixPronto = cob?.metodo === 'pix' && cob.status === 'pendente';
   // Preço ao cliente: um só, igual em qualquer meio (a taxa do pagamento já vem embutida, sem aparecer).
-  const conta = { total: cob?.status === 'pendente' ? cob.valor : tipo === 'gorjeta' || tipo === 'mensalidade' ? r.valor : preco(r.valor) };
+  const conta = { total: cob?.status === 'pendente' ? cob.valor : tipo === 'gorjeta' || tipo === 'mensalidade' ? r.valor : preco(r.valor, r.servico ?? 0) };
   const abas: P.MetodoPagamento[] = comDebito ? ['pix', 'cartao', 'debito'] : ['pix', 'cartao'];
   const novoCartao = metodo === 'debito' || escolhido === 'novo';
 

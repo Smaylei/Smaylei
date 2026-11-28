@@ -47,7 +47,7 @@ export default function MeuPedido() {
   if (!p) return erro ? <Text style={[s.erro, { padding: 20 }]}>{erro}</Text> : <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   const atual = passoAtual(p);
   // Preço ao cliente (taxa do pagamento embutida na entrega): o pago, ou o que vai pagar.
-  const totalCliente = p.pagoEm ? Math.round((p.total + (p.taxaPagamento || 0)) * 100) / 100 : preco(p.total);
+  const totalCliente = p.pagoEm ? Math.round((p.total + (p.taxaServico || 0) + (p.taxaPagamento || 0)) * 100) / 100 : preco(p.total, p.taxaServico || 0);
   const entregaCliente = Math.round((totalCliente - p.subtotal) * 100) / 100;
 
   function cancelar() {

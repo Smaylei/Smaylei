@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API, api, apagarToken, ErroApi, lerToken } from '../services/api';
 import { carregarEndereco, salvarEndereco, type Endereco } from '../services/cadastro';
 import { URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../services/preco';
-import { comTaxa, type TaxaMeio } from '../services/taxas';
+import { comTaxa, taxaServico, type TaxaMeio } from '../services/taxas';
 import { MODO, SOLICITANTE } from '../variante';
 
 type Config = Liberacao &
@@ -23,6 +23,8 @@ type Config = Liberacao &
     pagarAoAceitarMin: number;
     /** Taxa do pagamento embutida no preço ao cliente (Pagar.me); o cliente vê só o preço final. */
     taxaPreco: TaxaMeio | null;
+    /** Taxa de serviço da MOVI (%), paga por quem pede e embutida no preço (fora do ganho do motorista). */
+    taxaServicoPct: number;
     /** Cartão de débito liberado no Admin (Visa/Mastercard, com a confirmação do banco). */
     debitoAtivo: boolean;
   };
@@ -64,6 +66,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     pagarmeChavePublica: '',
     pagarAoAceitarMin: 3,
     taxaPreco: null,
+    taxaServicoPct: 0,
     debitoAtivo: false,
     ...LIBERACAO_PADRAO,
     ...MOTO_PADRAO,
@@ -87,6 +90,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             pagarmeChavePublica: c.pagarmeChavePublica ?? '',
             pagarAoAceitarMin: c.pagarAoAceitarMin ?? 3,
             taxaPreco: c.taxaPreco ?? null,
+            taxaServicoPct: c.taxaServicoPct ?? 0,
             debitoAtivo: !!c.debitoAtivo,
             servicosAtivos: c.servicosAtivos ?? LIBERACAO_PADRAO.servicosAtivos,
             categoriasAtivas: c.categoriasAtivas ?? LIBERACAO_PADRAO.categoriasAtivas,
@@ -162,11 +166,20 @@ export function useApp() {
 }
 
 /**
- * Preço que o cliente vê e paga: o valor do serviço com a taxa do pagamento já embutida (igual em
- * Pix, crédito e débito). O cliente nunca vê "taxa"; motorista e loja recebem o valor deles.
+ * Preço que o cliente vê e paga: o valor + a taxa de serviço da MOVI + a taxa do pagamento, tudo
+ * embutido (igual em Pix, crédito e débito). O cliente nunca vê "taxa"; motorista e loja recebem o
+ * valor deles. `servico`: a já gravada no pedido; sem ela, calcula com o % atual (sobre `baseServico`).
  */
 export function usePreco() {
   const { config } = useApp();
   const t = config.taxaPreco;
-  return useCallback((v: number) => (t && v > 0 ? comTaxa(v, t).total : v), [t]);
+  const pct = config.taxaServicoPct;
+  return useCallback(
+    (v: number, servico?: number, baseServico: number = v) => {
+      if (!(v > 0)) return v;
+      const base = Math.round((v + (servico ?? taxaServico(baseServico, pct))) * 100) / 100;
+      return t ? comTaxa(base, t).total : base;
+    },
+    [t, pct],
+  );
 }

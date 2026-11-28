@@ -59,7 +59,7 @@ export default function CarrinhoTela() {
   const sub = subtotal(carrinho);
   const faltaMinimo = minimo > 0 && sub < minimo;
   // Preço ao cliente: a taxa do pagamento vai embutida na entrega (sem aparecer como taxa).
-  const total = cot ? preco(Math.round((sub + cot.frete) * 100) / 100) : null;
+  const total = cot ? preco(Math.round((sub + cot.frete) * 100) / 100, undefined, cot.frete) : null; // serviço só sobre a entrega
   const pode = !!cot && cot.entrega.ok && !faltaMinimo && !enviando;
 
   async function pagar() {

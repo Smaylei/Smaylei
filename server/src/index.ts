@@ -5,7 +5,7 @@ import { erro, type Env } from './central';
 export { Central } from './central';
 
 // Marca da versão publicada (para conferir se a Cloudflare já está com o código novo).
-const VERSAO = 'preco-8';
+const VERSAO = 'servico-9';
 
 const CORS = {
   'access-control-allow-origin': '*',

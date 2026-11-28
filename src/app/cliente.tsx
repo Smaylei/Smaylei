@@ -55,7 +55,7 @@ export default function Inicio() {
           >
             <Text style={[s.statusTitulo, { color: p.status === 'cancelado' ? cores.erro : cores.primaria }]}>🛵 {D.etapaPedido(p)}</Text>
             <Text style={s.statusTexto}>
-              Pedido #{p.codigo} · {p.loja.nome} · {formatarReais(p.pagoEm ? Math.round((p.total + (p.taxaPagamento || 0)) * 100) / 100 : preco(p.total))}
+              Pedido #{p.codigo} · {p.loja.nome} · {formatarReais(p.pagoEm ? Math.round((p.total + (p.taxaServico || 0) + (p.taxaPagamento || 0)) * 100) / 100 : preco(p.total, p.taxaServico || 0))}
             </Text>
             {p.status === 'cancelado' && p.reembolso > 0 && <Text style={s.statusTexto}>{formatarReais(p.reembolso)} serão devolvidos para você.</Text>}
             <Text style={s.verMais}>Ver pedido ›</Text>

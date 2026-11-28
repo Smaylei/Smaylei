@@ -105,6 +105,8 @@ export type CorridaCliente = Viagem & {
   id: string;
   /** Taxa do pagamento já embutida no que o cliente pagou (preço pago = valor + taxaPagamento). */
   taxaPagamento?: number;
+  /** Taxa de serviço da MOVI gravada no pedido (preço = valor + taxaServico, + taxa do pagamento). */
+  taxaServico?: number;
   status: Status;
   agendado: boolean;
   janela: string;
@@ -134,7 +136,7 @@ export type CorridaCliente = Viagem & {
   /** Gorjeta paga neste frete. */
   gorjeta: number | null;
   /** Várias viagens pagas de uma vez. */
-  pacote: { id: string; valor: number; viagens: number } | null;
+  pacote: { id: string; valor: number; viagens: number; taxaServico?: number } | null;
   /** Entrega de um pedido do delivery (cancelamento só pelo suporte). */
   pedidoId?: string | null;
   /** Pagar.me: pedido para agora é pago quando o motorista aceita. */

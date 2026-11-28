@@ -182,7 +182,7 @@ export default function PagamentosAdmin() {
           </Pressable>
         </View>
         <Text style={s.sub}>
-          Exemplo: um frete de {formatarReais(50)} aparece para o cliente como {formatarReais(exemplo)}, em qualquer meio de pagamento.
+          Exemplo: {formatarReais(50)} (frete + taxa de serviço) aparece para o cliente como {formatarReais(exemplo)}, em qualquer meio de pagamento.
         </Text>
       </View>
 

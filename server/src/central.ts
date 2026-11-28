@@ -54,7 +54,7 @@ import {
 } from '../../src/services/agenda';
 import { cpfValido } from '../../src/services/cpf';
 import { chavePixValida, nomeTipoChave } from '../../src/services/pix';
-import { comTaxa } from '../../src/services/taxas';
+import { comTaxa, taxaServico } from '../../src/services/taxas';
 import { distanciaDoMapa, rotaEntre } from '../../src/services/grafo';
 import { caminhoOsrm, tabelaOsrm, trajetoEstimado, type Trajeto } from './rotas';
 import { conferir, gerarHash, senhaProvisoria, senhaValida } from './senha';
@@ -84,6 +84,7 @@ export type Config = ConfigAgenda & Liberacao & ConfigMoto & ConfigDelivery & {
   urgencia: Urgencia;
   comissaoMotoristaPct: number; // parte do frete que vai para o saldo do motorista (80)
   incentivoUrgencia: number; // R$ a mais para o motorista no pedido "agora" (a taxa de urgência fica com a MOVI)
+  taxaServicoPct: number; // % sobre o valor, pago pelo solicitante e 100% da MOVI (embutido no preço; fora do ganho do motorista)
   gateway: 'infinitepay' | 'pagarme'; // quem processa os pagamentos
   pagarmeRecebedorMovi: string; // recebedor da MOVI na Pagar.me (rp_...), para o split
   pagarmeChavePublica: string; // chave pública (pk_...) que o app usa para gerar o token do cartão
@@ -112,6 +113,7 @@ export const CONFIG_PADRAO: Config = {
   urgencia: URGENCIA_PADRAO,
   comissaoMotoristaPct: 80,
   incentivoUrgencia: 4,
+  taxaServicoPct: 5,
   gateway: 'infinitepay',
   pagarmeRecebedorMovi: '',
   pagarmeChavePublica: '',
@@ -229,7 +231,10 @@ const COLUNAS_NOVAS = [`ALTER TABLE corridas ADD COLUMN pagamento_ate TEXT`, `AL
   'ALTER TABLE motoristas ADD COLUMN pix_tipo TEXT',
   'ALTER TABLE clientes ADD COLUMN pix_tipo TEXT',
   // Cartões salvos: o cliente na Pagar.me guarda a carteira; aqui só bandeira, final e validade
-  'ALTER TABLE clientes ADD COLUMN pagarme_cliente TEXT'];
+  'ALTER TABLE clientes ADD COLUMN pagarme_cliente TEXT',
+  // Taxa de serviço da MOVI, gravada no pedido (o preço não muda depois)
+  'ALTER TABLE corridas ADD COLUMN taxa_servico REAL NOT NULL DEFAULT 0',
+  'ALTER TABLE pacotes ADD COLUMN taxa_servico REAL NOT NULL DEFAULT 0'];
 
 export const ROTULO: Record<string, string> = {
   pagamento_pendente: 'Aguardando pagamento',
@@ -363,6 +368,7 @@ export class Central extends DurableObject<Env> {
       `Destino: ${c.entrega_nome && c.entrega_nome !== 'Casa' ? `${c.entrega_nome} (${c.entrega_endereco})` : (c.entrega_endereco ?? cli?.endereco ?? '-')}`,
       c.descricao ? `O que: ${c.descricao}` : '',
       `Frete: ${brl(Number(c.valor))}${Number(c.urgencia) > 0 ? ` (urgência ${brl(Number(c.urgencia))} · motorista recebe ${brl(this.ganhoDe(c))}, com +${brl(this.incentivoDe(c))} de incentivo)` : ''}`,
+      Number(c.taxa_servico) > 0 ? `Taxa de serviço MOVI: ${brl(Number(c.taxa_servico))} (cliente paga ${brl(Number(c.valor) + Number(c.taxa_servico))}${Number(c.taxa_pagamento) > 0 ? ` + ${brl(Number(c.taxa_pagamento))} do pagamento` : ''})` : '',
       mot ? `Motorista: ${mot.nome} (${mot.placa})` : '',
       Number(c.reembolso) > 0 ? `⚠️ ESTORNAR ${brl(Number(c.reembolso))} ao cliente pelo app da InfinitePay` : '',
     ]
@@ -421,7 +427,7 @@ export class Central extends DurableObject<Env> {
     const cfg = this.config();
     let reembolso = 0, taxa = 0;
     if (c.pago_em && !c.liberado_em) {
-      const tp = Number(c.taxa_pagamento ?? 0); // taxa do Pix/cartão que o cliente pagou: volta junto
+      const tp = Number(c.taxa_pagamento ?? 0) + Number(c.taxa_servico ?? 0); // taxas que o cliente pagou (pagamento e serviço): voltam junto
       if (c.status === 'no_local') {
         taxa = Math.min(cfg.taxaDeslocamento, Number(c.valor));
         // Split direto: no estorno parcial o motorista já fica com a parte proporcional; a MOVI completa a taxa.
@@ -505,7 +511,7 @@ export class Central extends DurableObject<Env> {
     // Só contagens (sem dados pessoais): ajuda a entender um "nenhum motorista livre".
     const n = (q: string, ...x: unknown[]) => Number(this.um(q, ...x)?.n ?? 0);
     const diag = {
-      v: 8,
+      v: 9,
       online: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1`),
       comPosicao: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1 AND loc_em > ?`, iso(agora - LOC_VALIDA_MIN * MIN)),
       livres,
@@ -643,7 +649,8 @@ export class Central extends DurableObject<Env> {
       esperaConfirmacaoMin: cfg.esperaConfirmacaoMin, taxaDeslocamento: cfg.taxaDeslocamento,
       motorista: comMotorista ? this.motoristaPublico(c.motorista_id) : null,
       ...this.viagem(c),
-      pacote: c.pacote_id ? this.um(`SELECT id, valor, viagens FROM pacotes WHERE id=?`, c.pacote_id) ?? null : null,
+      pacote: c.pacote_id ? this.um(`SELECT id, valor, viagens, taxa_servico AS taxaServico FROM pacotes WHERE id=?`, c.pacote_id) ?? null : null,
+      taxaServico: Number(c.taxa_servico ?? 0),
       pedidoId: c.pedido_id ?? null,
       // Pagar.me: paga quando o motorista aceita (até pagamentoAte); depois disso a corrida cai.
       pagarAoAceitar: c.pagar_ao_aceitar === 1, aguardandoPagamento: c.pagar_ao_aceitar === 1 && c.status === 'aceito' && !c.pago_em,
@@ -686,7 +693,7 @@ export class Central extends DurableObject<Env> {
   private async criarLink(c: Linha, cli: Linha, origem: string) {
     const cfg = this.config();
     return this.linkInfinitePay({
-      orderNsu: String(c.id), valor: Number(c.valor), descricao: `${servicoPorId(c.servico).titulo}: ${c.coleta_nome ?? c.mercado_nome} → ${c.entrega_nome ?? 'casa'} - ${c.agendado ? c.janela : 'agora'}`,
+      orderNsu: String(c.id), valor: r2(Number(c.valor) + Number(c.taxa_servico ?? 0)), descricao: `${servicoPorId(c.servico).titulo}: ${c.coleta_nome ?? c.mercado_nome} → ${c.entrega_nome ?? 'casa'} - ${c.agendado ? c.janela : 'agora'}`,
       cli, origem, validoMin: cfg.esperaPagamentoMin + 5,
     });
   }
@@ -785,7 +792,7 @@ export class Central extends DurableObject<Env> {
     const atual = this.corrida(id)!;
     const cfg = this.config();
     const agora = Date.now();
-    this.sql.exec(`UPDATE corridas SET pago_em=?, metodo=?, receipt_url=?, slug=?, transaction_nsu=?, valor_cobrado=valor + taxa_pagamento WHERE id=?`, iso(agora), metodo, receiptUrl ?? null, slug, tx, id);
+    this.sql.exec(`UPDATE corridas SET pago_em=?, metodo=?, receipt_url=?, slug=?, transaction_nsu=?, valor_cobrado=valor + taxa_servico + taxa_pagamento WHERE id=?`, iso(agora), metodo, receiptUrl ?? null, slug, tx, id);
     if (atual.status === 'pagamento_pendente') {
       const inicio = atual.agendado ? Date.parse(String(atual.inicio)) : agora;
       const ofertaAte = atual.agendado ? inicio - 30 * MIN : agora + cfg.ofertaMin * MIN;
@@ -795,7 +802,7 @@ export class Central extends DurableObject<Env> {
       return pago;
     }
     // Pagou depois do prazo (pedido já cancelado): devolver.
-    this.sql.exec(`UPDATE corridas SET reembolso=valor + taxa_pagamento WHERE id=?`, id);
+    this.sql.exec(`UPDATE corridas SET reembolso=valor + taxa_servico + taxa_pagamento WHERE id=?`, id);
     const tarde = this.corrida(id)!;
     this.avisar(this.textoCorrida(tarde, '⚠️ PAGAMENTO APÓS O PRAZO — pedido já estava cancelado'), id);
     return tarde;
@@ -844,10 +851,11 @@ export class Central extends DurableObject<Env> {
       if (c.pacote_id && c.status === 'pagamento_pendente') {
         const pac = this.um(`SELECT * FROM pacotes WHERE id=?`, c.pacote_id)!;
         if (pac.pago_em) return { erro: 'Este pacote já está pago.', status: 409 };
-        return { refTipo: 'pacote', refId: String(pac.id), titulo: `${servicoPorId(c.servico).titulo} - ${pac.viagens} viagens`, valor: Number(pac.valor), itens: [{ codigo: String(pac.id), descricao: `${servicoPorId(c.servico).titulo} - ${pac.viagens} viagens`, centavos: cent(Number(pac.valor)), qtd: 1 }], expiraSeg: ate(c.pagamento_ate, cfg.esperaPagamentoMin) };
+        const vPac = r2(Number(pac.valor) + Number(pac.taxa_servico ?? 0));
+        return { refTipo: 'pacote', refId: String(pac.id), titulo: `${servicoPorId(c.servico).titulo} - ${pac.viagens} viagens`, valor: vPac, itens: [{ codigo: String(pac.id), descricao: `${servicoPorId(c.servico).titulo} - ${pac.viagens} viagens`, centavos: cent(vPac), qtd: 1 }], expiraSeg: ate(c.pagamento_ate, cfg.esperaPagamentoMin) };
       }
       if (c.pago_em) return { erro: 'Este frete já está pago.', status: 409 };
-      const valor = Number(c.valor);
+      const valor = r2(Number(c.valor) + Number(c.taxa_servico ?? 0)); // o motorista continua com o ganho dele; o serviço é da MOVI
       const itens = [{ codigo: String(c.id), descricao: titulo, centavos: cent(valor), qtd: 1 }];
       if (c.pagar_ao_aceitar) {
         if (c.status !== 'aceito') return { erro: c.status === 'buscando' ? 'Aguarde um motorista aceitar para pagar.' : 'Este frete não pode mais ser pago.', status: 409 };
@@ -869,9 +877,9 @@ export class Central extends DurableObject<Env> {
       if (p.status !== 'pagamento_pendente' || p.pago_em) return { erro: 'Este pedido não está aguardando pagamento.', status: 409 };
       const loja = this.um(`SELECT * FROM clientes WHERE id=?`, p.loja_id);
       const itensPed = JSON.parse(String(p.itens)) as { produtoId: string; nome: string; preco: number; qtd: number }[];
-      const itens = [...itensPed.map((i) => ({ codigo: i.produtoId, descricao: i.nome, centavos: cent(i.preco), qtd: i.qtd })), { codigo: 'frete', descricao: 'Entrega MOVI', centavos: cent(Number(p.frete)), qtd: 1 }];
+      const itens = [...itensPed.map((i) => ({ codigo: i.produtoId, descricao: i.nome, centavos: cent(i.preco), qtd: i.qtd })), { codigo: 'frete', descricao: 'Entrega MOVI', centavos: cent(Number(p.frete) + Number(p.taxa_servico ?? 0)), qtd: 1 }];
       const total = itens.reduce((sm, i) => sm + i.centavos * i.qtd, 0);
-      const produtos = total - cent(Number(p.frete));
+      const produtos = total - cent(Number(p.frete) + Number(p.taxa_servico ?? 0));
       // Split: os produtos vão direto para a loja; a MOVI fica com o frete e paga as taxas.
       const split = this.recebedorAtivo(loja) && movi ? [{ recebedor: String(loja!.pagarme_recebedor), centavos: produtos, principal: false }, { recebedor: movi, centavos: total - produtos, principal: true }] : undefined;
       return { refTipo: 'pedido', refId: String(p.id), titulo: `Pedido #${p.codigo} - ${loja?.loja_nome ?? 'loja'}`, valor: total / 100, itens, split, expiraSeg: ate(p.pagamento_ate, cfg.esperaPagamentoMin) };
@@ -1016,11 +1024,11 @@ export class Central extends DurableObject<Env> {
       if (!c.pago_em) this.sql.exec(`UPDATE corridas SET taxa_pagamento=? WHERE id=?`, taxaCob, ref);
       if (c.pagar_ao_aceitar) {
         if (c.status === 'aceito' && !c.pago_em) {
-          this.sql.exec(`UPDATE corridas SET pago_em=?, metodo=?, valor_cobrado=valor + taxa_pagamento, cobranca_id=?, repasse_direto=? WHERE id=?`, agora, metodo, id, direto ? 1 : 0, ref);
+          this.sql.exec(`UPDATE corridas SET pago_em=?, metodo=?, valor_cobrado=valor + taxa_servico + taxa_pagamento, cobranca_id=?, repasse_direto=? WHERE id=?`, agora, metodo, id, direto ? 1 : 0, ref);
           this.avisar(this.textoCorrida(this.corrida(ref)!, `💰 PAGO NO ACEITE ${brl(Number(c.valor))}${maisTaxa} (${metodo === 'pix' ? 'Pix' : 'cartão'})${direto ? ' — ganho já direto na conta do motorista' : ' — valor retido'}; motorista pode sair`), ref);
         } else {
           // Pagou depois do prazo (corrida já cancelada): estorno automático (com a taxa).
-          this.sql.exec(`UPDATE corridas SET pago_em=COALESCE(pago_em, ?), metodo=?, cobranca_id=?, repasse_direto=?, reembolso=valor + taxa_pagamento WHERE id=?`, agora, metodo, id, direto ? 1 : 0, ref);
+          this.sql.exec(`UPDATE corridas SET pago_em=COALESCE(pago_em, ?), metodo=?, cobranca_id=?, repasse_direto=?, reembolso=valor + taxa_servico + taxa_pagamento WHERE id=?`, agora, metodo, id, direto ? 1 : 0, ref);
           this.avisar(this.textoCorrida(this.corrida(ref)!, '⚠️ PAGAMENTO APÓS O PRAZO — corrida já cancelada; estorno automático pela Pagar.me'), ref);
         }
       } else {
@@ -1204,7 +1212,7 @@ export class Central extends DurableObject<Env> {
         motoAcrescimoPct: r2((fatorMoto(cfg) - 1) * 100), // APKs antigos calculam com o acréscimo
         deslocamentoPadraoKm: cfg.deslocamentoPadraoKm, deliveryMensalidade: cfg.deliveryMensalidade, deliveryUrgencia: cfg.deliveryUrgencia,
         gateway: this.pagarme() ? 'pagarme' : 'infinitepay', pagarmeChavePublica: this.pagarme() ? cfg.pagarmeChavePublica : '', pagarAoAceitarMin: cfg.pagarAoAceitarMin,
-        taxaPreco: this.pagarme() ? this.taxaPreco() : null, debitoAtivo: !!this.pagarme() && cfg.debitoAtivo,
+        taxaPreco: this.pagarme() ? this.taxaPreco() : null, debitoAtivo: !!this.pagarme() && cfg.debitoAtivo, taxaServicoPct: cfg.taxaServicoPct,
         locais: this.locais().filter((l) => cfg.categoriasAtivas.includes(l.categoria as never) && !!l.cidade && cfg.cidadesAtivas.includes(l.cidade)),
       });
     if (metodo === 'GET' && p === '/v2/disponibilidade') return json(this.disponibilidade());
@@ -1556,15 +1564,16 @@ export class Central extends DurableObject<Env> {
         this.sql.exec(
           `INSERT INTO corridas (id, cliente_id, mercado_id, mercado_nome, agendado, inicio, fim, janela, status, valor, km, minutos, criado_em, pagamento_ate,
              servico, descricao, coleta_nome, coleta_endereco, coleta_lat, coleta_lon, entrega_nome, entrega_endereco, entrega_lat, entrega_lon, cliente_na_coleta, retorno, pacote_id, veiculo, km_desloc, urgencia,
-             pagar_ao_aceitar, oferta_ate)
-           VALUES (?,?,?,?,?,?,?,?, ?, ?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?)`,
+             pagar_ao_aceitar, oferta_ate, taxa_servico)
+           VALUES (?,?,?,?,?,?,?,?, ?, ?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?)`,
           id, cli.id, de.localId, de.nome, agendado ? 1 : 0, iso(v.inicio), iso(v.inicio + cfg.bloqueioMin * MIN), janela, pagarNoAceite ? 'buscando' : 'pagamento_pendente',
           cot.valor, cot.km, cot.minutos, iso(agora), pagarNoAceite ? null : iso(agora + cfg.esperaPagamentoMin * MIN),
           sv.id, descricao || null, de.nome, de.endereco, de.lat, de.lon, para.nome, para.endereco, para.lat, para.lon, sv.clienteNaColeta ? 1 : 0, sv.retorno ? 1 : 0, pacote,
           veiculo, cot.kmDesloc, agendado ? 0 : cot.urgencia,
-          pagarNoAceite ? 1 : 0, pagarNoAceite ? iso(agora + cfg.ofertaMin * MIN) : null,
+          pagarNoAceite ? 1 : 0, pagarNoAceite ? iso(agora + cfg.ofertaMin * MIN) : null, taxaServico(cot.valor, cfg.taxaServicoPct),
         );
       }
+      const servicoPacote = r2(taxaServico(cot.valor, cfg.taxaServicoPct) * ids.length);
       if (pagarNoAceite) {
         const c = this.corrida(ids[0])!;
         this.avisar(this.textoCorrida(c, `🚨 AGORA — procurando motorista (o cliente paga quando ele aceitar)`), c.id);
@@ -1572,15 +1581,15 @@ export class Central extends DurableObject<Env> {
       }
       if (this.pagarme()) {
         // Agendado / vários dias: paga agora, na tela de pagamento do app (Pix ou cartão).
-        if (pacote) this.sql.exec(`INSERT INTO pacotes (id, cliente_id, valor, viagens, criado_em) VALUES (?,?,?,?,?)`, pacote, cli.id, r2(cot.valor * ids.length), ids.length, iso(agora));
+        if (pacote) this.sql.exec(`INSERT INTO pacotes (id, cliente_id, valor, viagens, criado_em, taxa_servico) VALUES (?,?,?,?,?,?)`, pacote, cli.id, r2(cot.valor * ids.length), ids.length, iso(agora), servicoPacote);
         return json(this.corridaParaCliente(this.corrida(ids[0])!));
       }
       try {
         let urlPg: string;
         if (pacote) {
           const total = r2(cot.valor * ids.length);
-          this.sql.exec(`INSERT INTO pacotes (id, cliente_id, valor, viagens, criado_em) VALUES (?,?,?,?,?)`, pacote, cli.id, total, ids.length, iso(agora));
-          urlPg = await this.linkInfinitePay({ orderNsu: pacote, valor: total, descricao: `${sv.titulo} - ${ids.length} viagens`, cli, origem: url.origin, validoMin: cfg.esperaPagamentoMin + 5 });
+          this.sql.exec(`INSERT INTO pacotes (id, cliente_id, valor, viagens, criado_em, taxa_servico) VALUES (?,?,?,?,?,?)`, pacote, cli.id, total, ids.length, iso(agora), servicoPacote);
+          urlPg = await this.linkInfinitePay({ orderNsu: pacote, valor: r2(total + servicoPacote), descricao: `${sv.titulo} - ${ids.length} viagens`, cli, origem: url.origin, validoMin: cfg.esperaPagamentoMin + 5 });
           this.sql.exec(`UPDATE pacotes SET checkout_url=? WHERE id=?`, urlPg, pacote);
         } else urlPg = await this.criarLink(this.corrida(ids[0])!, cli, url.origin);
         for (const id of ids) this.sql.exec(`UPDATE corridas SET checkout_url=? WHERE id=?`, urlPg, id);
@@ -2130,6 +2139,8 @@ export class Central extends DurableObject<Env> {
       if (!Array.isArray(cfg.motoServicos) || cfg.motoServicos.some((x) => !SERVICOS.some((s) => s.id === x))) return erro('Serviços de moto inválidos.');
       if (!(cfg.deslocamentoPadraoKm >= 0 && cfg.deslocamentoPadraoKm <= cfg.deslocamentoMaxKm && cfg.deslocamentoMaxKm <= 50)) return erro('Deslocamento inválido.');
       if (!(cfg.incentivoUrgencia >= 0 && cfg.incentivoUrgencia <= 100)) return erro('Incentivo de urgência inválido.');
+      cfg.taxaServicoPct = r2(Number(cfg.taxaServicoPct));
+      if (!(cfg.taxaServicoPct >= 0 && cfg.taxaServicoPct <= 30)) return erro('Taxa de serviço: de 0 a 30%.');
       if (!['infinitepay', 'pagarme'].includes(cfg.gateway)) return erro('Gateway inválido.');
       if (cfg.gateway === 'pagarme' && !this.env.PAGARME_SECRET_KEY) return erro('Cadastre antes a chave secreta da Pagar.me (PAGARME_SECRET_KEY) nos segredos do Worker na Cloudflare.');
       cfg.pagarmeRecebedorMovi = String(cfg.pagarmeRecebedorMovi ?? '').trim();

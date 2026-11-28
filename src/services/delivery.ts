@@ -50,6 +50,8 @@ export type Pedido = {
   reembolsadoEm: string | null;
   /** Taxa do Pix/cartão paga por cima do total (Pagar.me). */
   taxaPagamento: number;
+  /** Taxa de serviço da MOVI sobre a entrega (embutida na entrega para o cliente). */
+  taxaServico: number;
   aceiteAte: string | null;
   corridaId: string | null;
   corridaStatus: string | null;

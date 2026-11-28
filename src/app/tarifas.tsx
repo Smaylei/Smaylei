@@ -20,14 +20,15 @@ export default function Tarifas() {
   if (!cfg) return <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   return (
     <TelaTarifas
-      key={JSON.stringify([cfg.tarifas, cfg.margem, cfg.urgencia, cfg.incentivoUrgencia])}
+      key={JSON.stringify([cfg.tarifas, cfg.margem, cfg.urgencia, cfg.incentivoUrgencia, cfg.taxaServicoPct])}
       tarifas={cfg.tarifas}
       margem={cfg.margem}
       urgencia={cfg.urgencia}
       incentivo={cfg.incentivoUrgencia ?? 4}
+      servico={cfg.taxaServicoPct ?? 5}
       comissaoPct={cfg.comissaoMotoristaPct}
-      onSalvar={(tarifas, margem, urgencia, incentivoUrgencia) =>
-        Admin.salvarConfig({ tarifas, margem, urgencia, incentivoUrgencia })
+      onSalvar={(tarifas, margem, urgencia, incentivoUrgencia, taxaServicoPct) =>
+        Admin.salvarConfig({ tarifas, margem, urgencia, incentivoUrgencia, taxaServicoPct })
           .then(setCfg)
           .catch((e) => Alert.alert('Não salvou', (e as Error).message))
       }

@@ -30,7 +30,7 @@ export default function Checkout() {
       let atual: Cobranca;
       if (ehPedido) {
         const p = await D.pedido(id);
-        atual = { titulo: `Pedido #${p.codigo} · ${p.loja.nome}`, valor: p.total, checkoutUrl: p.checkoutUrl, pendente: p.status === 'pagamento_pendente' };
+        atual = { titulo: `Pedido #${p.codigo} · ${p.loja.nome}`, valor: Math.round((p.total + (p.taxaServico ?? 0)) * 100) / 100, checkoutUrl: p.checkoutUrl, pendente: p.status === 'pagamento_pendente' };
       } else if (ehMensalidade) {
         const m = await D.mensalidade(id);
         atual = { titulo: 'Vitrine MOVI Delivery · 30 dias', valor: m.valor, checkoutUrl: m.status === 'pendente' ? m.checkoutUrl : null, pendente: m.status === 'pendente' };
@@ -41,7 +41,7 @@ export default function Checkout() {
         const cc = await api<CorridaCliente>(SOLICITANTE, `/v2/corridas/${id}`);
         atual = {
           titulo: cc.pacote ? `${cc.servicoTitulo} · ${cc.pacote.viagens} viagens` : (cc.servicoTitulo ?? cc.mercadoNome),
-          valor: cc.pacote?.valor ?? cc.valor,
+          valor: Math.round(((cc.pacote?.valor ?? cc.valor) + ((cc.pacote ? cc.pacote.taxaServico : cc.taxaServico) ?? 0)) * 100) / 100, // com o serviço (sem mostrar taxa)
           checkoutUrl: cc.checkoutUrl,
           pendente: cc.status === 'pagamento_pendente',
         };

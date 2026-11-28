@@ -12,6 +12,7 @@ import type { Config } from './central';
 import { cidadeDe, type CidadeId } from '../../src/data/cidades';
 import { aceitaMoto, CATEGORIAS_LOJA, DIAS_MENSALIDADE, type Veiculo } from '../../src/data/servicos';
 import { nomeTipoChave } from '../../src/services/pix';
+import { taxaServico } from '../../src/services/taxas';
 import { distanciaRetaKm } from '../../src/services/preco';
 import { brl, DIA, erro, iso, json, MIN, novoId, r2, type Linha } from './util';
 
@@ -67,6 +68,7 @@ export const COLUNAS_DELIVERY = [
   ...['repasse_direto INTEGER NOT NULL DEFAULT 0', 'cobranca_id TEXT', 'estorno_tentado_em TEXT', 'estorno_erro TEXT'].map((c) => `ALTER TABLE pedidos ADD COLUMN ${c}`),
   'ALTER TABLE mensalidades ADD COLUMN cobranca_id TEXT',
   'ALTER TABLE pedidos ADD COLUMN taxa_pagamento REAL NOT NULL DEFAULT 0', // taxa do Pix/cartão paga pelo cliente por cima
+  'ALTER TABLE pedidos ADD COLUMN taxa_servico REAL NOT NULL DEFAULT 0', // taxa de serviço da MOVI sobre a entrega (paga pelo cliente)
 ];
 
 /** Chave Pix dos repasses da loja: a escolhida (com tipo) ou, se nunca trocou, o CNPJ/CPF. */
@@ -147,7 +149,7 @@ export class Delivery {
       checkoutUrl: para === 'cliente' && p.status === 'pagamento_pendente' ? p.checkout_url : null, pagamentoAte: p.pagamento_ate, metodo: p.metodo,
       criadoEm: p.criado_em, pagoEm: p.pago_em, aceitoEm: p.aceito_em, entregueEm: p.entregue_em, canceladoEm: p.cancelado_em,
       liberadoEm: p.liberado_em, reembolso: Number(p.reembolso ?? 0), reembolsadoEm: p.reembolsado_em, repasseDireto: p.repasse_direto === 1,
-      taxaPagamento: Number(p.taxa_pagamento ?? 0),
+      taxaPagamento: Number(p.taxa_pagamento ?? 0), taxaServico: Number(p.taxa_servico ?? 0),
       aceiteAte: p.status === 'aguardando_loja' && p.pago_em ? iso(Date.parse(String(p.pago_em)) + this.cfg.deliveryAceiteMin * MIN) : null,
       corridaId: p.corrida_id, ...this.motoristaDaCorrida(p.corrida_id),
     };
@@ -181,7 +183,7 @@ export class Delivery {
   /** Cancela o pedido; `reembolso` é a parte de produtos + frete (a taxa do Pix/cartão paga pelo cliente volta junto). */
   private cancelarPedido(p: Linha, motivo: string, por: string, reembolso: number, cab: string) {
     const agora = iso(Date.now());
-    if (p.pago_em && reembolso > 0) reembolso += Number(p.taxa_pagamento ?? 0);
+    if (p.pago_em && reembolso > 0) reembolso += Number(p.taxa_pagamento ?? 0) + Number(p.taxa_servico ?? 0);
     this.b.exec(`UPDATE pedidos SET status='cancelado', motivo=?, cancelado_por=?, cancelado_em=?, reembolso=? WHERE id=?`, motivo, por, agora, r2(reembolso), p.id);
     if (p.pago_em) this.b.avisar(this.textoPedido(this.pedido(p.id)!, cab), p.corrida_id);
   }
@@ -245,7 +247,7 @@ export class Delivery {
       this.b.exec(`UPDATE pedidos SET status='aguardando_loja' WHERE id=?`, id);
       this.b.avisar(this.textoPedido(this.pedido(id)!, `💰 PEDIDO PAGO — aguardando a loja aceitar (até ${this.cfg.deliveryAceiteMin} min)`));
     } else {
-      this.b.exec(`UPDATE pedidos SET reembolso=total + taxa_pagamento WHERE id=?`, id);
+      this.b.exec(`UPDATE pedidos SET reembolso=total + taxa_servico + taxa_pagamento WHERE id=?`, id);
       this.b.avisar(this.textoPedido(this.pedido(id)!, '⚠️ PEDIDO PAGO APÓS O PRAZO — já estava cancelado'));
     }
     return this.pedido(id)!;
@@ -350,21 +352,22 @@ export class Delivery {
       const subtotal = r2(itens.reduce((s, i) => s + i.preco * i.qtd, 0));
       if (subtotal < Number(l.pedido_minimo ?? 0)) return erro(`O pedido mínimo de ${l.loja_nome} é ${brl(Number(l.pedido_minimo))}.`);
       const total = r2(subtotal + cot.valor);
+      const servico = taxaServico(cot.valor, cfg.taxaServicoPct); // só sobre a entrega; os produtos ficam com o preço da loja
       this.b.exec(`UPDATE pedidos SET status='cancelado', motivo='substituido', cancelado_em=? WHERE cliente_id=? AND status='pagamento_pendente'`, iso(agora), cli.id);
       const id = novoId('ped');
       const codigo = crypto.randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase();
       const observacao = String(b.observacao ?? '').trim().slice(0, 300) || null;
       this.b.exec(
         `INSERT INTO pedidos (id, codigo, loja_id, cliente_id, itens, subtotal, frete, total, km, minutos, km_desloc, veiculo, observacao, status,
-           entrega_endereco, entrega_lat, entrega_lon, criado_em, pagamento_ate, urgencia) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'pagamento_pendente', ?,?,?,?,?,?)`,
+           entrega_endereco, entrega_lat, entrega_lon, criado_em, pagamento_ate, urgencia, taxa_servico) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'pagamento_pendente', ?,?,?,?,?,?,?)`,
         id, codigo, l.id, cli.id, JSON.stringify(itens), subtotal, cot.valor, total, cot.km, cot.minutos, cot.kmDesloc, veiculo, observacao,
-        cli.endereco, casa.lat, casa.lon, iso(agora), iso(agora + cfg.esperaPagamentoMin * MIN), cot.urgencia,
+        cli.endereco, casa.lat, casa.lon, iso(agora), iso(agora + cfg.esperaPagamentoMin * MIN), cot.urgencia, servico,
       );
       if (this.b.pagarmeAtivo()) return json(this.pedidoView(this.pedido(id)!, 'cliente')); // paga na tela de pagamento do app
       try {
         const urlPg = await this.b.link({
-          orderNsu: id, valor: total, descricao: `Pedido #${codigo} - ${l.loja_nome}`, cli, origem: url.origin, validoMin: cfg.esperaPagamentoMin + 5,
-          itens: [...itens.map((i) => ({ descricao: i.nome, valor: i.preco, qtd: i.qtd })), { descricao: 'Entrega MOVI', valor: cot.valor, qtd: 1 }],
+          orderNsu: id, valor: r2(total + servico), descricao: `Pedido #${codigo} - ${l.loja_nome}`, cli, origem: url.origin, validoMin: cfg.esperaPagamentoMin + 5,
+          itens: [...itens.map((i) => ({ descricao: i.nome, valor: i.preco, qtd: i.qtd })), { descricao: 'Entrega MOVI', valor: r2(cot.valor + servico), qtd: 1 }],
         });
         this.b.exec(`UPDATE pedidos SET checkout_url=? WHERE id=?`, urlPg, id);
       } catch (e) {
