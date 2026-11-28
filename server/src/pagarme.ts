@@ -6,7 +6,11 @@
 
 export type SplitRegra = { recebedor: string; centavos: number; principal: boolean };
 export type ItemCobranca = { codigo: string; descricao: string; centavos: number; qtd: number };
-export type ClienteCobranca = { nome: string; cpf?: string | null; telefone?: string | null };
+export type ClienteCobranca = { nome: string; cpf?: string | null; telefone?: string | null; email?: string | null; codigo?: string; id?: string | null };
+/** Meio de pagamento: Pix, cartão de crédito (à vista) ou débito (com autenticação 3DS do banco). */
+export type Metodo = 'pix' | 'cartao' | 'debito';
+/** Cartão que ficou na carteira (wallet) do cliente na Pagar.me. */
+export type CartaoUsado = { id: string; bandeira: string; final: string; mes: number; ano: number };
 export type ResultadoPedido = {
   orderId: string;
   chargeId: string | null;
@@ -14,8 +18,12 @@ export type ResultadoPedido = {
   qrCode: string | null;
   qrCodeUrl: string | null;
   expiraEm: string | null;
-  metodo: 'pix' | 'cartao';
+  metodo: Metodo;
   motivoFalha: string | null;
+  /** Cliente na Pagar.me (para pagar depois com o cartão salvo). */
+  customerId: string | null;
+  /** Cartão usado no pagamento (crédito/débito). */
+  cartao: CartaoUsado | null;
 };
 
 const base = (chave: string) => (chave.startsWith('sk_test_') ? 'https://sdx-api.pagar.me/core/v5' : 'https://api.pagar.me/core/v5');
@@ -36,20 +44,23 @@ async function chamar<T>(chave: string, metodo: string, caminho: string, corpo?:
   return d;
 }
 
-type Charge = { id: string; status: string; payment_method?: string; last_transaction?: { status?: string; qr_code?: string; qr_code_url?: string; expires_at?: string; acquirer_message?: string; gateway_response?: { errors?: { message?: string }[] } } };
-type Order = { id: string; status: string; charges?: Charge[] };
+type CardPg = { id?: string; brand?: string; last_four_digits?: string; exp_month?: number; exp_year?: number };
+type Charge = { id: string; status: string; payment_method?: string; last_transaction?: { status?: string; qr_code?: string; qr_code_url?: string; expires_at?: string; acquirer_message?: string; card?: CardPg; gateway_response?: { errors?: { message?: string }[] } } };
+type Order = { id: string; status: string; charges?: Charge[]; customer?: { id?: string } };
 
 function cliente(c: ClienteCobranca) {
   const tel = so(c.telefone).replace(/^55(?=\d{10,11}$)/, '');
   return {
     name: c.nome.slice(0, 64),
     type: 'individual',
+    ...(c.codigo ? { code: c.codigo.slice(0, 52) } : {}),
+    ...(c.email ? { email: c.email } : {}),
     ...(so(c.cpf).length === 11 ? { document: so(c.cpf), document_type: 'CPF' } : {}),
     ...(tel.length >= 10 ? { phones: { mobile_phone: { country_code: '55', area_code: tel.slice(0, 2), number: tel.slice(2) } } } : {}),
   };
 }
 
-function resultado(o: Order, metodo: 'pix' | 'cartao'): ResultadoPedido {
+function resultado(o: Order, metodo: Metodo): ResultadoPedido {
   const ch = o.charges?.[0];
   const t = ch?.last_transaction;
   const pago = o.status === 'paid' || ch?.status === 'paid';
@@ -62,6 +73,10 @@ function resultado(o: Order, metodo: 'pix' | 'cartao'): ResultadoPedido {
     expiraEm: t?.expires_at ?? null,
     metodo,
     motivoFalha: pago ? null : (t?.acquirer_message ?? t?.gateway_response?.errors?.[0]?.message ?? null),
+    customerId: o.customer?.id ?? null,
+    cartao: t?.card?.id
+      ? { id: t.card.id, bandeira: t.card.brand ?? 'Cartão', final: t.card.last_four_digits ?? '', mes: Number(t.card.exp_month ?? 0), ano: Number(t.card.exp_year ?? 0) }
+      : null,
   };
 }
 
@@ -72,28 +87,37 @@ export async function criarPedido(
     codigo: string;
     itens: ItemCobranca[];
     cliente: ClienteCobranca;
-    metodo: 'pix' | 'cartao';
+    metodo: Metodo;
     pixExpiraSeg?: number;
     cardToken?: string;
+    /** Cartão salvo na carteira do cliente (crédito, sem digitar de novo). */
+    cardId?: string;
+    /** Autenticação 3DS da Stone (obrigatória no débito). */
+    tdsTransacao?: string;
     cobranca?: { endereco: string; cep: string; cidade: string; uf: string };
     split?: SplitRegra[];
     descricaoFatura?: string;
   },
 ): Promise<ResultadoPedido> {
+  const cobranca = o.cobranca
+    ? { billing_address: { line_1: o.cobranca.endereco.slice(0, 120), zip_code: so(o.cobranca.cep), city: o.cobranca.cidade, state: o.cobranca.uf, country: 'BR' } }
+    : undefined;
+  const cartao = o.cardId ? { card_id: o.cardId } : { card_token: o.cardToken, card: cobranca };
+  const descritor = (o.descricaoFatura ?? 'MOVI').slice(0, 13);
   const pagamento: Record<string, unknown> =
     o.metodo === 'pix'
       ? { payment_method: 'pix', pix: { expires_in: Math.max(60, Math.round(o.pixExpiraSeg ?? 900)) } }
-      : {
-          payment_method: 'credit_card',
-          credit_card: {
-            installments: 1, // só à vista
-            statement_descriptor: (o.descricaoFatura ?? 'MOVI').slice(0, 13),
-            card_token: o.cardToken,
-            card: o.cobranca
-              ? { billing_address: { line_1: o.cobranca.endereco.slice(0, 120), zip_code: so(o.cobranca.cep), city: o.cobranca.cidade, state: o.cobranca.uf, country: 'BR' } }
-              : undefined,
-          },
-        };
+      : o.metodo === 'debito'
+        ? {
+            payment_method: 'debit_card',
+            debit_card: {
+              statement_descriptor: descritor,
+              ...cartao,
+              // Débito online só com a confirmação do banco (3DS da Stone, autenticado no app).
+              authentication: { type: 'threed_secure', threed_secure: { mpi: 'pagarme', transaction_id: o.tdsTransacao } },
+            },
+          }
+        : { payment_method: 'credit_card', credit_card: { installments: 1, statement_descriptor: descritor, ...cartao } }; // só à vista
   if (o.split?.length)
     pagamento.split = o.split.map((s) => ({
       amount: s.centavos,
@@ -106,13 +130,13 @@ export async function criarPedido(
     code: o.codigo,
     closed: true,
     items: o.itens.map((i) => ({ code: i.codigo.slice(0, 52), description: i.descricao.slice(0, 120), amount: i.centavos, quantity: i.qtd })),
-    customer: cliente(o.cliente),
+    ...(o.cliente.id ? { customer_id: o.cliente.id } : { customer: cliente(o.cliente) }),
     payments: [pagamento],
   };
   return resultado(await chamar<Order>(chave, 'POST', '/orders', corpo), o.metodo);
 }
 
-export async function obterPedido(chave: string, orderId: string, metodo: 'pix' | 'cartao'): Promise<ResultadoPedido> {
+export async function obterPedido(chave: string, orderId: string, metodo: Metodo): Promise<ResultadoPedido> {
   return resultado(await chamar<Order>(chave, 'GET', `/orders/${encodeURIComponent(orderId)}`), metodo);
 }
 
@@ -120,6 +144,25 @@ export async function obterPedido(chave: string, orderId: string, metodo: 'pix' 
 export async function estornar(chave: string, chargeId: string, centavos?: number) {
   const ch = await chamar<Charge>(chave, 'DELETE', `/charges/${encodeURIComponent(chargeId)}`, centavos ? { amount: centavos } : {});
   return ch.status;
+}
+
+/** Tira um cartão da carteira do cliente na Pagar.me. */
+export async function excluirCartao(chave: string, customerId: string, cardId: string) {
+  await chamar(chave, 'DELETE', `/customers/${encodeURIComponent(customerId)}/cards/${encodeURIComponent(cardId)}`);
+}
+
+/**
+ * Token para a autenticação 3DS da Stone (débito). Gerado só no servidor, com a chave secreta;
+ * o app usa o token na biblioteca 3ds-nx-js, que conversa com o banco do cliente.
+ */
+export async function tokenTds(chave: string): Promise<{ token: string; ambiente: 'teste' | 'producao' }> {
+  const teste = chave.startsWith('sk_test_');
+  const r = await fetch(`${teste ? 'https://3ds-sdx.stone.com.br/v2' : 'https://3ds.stone.com.br/v2'}/tds-token`, {
+    headers: { authorization: 'Basic ' + btoa(chave + ':'), accept: 'application/json', 'user-agent': 'MOVI/1.0' },
+  }).catch(() => null);
+  const d = r ? ((await r.json().catch(() => ({}))) as { tds_token?: string; message?: string }) : {};
+  if (!r?.ok || !d.tds_token) throw new Error(`Autenticação do débito indisponível agora${d.message ? ` (${d.message})` : ''}. Use o Pix ou o crédito.`);
+  return { token: d.tds_token, ambiente: teste ? 'teste' : 'producao' };
 }
 
 // ---------- recebedores (lojas e motoristas) ----------

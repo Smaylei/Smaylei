@@ -1,6 +1,6 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { cores, raio } from '../components/tema';
 import * as Admin from '../services/admin';
 import { formatarReais } from '../services/preco';
@@ -17,7 +17,7 @@ export default function PagamentosAdmin() {
   const { width } = useWindowDimensions();
   const largo = width >= 900;
   const [d, setD] = useState<Admin.PagamentosAdmin | null>(null);
-  const [f, setF] = useState({ recebedor: '', chave: '', prazo: '3', pixPct: '0', pixFixo: '0', cartaoPct: '0', cartaoFixo: '0' });
+  const [f, setF] = useState({ recebedor: '', chave: '', prazo: '3', pixPct: '0', pixFixo: '0', cartaoPct: '0', cartaoFixo: '0', debitoPct: '0', debitoFixo: '0' });
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -29,6 +29,7 @@ export default function PagamentosAdmin() {
       setF({
         recebedor: x.recebedorMovi, chave: x.chavePublica, prazo: String(x.pagarAoAceitarMin),
         pixPct: t(x.taxaPixPct), pixFixo: t(x.taxaPixFixo), cartaoPct: t(x.taxaCartaoPct), cartaoFixo: t(x.taxaCartaoFixo),
+        debitoPct: t(x.taxaDebitoPct), debitoFixo: t(x.taxaDebitoFixo),
       });
       setErro(null);
     } catch (e) {
@@ -50,6 +51,7 @@ export default function PagamentosAdmin() {
       await Admin.salvarConfig({
         pagarmeRecebedorMovi: f.recebedor.trim(), pagarmeChavePublica: f.chave.trim(), pagarAoAceitarMin: Math.round(Number(f.prazo)),
         taxaPixPct: num(f.pixPct), taxaPixFixo: num(f.pixFixo), taxaCartaoPct: num(f.cartaoPct), taxaCartaoFixo: num(f.cartaoFixo),
+        taxaDebitoPct: num(f.debitoPct), taxaDebitoFixo: num(f.debitoFixo),
         ...(gateway ? { gateway } : {}),
       });
       await carregar();
@@ -70,7 +72,18 @@ export default function PagamentosAdmin() {
     }
   }
   const exemplo = (pct: string, fixo: string) => comTaxa(50, { pct: num(pct), fixo: num(fixo) });
-  const campoTaxa = (rotulo: string, k: 'pixPct' | 'pixFixo' | 'cartaoPct' | 'cartaoFixo', sufixo: string) => (
+  async function debito(ativo: boolean) {
+    setSalvando(true);
+    try {
+      await Admin.salvarConfig({ debitoAtivo: ativo });
+      await carregar();
+    } catch (e) {
+      Alert.alert('Débito', (e as Error).message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+  const campoTaxa = (rotulo: string, k: 'pixPct' | 'pixFixo' | 'cartaoPct' | 'cartaoFixo' | 'debitoPct' | 'debitoFixo', sufixo: string) => (
     <View style={[s.campo, { maxWidth: largo ? 170 : undefined }]}>
       <Text style={s.rotulo}>{rotulo}</Text>
       <View style={s.linhaConta}>
@@ -157,15 +170,31 @@ export default function PagamentosAdmin() {
         <View style={[s.campos, !largo && { flexDirection: 'column' }]}>
           {campoTaxa('Pix', 'pixPct', '%')}
           {campoTaxa('Pix (fixo por venda)', 'pixFixo', 'R$')}
-          {campoTaxa('Cartão à vista', 'cartaoPct', '%')}
-          {campoTaxa('Cartão (fixo por venda)', 'cartaoFixo', 'R$')}
+          {campoTaxa('Crédito à vista', 'cartaoPct', '%')}
+          {campoTaxa('Crédito (fixo por venda)', 'cartaoFixo', 'R$')}
+          {campoTaxa('Débito', 'debitoPct', '%')}
+          {campoTaxa('Débito (fixo por venda)', 'debitoFixo', 'R$')}
           <Pressable style={s.ok} disabled={salvando} onPress={() => salvar()}>
             <Text style={s.okTexto}>Salvar</Text>
           </Pressable>
         </View>
         <Text style={s.sub}>
-          Exemplo de frete de {formatarReais(50)}: no Pix o cliente paga {formatarReais(exemplo(f.pixPct, f.pixFixo).total)}; no cartão, {formatarReais(exemplo(f.cartaoPct, f.cartaoFixo).total)}.
+          Exemplo de frete de {formatarReais(50)}: no Pix o cliente paga {formatarReais(exemplo(f.pixPct, f.pixFixo).total)}; no crédito, {formatarReais(exemplo(f.cartaoPct, f.cartaoFixo).total)}; no
+          débito, {formatarReais(exemplo(f.debitoPct, f.debitoFixo).total)}.
         </Text>
+      </View>
+
+      <View style={s.cartao}>
+        <View style={s.linhaConta}>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={s.titulo}>Cartão de débito</Text>
+            <Text style={s.sub}>
+              Visa e Mastercard, com a confirmação do banco (3DS) dentro do app. Ligue só depois que a Pagar.me liberar o débito e o 3DS na sua conta e de um teste no ambiente de teste.
+            </Text>
+          </View>
+          <Switch value={d.debitoAtivo} disabled={salvando} onValueChange={debito} trackColor={{ true: cores.primaria }} />
+        </View>
+        <Text style={s.sub}>Crédito: o cliente pode salvar o cartão para as próximas compras (fica guardado na Pagar.me; a MOVI guarda só a bandeira e o final).</Text>
       </View>
 
       {d.estornosComErro.length > 0 && (

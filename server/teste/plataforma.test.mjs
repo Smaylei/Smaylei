@@ -31,10 +31,15 @@ const central = new Central(ctx, env);
 env.CENTRAL = { idFromName: () => 'x', get: () => ({ fetch: (r) => central.fetch(r) }) };
 let linkCriado;
 // Pagar.me simulada (sandbox): pedidos, estornos e recebedores.
-const pg = { pedidos: new Map(), estornos: [], recebedores: new Map(), ultimo: null, n: 0 };
+const pg = { pedidos: new Map(), estornos: [], recebedores: new Map(), ultimo: null, n: 0, cartoesExcluidos: [], tds: 0 };
 const respPg = (d, status = 200) => new Response(JSON.stringify(d), { status });
 globalThis.fetch = async (url, init) => {
   url = String(url);
+  if (url === 'https://3ds-sdx.stone.com.br/v2/tds-token') {
+    assert.match(init.headers.authorization, /^Basic /);
+    pg.tds++;
+    return respPg({ tds_token: 'tds_tok_' + pg.tds });
+  }
   if (url.startsWith('https://sdx-api.pagar.me/core/v5')) {
     const caminho = url.slice('https://sdx-api.pagar.me/core/v5'.length);
     assert.match(init.headers.authorization, /^Basic /);
@@ -43,16 +48,23 @@ globalThis.fetch = async (url, init) => {
       pg.ultimo = corpo;
       const id = `or_${++pg.n}`, ch = `ch_${pg.n}`;
       const pay = corpo.payments[0];
-      const cartao = pay.payment_method === 'credit_card';
-      const recusado = cartao && pay.credit_card.card_token === 'tok_recusado';
+      const dc = pay.credit_card ?? pay.debit_card;
+      const cartao = !!dc;
+      const recusado = cartao && dc.card_token === 'tok_recusado';
       const status = cartao ? (recusado ? 'failed' : 'paid') : 'pending';
       pg.pedidos.set(id, { status, ch });
-      return respPg({ id, status, charges: [{ id: ch, status, last_transaction: cartao ? { status: recusado ? 'not_authorized' : 'captured', acquirer_message: recusado ? 'Transação não autorizada' : undefined } : { qr_code: '00020126PIXMOVI', qr_code_url: 'https://api.pagar.me/qr.png', expires_at: new Date(Date.now() + 600000).toISOString() } }] });
+      const card = cartao ? { id: dc.card_id ?? `card_${pg.n}`, brand: 'Mastercard', last_four_digits: '5100', exp_month: 8, exp_year: 2029 } : undefined;
+      return respPg({ id, status, customer: { id: corpo.customer_id ?? `cus_${corpo.customer?.code}` }, charges: [{ id: ch, status, last_transaction: cartao ? { status: recusado ? 'not_authorized' : 'captured', acquirer_message: recusado ? 'Transação não autorizada' : undefined, card } : { qr_code: '00020126PIXMOVI', qr_code_url: 'https://api.pagar.me/qr.png', expires_at: new Date(Date.now() + 600000).toISOString() } }] });
     }
     const om = caminho.match(/^\/orders\/(\w+)$/);
     if (init.method === 'GET' && om) {
       const o = pg.pedidos.get(om[1]);
       return respPg({ id: om[1], status: o.status, charges: [{ id: o.ch, status: o.status }] });
+    }
+    const km = caminho.match(/^\/customers\/([\w-]+)\/cards\/([\w-]+)$/);
+    if (init.method === 'DELETE' && km) {
+      pg.cartoesExcluidos.push(km[2]);
+      return respPg({ id: km[2], status: 'deleted' });
     }
     const cm = caminho.match(/^\/charges\/(\w+)$/);
     if (init.method === 'DELETE' && cm) {
@@ -1014,7 +1026,7 @@ test('taxas por cima (Pagar.me): cliente paga valor + taxa do Pix/cartão; motor
   const r = await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'pagarme', taxaPixPct: PIX, taxaPixFixo: 0, taxaCartaoPct: CARTAO, taxaCartaoFixo: FIXO_CARTAO } });
   assert.equal(r.s, 200, JSON.stringify(r.d));
   assert.match((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { taxaPixPct: 30 } })).d.erro, /0 a 20%/);
-  assert.deepEqual((await call('/v2/config')).d.taxasPagamento, { pix: { pct: PIX, fixo: 0 }, cartao: { pct: CARTAO, fixo: FIXO_CARTAO } });
+  assert.deepEqual((await call('/v2/config')).d.taxasPagamento, { pix: { pct: PIX, fixo: 0 }, cartao: { pct: CARTAO, fixo: FIXO_CARTAO }, debito: { pct: 1.99, fixo: 0 } });
   // O que a Pagar.me desconta (arredondando a taxa para cima) da parte da MOVI, que é a principal do split.
   const taxaPg = (totalCent, pct, fixoCent) => Math.ceil((totalCent * pct) / 100) + fixoCent;
   const soma = (itens) => itens.reduce((sm, i) => sm + i.amount * i.quantity, 0);
@@ -1141,4 +1153,85 @@ test('taxas por cima (Pagar.me): cliente paga valor + taxa do Pix/cartão; motor
   assert.equal((await call('/v2/eu/pix', { metodo: 'PUT', token: cli, corpo: { tipo: 'cpf', chave: gerarCpf(322233344), senha: 'x' } })).s, 404); // cliente não recebe
 
   await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'infinitepay' } });
+});
+
+test('cartão salvo (crédito, compra com um clique) e débito com a confirmação do banco (3DS)', async () => {
+  assert.equal((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'pagarme', taxaPixPct: 0.99, taxaCartaoPct: 4.19, taxaCartaoFixo: 0, taxaDebitoPct: 1.99, debitoAtivo: false } })).s, 200);
+  const cfg = (await call('/v2/config')).d;
+  assert.equal(cfg.debitoAtivo, false);
+  assert.deepEqual(cfg.taxasPagamento.debito, { pct: 1.99, fixo: 0 });
+  const c = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Nina Cartao', cpf: gerarCpf(355566677), telefone: '47911114444', endereco: 'Rua C, 5, Centro', lat: -26.479, lon: -48.99 } });
+  const cli = c.d.token, cliId = c.d.id;
+  const mot = (await call('/v2/motoristas', { metodo: 'POST', corpo: { nome: 'Davi Debito', cpf: gerarCpf(366677788), telefone: '47966663333', carro: 'Gol', placa: 'DAV1D23' } })).d;
+  await call(`/v2/admin/motoristas/${mot.id}/status`, { metodo: 'POST', token: ADM, corpo: { status: 'aprovado' } });
+  await call('/v2/arquivos?tipo=selfie', { metodo: 'POST', token: mot.token, bruto: JPG, tipo: 'image/jpeg' });
+  await call('/v2/arquivos?tipo=cnh', { metodo: 'POST', token: mot.token, bruto: JPG, tipo: 'image/jpeg' });
+  await call('/v2/eu/livre', { metodo: 'POST', token: mot.token });
+  await online(mot.token, COOPER);
+  const nova = async () => {
+    const x = (await call('/v2/corridas', { metodo: 'POST', token: cli, corpo: { servico: 'comigo', coleta: { localId: 'cooper' }, agendado: false } })).d;
+    await call(`/v2/ofertas/${x.id}/aceitar`, { metodo: 'POST', token: mot.token });
+    return x;
+  };
+  const fim = async (id) => { await call(`/v2/corridas/${id}/cancelar`, { metodo: 'POST', token: cli }); await call('/v2/eu/livre', { metodo: 'POST', token: mot.token }); };
+
+  // 1) crédito sem salvar: o cartão sai da carteira da Pagar.me
+  const c1 = await nova();
+  const p1 = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: c1.id, metodo: 'cartao', cardToken: 'tok_ok', cep: '89270000', salvar: false } })).d;
+  assert.equal(p1.status, 'paga');
+  assert.equal(pg.ultimo.customer.code, cliId);
+  assert.deepEqual(pg.cartoesExcluidos.at(-1), `card_${pg.n}`);
+  assert.deepEqual((await call('/v2/cartoes', { token: cli })).d, []);
+  await fim(c1.id);
+
+  // 2) crédito salvando: aparece em "Cartões salvos"
+  const c2 = await nova();
+  const p2 = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: c2.id, metodo: 'cartao', cardToken: 'tok_ok', cep: '89270000', salvar: true } })).d;
+  assert.equal(p2.status, 'paga');
+  assert.equal(pg.ultimo.customer_id, `cus_${cliId}`); // da segunda vez já usa o cliente da Pagar.me
+  const salvos = (await call('/v2/cartoes', { token: cli })).d;
+  assert.deepEqual(salvos, [{ id: `card_${pg.n}`, bandeira: 'Mastercard', final: '5100', mes: 8, ano: 2029 }]);
+  await fim(c2.id);
+
+  // 3) compra com um clique: só o id do cartão salvo, sem CEP nem token
+  const c3 = await nova();
+  const p3 = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: c3.id, metodo: 'cartao', cartaoId: salvos[0].id } })).d;
+  assert.equal(p3.status, 'paga');
+  assert.deepEqual(pg.ultimo.payments[0].credit_card.card_id, salvos[0].id);
+  assert.equal(pg.ultimo.payments[0].credit_card.card_token, undefined);
+  assert.equal(pg.ultimo.customer_id, `cus_${cliId}`);
+  // outro cliente não usa o cartão de ninguém
+  const intruso = (await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Ivo Intruso', cpf: gerarCpf(377788899), endereco: 'Rua I, 1, Centro', lat: -26.479, lon: -48.99 } })).d.token;
+  assert.equal((await call('/v2/pagar', { metodo: 'POST', token: intruso, corpo: { tipo: 'corrida', id: c3.id, metodo: 'cartao', cartaoId: salvos[0].id } })).s, 404);
+  assert.equal((await call(`/v2/cartoes/${salvos[0].id}`, { metodo: 'DELETE', token: intruso })).s, 404);
+  await fim(c3.id);
+  // remover o cartão salvo
+  assert.equal((await call(`/v2/cartoes/${salvos[0].id}`, { metodo: 'DELETE', token: cli })).s, 200);
+  assert.equal(pg.cartoesExcluidos.at(-1), salvos[0].id);
+  assert.deepEqual((await call('/v2/cartoes', { token: cli })).d, []);
+
+  // 4) débito: desligado até o Admin ligar; com 3DS confirmado pelo banco
+  const c4 = await nova();
+  assert.equal((await call('/v2/pagar/3ds', { metodo: 'POST', token: cli })).s, 409);
+  assert.match((await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: c4.id, metodo: 'debito', cardToken: 'tok_ok', cep: '89270000', tdsTransacao: 'x' } })).d.erro, /débito indisponível/);
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { debitoAtivo: true } });
+  assert.equal((await call('/v2/config')).d.debitoAtivo, true);
+  const tds = (await call('/v2/pagar/3ds', { metodo: 'POST', token: cli })).d;
+  assert.equal(tds.token, `tds_tok_${pg.tds}`);
+  assert.equal(tds.ambiente, 'teste');
+  assert.equal(tds.cliente.documento, gerarCpf(355566677));
+  assert.match((await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: c4.id, metodo: 'debito', cardToken: 'tok_ok', cep: '89270000' } })).d.erro, /Confirme/);
+  const p4 = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: c4.id, metodo: 'debito', cardToken: 'tok_ok', cep: '89270000', tdsTransacao: 'tds-trans-123', email: 'Nina@Exemplo.com' } })).d;
+  assert.equal(p4.status, 'paga');
+  const pay = pg.ultimo.payments[0];
+  assert.equal(pay.payment_method, 'debit_card');
+  assert.deepEqual(pay.debit_card.authentication, { type: 'threed_secure', threed_secure: { mpi: 'pagarme', transaction_id: 'tds-trans-123' } });
+  assert.equal(pg.ultimo.items.at(-1).description, 'Taxa do débito');
+  assert.equal(Math.round(p4.valor * 100), Math.ceil(Math.round(c4.valor * 100) / (1 - 0.0199) - 1e-6));
+  assert.equal(pg.cartoesExcluidos.at(-1), `card_${pg.n}`); // débito não fica salvo
+  assert.equal((await call(`/v2/corridas/${c4.id}`, { token: cli })).d.metodo, 'debit_card');
+  assert.equal((await call('/v2/pagar/3ds', { metodo: 'POST', token: cli })).d.cliente.email, 'nina@exemplo.com'); // e-mail guardado
+  await fim(c4.id);
+
+  await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'infinitepay', debitoAtivo: false } });
 });

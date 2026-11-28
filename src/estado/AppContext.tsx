@@ -22,7 +22,9 @@ type Config = Liberacao &
     pagarmeChavePublica: string;
     pagarAoAceitarMin: number;
     /** Taxa do Pix/cartão somada ao valor na Pagar.me (o cliente paga; quem trabalha recebe o valor mostrado). */
-    taxasPagamento: { pix: TaxaMeio; cartao: TaxaMeio } | null;
+    taxasPagamento: { pix: TaxaMeio; cartao: TaxaMeio; debito?: TaxaMeio } | null;
+    /** Cartão de débito liberado no Admin (Visa/Mastercard, com a confirmação do banco). */
+    debitoAtivo: boolean;
   };
 
 /** Cadastro no servidor de quem pede (cliente ou loja). */
@@ -62,6 +64,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     pagarmeChavePublica: '',
     pagarAoAceitarMin: 3,
     taxasPagamento: null,
+    debitoAtivo: false,
     ...LIBERACAO_PADRAO,
     ...MOTO_PADRAO,
   });
@@ -84,6 +87,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             pagarmeChavePublica: c.pagarmeChavePublica ?? '',
             pagarAoAceitarMin: c.pagarAoAceitarMin ?? 3,
             taxasPagamento: c.taxasPagamento ?? null,
+            debitoAtivo: !!c.debitoAtivo,
             servicosAtivos: c.servicosAtivos ?? LIBERACAO_PADRAO.servicosAtivos,
             categoriasAtivas: c.categoriasAtivas ?? LIBERACAO_PADRAO.categoriasAtivas,
             outroEnderecoLoja: c.outroEnderecoLoja ?? LIBERACAO_PADRAO.outroEnderecoLoja,

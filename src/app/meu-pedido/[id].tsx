@@ -123,7 +123,7 @@ export default function MeuPedido() {
         </View>
         {p.taxaPagamento > 0 && (
           <View style={s.linha}>
-            <Text style={s.suave}>Taxa do {p.metodo === 'pix' ? 'Pix' : 'cartão'}</Text>
+            <Text style={s.suave}>Taxa do {p.metodo === 'pix' ? 'Pix' : p.metodo === 'debit_card' ? 'débito' : 'cartão'}</Text>
             <Text style={s.suave}>{formatarReais(p.taxaPagamento)}</Text>
           </View>
         )}
@@ -132,7 +132,7 @@ export default function MeuPedido() {
           <Text style={[s.texto, { fontWeight: '800' }]}>{formatarReais(p.total + (p.taxaPagamento || 0))}</Text>
         </View>
         {!!p.observacao && <Text style={s.suave}>Obs.: {p.observacao}</Text>}
-        {p.pagoEm && <Text style={s.suave}>Pago por {p.metodo === 'pix' ? 'Pix' : 'cartão'} · valor retido até a entrega</Text>}
+        {p.pagoEm && <Text style={s.suave}>Pago por {p.metodo === 'pix' ? 'Pix' : p.metodo === 'debit_card' ? 'débito' : 'cartão'} · valor retido até a entrega</Text>}
       </View>
       {(p.status === 'aguardando_loja' || p.status === 'pagamento_pendente') && (
         <Pressable onPress={cancelar}>

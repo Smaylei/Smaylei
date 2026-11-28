@@ -1,10 +1,11 @@
 import * as Clipboard from 'expo-clipboard';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import Autenticacao3DS, { type Resultado3DS } from '../components/Autenticacao3DS';
 import { cores, raio } from '../components/tema';
 import { useApp } from '../estado/AppContext';
-import { api, ErroApi, type CorridaCliente, type Gorjeta } from '../services/api';
+import { API, api, ErroApi, type CorridaCliente, type Gorjeta } from '../services/api';
 import * as D from '../services/delivery';
 import * as P from '../services/pagamento';
 import { formatarReais } from '../services/preco';
@@ -31,18 +32,27 @@ async function resumo(tipo: P.TipoPagamento, id: string): Promise<Resumo> {
   return { titulo: 'Gorjeta para o motorista', valor: g.valor, pendente: g.status === 'pendente', prazo: null };
 }
 
-/** Pagamento dentro do app (Pagar.me): Pix com QR Code e copia e cola, ou cartão à vista. */
+const NOME_TAXA: Record<P.MetodoPagamento, string> = { pix: 'Taxa do Pix', cartao: 'Taxa do cartão', debito: 'Taxa do débito' };
+const ABAS: Record<P.MetodoPagamento, string> = { pix: '⚡ Pix', cartao: '💳 Crédito', debito: '🏦 Débito' };
+const emailOk = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
+
+/** Pagamento dentro do app (Pagar.me): Pix, crédito à vista (com cartão salvo) ou débito com a confirmação do banco. */
 export default function Pagar() {
   const { tipo, id } = useLocalSearchParams<{ tipo: P.TipoPagamento; id: string }>();
   const { config } = useApp();
   const [r, setR] = useState<Resumo | null>(null);
-  const [metodo, setMetodo] = useState<'pix' | 'cartao'>('pix');
+  const [metodo, setMetodo] = useState<P.MetodoPagamento>('pix');
   const [cob, setCob] = useState<P.Cobranca | null>(null);
-  const [cartao, setCartao] = useState({ numero: '', nome: '', validade: '', cvv: '', cep: '' });
+  const [cartao, setCartao] = useState({ numero: '', nome: '', validade: '', cvv: '', cep: '', email: '' });
+  const [salvos, setSalvos] = useState<P.CartaoSalvo[]>([]);
+  const [escolhido, setEscolhido] = useState<string>('novo'); // id do cartão salvo ou 'novo'
+  const [salvar, setSalvar] = useState(true);
+  const [tds, setTds] = useState<{ token: string; ambiente: 'teste' | 'producao'; pedido: object; email: string } | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [copiado, setCopiado] = useState(false);
   const saiu = useRef(false);
+  const comDebito = config.debitoAtivo && Platform.OS !== 'web';
 
   const concluir = useCallback(() => {
     if (saiu.current) return;
@@ -60,6 +70,13 @@ export default function Pagar() {
         if (!x.pendente) concluir();
       })
       .catch((e) => setMsg((e as Error).message));
+    // Cartões salvos (compra com um clique): o primeiro já vem escolhido.
+    P.cartoesSalvos()
+      .then((l) => {
+        setSalvos(l);
+        if (l.length) setEscolhido(l[0].id);
+      })
+      .catch(() => {});
   }, [tipo, id, concluir]);
 
   // Pix gerado: confere a cada 4 s até a Pagar.me confirmar.
@@ -76,6 +93,11 @@ export default function Pagar() {
     return () => clearInterval(t);
   }, [cob, concluir]);
 
+  function resultadoCartao(c: P.Cobranca) {
+    setCob(c);
+    if (c.status === 'paga') concluir();
+    else setMsg(c.erro ?? 'Pagamento não aprovado. Tente outro cartão ou o Pix.');
+  }
   async function gerarPix() {
     setOcupado(true);
     setMsg(null);
@@ -89,29 +111,115 @@ export default function Pagar() {
       setOcupado(false);
     }
   }
-  async function pagarCartao() {
+  /** Confere o formulário do cartão; devolve mês e ano ou null (com a mensagem). */
+  function conferirCartao() {
     const [mes, ano] = cartao.validade.split('/').map((x) => x.trim());
     if (cartao.numero.replace(/\D/g, '').length < 13 || !mes || !ano || cartao.cvv.length < 3 || cartao.nome.trim().length < 3 || cartao.cep.replace(/\D/g, '').length !== 8) {
       setMsg('Confira os dados do cartão e o CEP.');
-      return;
+      return null;
     }
     if (!config.pagarmeChavePublica) {
       setMsg('Pagamento com cartão indisponível agora. Use o Pix.');
+      return null;
+    }
+    return { mes, ano };
+  }
+  const token = (v: { mes: string; ano: string }) => P.tokenizarCartao(config.pagarmeChavePublica, { numero: cartao.numero, nome: cartao.nome, mes: v.mes, ano: v.ano, cvv: cartao.cvv });
+
+  async function pagarCredito() {
+    setMsg(null);
+    if (escolhido !== 'novo') {
+      setOcupado(true);
+      try {
+        resultadoCartao(await P.pagar(tipo, id, 'cartao', { cartaoId: escolhido }));
+      } catch (e) {
+        setMsg((e as Error).message);
+      } finally {
+        setOcupado(false);
+      }
       return;
     }
+    const v = conferirCartao();
+    if (!v) return;
     setOcupado(true);
-    setMsg(null);
     try {
-      const token = await P.tokenizarCartao(config.pagarmeChavePublica, { numero: cartao.numero, nome: cartao.nome, mes, ano, cvv: cartao.cvv });
-      const c = await P.pagar(tipo, id, 'cartao', { cardToken: token, cep: cartao.cep });
-      setCob(c);
-      if (c.status === 'paga') concluir();
-      else setMsg(c.erro ?? 'Pagamento não aprovado. Tente outro cartão ou o Pix.');
+      resultadoCartao(await P.pagar(tipo, id, 'cartao', { cardToken: await token(v), cep: cartao.cep, salvar }));
     } catch (e) {
       setMsg((e as Error).message);
     } finally {
       setOcupado(false);
     }
+  }
+
+  // Débito: 1) o banco confirma (3DS) 2) token do cartão 3) pagamento com a confirmação.
+  async function pagarDebito() {
+    setMsg(null);
+    const v = conferirCartao();
+    if (!v || !r) return;
+    setOcupado(true);
+    try {
+      const ini = await P.iniciar3ds();
+      const email = cartao.email.trim() || ini.cliente.email || '';
+      if (!emailOk(email)) {
+        setMsg('Informe o seu e-mail: o banco usa para confirmar o débito.');
+        setOcupado(false);
+        return;
+      }
+      const ano = v.ano.length === 2 ? 2000 + Number(v.ano) : Number(v.ano);
+      const pedido = {
+        customer: {
+          name: ini.cliente.nome, email, code: ini.cliente.codigo, ...(ini.cliente.documento ? { document: ini.cliente.documento } : {}),
+          ...(ini.cliente.telefone ? { phones: { mobile_phone: { country_code: '55', area_code: ini.cliente.ddd, number: ini.cliente.telefone } } } : {}),
+        },
+        payments: [
+          {
+            payment_method: 'debit_card',
+            amount: Math.round(conta.total * 100),
+            debit_card: {
+              card: {
+                number: cartao.numero.replace(/\D/g, ''), holder_name: cartao.nome.trim().toUpperCase(), exp_month: Number(v.mes), exp_year: ano,
+                billing_address: { country: 'BR', state: ini.uf, city: ini.cidade, zip_code: cartao.cep.replace(/\D/g, ''), line_1: ini.endereco },
+              },
+            },
+          },
+        ],
+        requestor_url: API,
+      };
+      setTds({ token: ini.token, ambiente: ini.ambiente, pedido, email });
+    } catch (e) {
+      setMsg((e as Error).message);
+      setOcupado(false);
+    }
+  }
+  async function debitoConfirmado(res: Resultado3DS) {
+    const email = tds?.email;
+    setTds(null);
+    const v = conferirCartao();
+    if (!v) return setOcupado(false);
+    try {
+      resultadoCartao(await P.pagar(tipo, id, 'debito', { cardToken: await token(v), cep: cartao.cep, tdsTransacao: res.transacao, email }));
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setOcupado(false);
+    }
+  }
+  function remover(c: P.CartaoSalvo) {
+    Alert.alert('Remover cartão?', `${c.bandeira} •••• ${c.final} deixa de ficar salvo.`, [
+      { text: 'Voltar', style: 'cancel' },
+      {
+        text: 'Remover',
+        style: 'destructive',
+        onPress: () =>
+          P.removerCartao(c.id)
+            .then(() => {
+              const resto = salvos.filter((x) => x.id !== c.id);
+              setSalvos(resto);
+              setEscolhido(resto[0]?.id ?? 'novo');
+            })
+            .catch((e) => Alert.alert('Cartão', (e as Error).message)),
+      },
+    ]);
   }
   async function copiar() {
     if (!cob?.qrCode) return;
@@ -125,7 +233,30 @@ export default function Pagar() {
   // Taxa do meio de pagamento por cima do valor: o cliente paga, quem trabalha recebe o valor combinado.
   const jaGerada = cob?.metodo === metodo && cob.status === 'pendente' && cob.taxa !== undefined;
   const conta = jaGerada ? { total: cob!.valor, taxa: cob!.taxa ?? 0 } : comTaxa(r.valor, config.taxasPagamento?.[metodo] ?? { pct: 0, fixo: 0 });
-  const nomeTaxa = metodo === 'pix' ? 'Taxa do Pix' : 'Taxa do cartão';
+  const nomeTaxa = NOME_TAXA[metodo];
+  const abas: P.MetodoPagamento[] = comDebito ? ['pix', 'cartao', 'debito'] : ['pix', 'cartao'];
+  const novoCartao = metodo === 'debito' || escolhido === 'novo';
+
+  const formulario = (
+    <>
+      <Text style={s.rotulo}>Número do cartão</Text>
+      <TextInput style={s.input} value={cartao.numero} onChangeText={(t) => setCartao({ ...cartao, numero: t })} keyboardType="number-pad" placeholder="0000 0000 0000 0000" placeholderTextColor={cores.apagado} maxLength={23} autoComplete="cc-number" />
+      <Text style={s.rotulo}>Nome impresso no cartão</Text>
+      <TextInput style={s.input} value={cartao.nome} onChangeText={(t) => setCartao({ ...cartao, nome: t })} autoCapitalize="characters" placeholder="NOME SOBRENOME" placeholderTextColor={cores.apagado} maxLength={64} autoComplete="cc-name" />
+      <View style={{ flexDirection: 'row', gap: 10 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={s.rotulo}>Validade</Text>
+          <TextInput style={s.input} value={cartao.validade} onChangeText={(t) => setCartao({ ...cartao, validade: t })} placeholder="MM/AA" placeholderTextColor={cores.apagado} maxLength={7} keyboardType="numbers-and-punctuation" autoComplete="cc-exp" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={s.rotulo}>CVV</Text>
+          <TextInput style={s.input} value={cartao.cvv} onChangeText={(t) => setCartao({ ...cartao, cvv: t })} keyboardType="number-pad" placeholder="123" placeholderTextColor={cores.apagado} maxLength={4} secureTextEntry autoComplete="cc-csc" />
+        </View>
+      </View>
+      <Text style={s.rotulo}>CEP de cobrança</Text>
+      <TextInput style={s.input} value={cartao.cep} onChangeText={(t) => setCartao({ ...cartao, cep: t })} keyboardType="number-pad" placeholder="89270-000" placeholderTextColor={cores.apagado} maxLength={9} autoComplete="postal-code" />
+    </>
+  );
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -136,16 +267,23 @@ export default function Pagar() {
           <Text style={s.valor}>{formatarReais(conta.total)}</Text>
           {conta.taxa > 0 && (
             <Text style={s.composicao}>
-              {formatarReais(r.valor)} + {metodo === 'pix' ? 'taxa do Pix' : 'taxa do cartão'} {formatarReais(conta.taxa)}
+              {formatarReais(r.valor)} + {nomeTaxa.replace('Taxa', 'taxa')} {formatarReais(conta.taxa)}
             </Text>
           )}
           {r.prazo && <Text style={s.prazo}>Pague até {new Date(r.prazo).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</Text>}
         </View>
 
         <View style={s.abas}>
-          {(['pix', 'cartao'] as const).map((m) => (
-            <Pressable key={m} style={[s.aba, metodo === m && s.abaAtiva]} onPress={() => setMetodo(m)}>
-              <Text style={[s.abaTexto, metodo === m && { color: '#fff' }]}>{m === 'pix' ? '⚡ Pix' : '💳 Cartão à vista'}</Text>
+          {abas.map((m) => (
+            <Pressable
+              key={m}
+              style={[s.aba, metodo === m && s.abaAtiva]}
+              onPress={() => {
+                setMetodo(m);
+                setMsg(null);
+              }}
+            >
+              <Text style={[s.abaTexto, metodo === m && { color: '#fff' }]}>{ABAS[m]}</Text>
             </Pressable>
           ))}
         </View>
@@ -171,26 +309,65 @@ export default function Pagar() {
 
         {metodo === 'cartao' && (
           <View style={s.cartao}>
-            <Text style={s.rotulo}>Número do cartão</Text>
-            <TextInput style={s.input} value={cartao.numero} onChangeText={(t) => setCartao({ ...cartao, numero: t })} keyboardType="number-pad" placeholder="0000 0000 0000 0000" placeholderTextColor={cores.apagado} maxLength={23} autoComplete="cc-number" />
-            <Text style={s.rotulo}>Nome impresso no cartão</Text>
-            <TextInput style={s.input} value={cartao.nome} onChangeText={(t) => setCartao({ ...cartao, nome: t })} autoCapitalize="characters" placeholder="NOME SOBRENOME" placeholderTextColor={cores.apagado} maxLength={64} autoComplete="cc-name" />
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.rotulo}>Validade</Text>
-                <TextInput style={s.input} value={cartao.validade} onChangeText={(t) => setCartao({ ...cartao, validade: t })} placeholder="MM/AA" placeholderTextColor={cores.apagado} maxLength={7} keyboardType="numbers-and-punctuation" autoComplete="cc-exp" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.rotulo}>CVV</Text>
-                <TextInput style={s.input} value={cartao.cvv} onChangeText={(t) => setCartao({ ...cartao, cvv: t })} keyboardType="number-pad" placeholder="123" placeholderTextColor={cores.apagado} maxLength={4} secureTextEntry autoComplete="cc-csc" />
-              </View>
-            </View>
-            <Text style={s.rotulo}>CEP de cobrança</Text>
-            <TextInput style={s.input} value={cartao.cep} onChangeText={(t) => setCartao({ ...cartao, cep: t })} keyboardType="number-pad" placeholder="89270-000" placeholderTextColor={cores.apagado} maxLength={9} autoComplete="postal-code" />
-            <Pressable style={[s.botao, ocupado && { opacity: 0.5 }]} disabled={ocupado} onPress={pagarCartao}>
-              {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Pagar {formatarReais(conta.total)} à vista</Text>}
+            {salvos.length > 0 && (
+              <>
+                <Text style={s.rotulo}>Cartões salvos</Text>
+                {salvos.map((c) => (
+                  <Pressable key={c.id} style={[s.salvo, escolhido === c.id && s.salvoAtivo]} onPress={() => setEscolhido(c.id)}>
+                    <View style={[s.radio, escolhido === c.id && s.radioAtivo]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.salvoTexto}>
+                        {c.bandeira} •••• {c.final}
+                      </Text>
+                      {!!c.mes && !!c.ano && (
+                        <Text style={s.suave}>
+                          Validade {String(c.mes).padStart(2, '0')}/{String(c.ano).slice(-2)}
+                        </Text>
+                      )}
+                    </View>
+                    <Pressable onPress={() => remover(c)} hitSlop={8}>
+                      <Text style={s.remover}>Remover</Text>
+                    </Pressable>
+                  </Pressable>
+                ))}
+                <Pressable style={[s.salvo, escolhido === 'novo' && s.salvoAtivo]} onPress={() => setEscolhido('novo')}>
+                  <View style={[s.radio, escolhido === 'novo' && s.radioAtivo]} />
+                  <Text style={[s.salvoTexto, { flex: 1 }]}>Usar outro cartão</Text>
+                </Pressable>
+              </>
+            )}
+            {novoCartao && (
+              <>
+                {formulario}
+                <View style={s.linhaSalvar}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.salvoTexto}>Salvar este cartão</Text>
+                    <Text style={s.suave}>Nas próximas compras é só tocar em pagar.</Text>
+                  </View>
+                  <Switch value={salvar} onValueChange={setSalvar} trackColor={{ true: cores.primaria }} />
+                </View>
+              </>
+            )}
+            <Pressable style={[s.botao, ocupado && { opacity: 0.5 }]} disabled={ocupado} onPress={pagarCredito}>
+              {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Pagar {formatarReais(conta.total)} no crédito</Text>}
             </Pressable>
-            <Text style={s.suave}>Os dados do cartão vão direto para a Pagar.me; a MOVI não guarda o número do seu cartão. Sem parcelamento.</Text>
+            <Text style={s.suave}>
+              {novoCartao
+                ? 'Os dados do cartão vão direto para a Pagar.me; a MOVI não guarda o número do seu cartão. À vista, sem parcelamento.'
+                : 'Cartão guardado com segurança na Pagar.me; no app ficam só a bandeira e o final. À vista, sem parcelamento.'}
+            </Text>
+          </View>
+        )}
+
+        {metodo === 'debito' && (
+          <View style={s.cartao}>
+            {formulario}
+            <Text style={s.rotulo}>E-mail (o banco usa para confirmar)</Text>
+            <TextInput style={s.input} value={cartao.email} onChangeText={(t) => setCartao({ ...cartao, email: t })} keyboardType="email-address" autoCapitalize="none" placeholder="voce@email.com" placeholderTextColor={cores.apagado} maxLength={77} autoComplete="email" />
+            <Pressable style={[s.botao, ocupado && { opacity: 0.5 }]} disabled={ocupado} onPress={pagarDebito}>
+              {ocupado ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Pagar {formatarReais(conta.total)} no débito</Text>}
+            </Pressable>
+            <Text style={s.suave}>Visa ou Mastercard. O seu banco pode pedir uma confirmação (app do banco, SMS ou senha) antes de aprovar.</Text>
           </View>
         )}
 
@@ -217,6 +394,24 @@ export default function Pagar() {
           {tipo === 'pedido' ? 'Se a loja não aceitar, o valor volta automaticamente.' : tipo === 'corrida' ? 'Se a corrida for cancelada antes da chegada, o valor volta automaticamente.' : ''}
         </Text>
       </ScrollView>
+      {tds && (
+        <Autenticacao3DS
+          visivel
+          token={tds.token}
+          ambiente={tds.ambiente}
+          pedido={tds.pedido}
+          aoConcluir={debitoConfirmado}
+          aoFalhar={(m) => {
+            setTds(null);
+            setOcupado(false);
+            setMsg(m);
+          }}
+          aoCancelar={() => {
+            setTds(null);
+            setOcupado(false);
+          }}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -230,6 +425,13 @@ const s = StyleSheet.create({
   composicao: { fontSize: 13, color: cores.suave },
   detalhe: { backgroundColor: cores.cartao, borderRadius: raio, padding: 14, gap: 6, borderWidth: 1, borderColor: cores.borda },
   linha: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
+  salvo: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderColor: cores.borda, borderRadius: 12, padding: 12, backgroundColor: cores.fundo },
+  salvoAtivo: { borderColor: cores.primaria },
+  salvoTexto: { fontSize: 15, fontWeight: '700', color: cores.texto },
+  radio: { width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: cores.borda },
+  radioAtivo: { borderColor: cores.primaria, backgroundColor: cores.primaria },
+  remover: { color: cores.erro, fontWeight: '700', fontSize: 13 },
+  linhaSalvar: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
   abas: { flexDirection: 'row', gap: 8 },
   aba: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: cores.borda, backgroundColor: cores.cartao },
   abaAtiva: { backgroundColor: cores.primaria, borderColor: cores.primaria },

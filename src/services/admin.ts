@@ -26,6 +26,9 @@ export type ConfigServidor = {
   taxaPixFixo: number;
   taxaCartaoPct: number;
   taxaCartaoFixo: number;
+  debitoAtivo: boolean;
+  taxaDebitoPct: number;
+  taxaDebitoFixo: number;
   taxaDeslocamento: number;
   esperaPagamentoMin: number;
   esperaConfirmacaoMin: number;
@@ -318,6 +321,9 @@ export type PagamentosAdmin = {
   taxaPixFixo: number;
   taxaCartaoPct: number;
   taxaCartaoFixo: number;
+  debitoAtivo: boolean;
+  taxaDebitoPct: number;
+  taxaDebitoFixo: number;
   webhook: string;
   lojas: RecebedorAdmin[];
   motoristas: RecebedorAdmin[];

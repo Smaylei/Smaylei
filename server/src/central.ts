@@ -93,6 +93,9 @@ export type Config = ConfigAgenda & Liberacao & ConfigMoto & ConfigDelivery & {
   taxaPixFixo: number;
   taxaCartaoPct: number;
   taxaCartaoFixo: number;
+  debitoAtivo: boolean; // cartão de débito (Visa/Mastercard, com a confirmação do banco por 3DS)
+  taxaDebitoPct: number;
+  taxaDebitoFixo: number;
   taxaDeslocamento: number; // R$ do motorista se o cliente cancelar/não aparecer com ele já no local
   esperaPagamentoMin: number; // prazo para pagar depois de pedir (o horário fica reservado)
   esperaConfirmacaoMin: number; // quanto o motorista espera o cliente confirmar no local
@@ -117,6 +120,9 @@ export const CONFIG_PADRAO: Config = {
   taxaPixFixo: 0,
   taxaCartaoPct: 4.19,
   taxaCartaoFixo: 0,
+  debitoAtivo: false,
+  taxaDebitoPct: 1.99,
+  taxaDebitoFixo: 0,
   taxaDeslocamento: 5,
   esperaPagamentoMin: 15,
   esperaConfirmacaoMin: 10,
@@ -192,6 +198,9 @@ CREATE TABLE IF NOT EXISTS cobrancas (
   estornado REAL NOT NULL DEFAULT 0, erro TEXT);
 CREATE INDEX IF NOT EXISTS cobrancas_ref ON cobrancas(ref_tipo, ref_id);
 CREATE INDEX IF NOT EXISTS cobrancas_order ON cobrancas(order_id);
+CREATE TABLE IF NOT EXISTS cartoes (
+  id TEXT PRIMARY KEY, cliente_id TEXT NOT NULL, bandeira TEXT NOT NULL, final TEXT NOT NULL, mes INTEGER, ano INTEGER, criado_em TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS cartoes_cliente ON cartoes(cliente_id);
 CREATE TABLE IF NOT EXISTS gorjetas (
   id TEXT PRIMARY KEY, corrida_id TEXT NOT NULL, cliente_id TEXT NOT NULL, motorista_id TEXT NOT NULL, valor REAL NOT NULL, status TEXT NOT NULL,
   checkout_url TEXT, slug TEXT, transaction_nsu TEXT, metodo TEXT, receipt_url TEXT, criado_em TEXT NOT NULL, pago_em TEXT)
@@ -218,7 +227,9 @@ const COLUNAS_NOVAS = [`ALTER TABLE corridas ADD COLUMN pagamento_ate TEXT`, `AL
   'ALTER TABLE cobrancas ADD COLUMN taxa REAL NOT NULL DEFAULT 0',
   'ALTER TABLE corridas ADD COLUMN taxa_pagamento REAL NOT NULL DEFAULT 0',
   'ALTER TABLE motoristas ADD COLUMN pix_tipo TEXT',
-  'ALTER TABLE clientes ADD COLUMN pix_tipo TEXT'];
+  'ALTER TABLE clientes ADD COLUMN pix_tipo TEXT',
+  // Cartões salvos: o cliente na Pagar.me guarda a carteira; aqui só bandeira, final e validade
+  'ALTER TABLE clientes ADD COLUMN pagarme_cliente TEXT'];
 
 export const ROTULO: Record<string, string> = {
   pagamento_pendente: 'Aguardando pagamento',
@@ -494,7 +505,7 @@ export class Central extends DurableObject<Env> {
     // Só contagens (sem dados pessoais): ajuda a entender um "nenhum motorista livre".
     const n = (q: string, ...x: unknown[]) => Number(this.um(q, ...x)?.n ?? 0);
     const diag = {
-      v: 6,
+      v: 7,
       online: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1`),
       comPosicao: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1 AND loc_em > ?`, iso(agora - LOC_VALIDA_MIN * MIN)),
       livres,
@@ -878,11 +889,26 @@ export class Central extends DurableObject<Env> {
     return { erro: 'Pagamento inválido.', status: 400 };
   }
 
-  private async pagarComPagarme(cli: Linha, b: { tipo?: string; id?: string; metodo?: string; cardToken?: string; cep?: string }) {
+  private async pagarComPagarme(
+    cli: Linha,
+    b: { tipo?: string; id?: string; metodo?: string; cardToken?: string; cep?: string; cartaoId?: string; salvar?: boolean; tdsTransacao?: string; email?: string },
+  ) {
     const sk = this.pagarme();
     if (!sk) return erro('Pagamento pela Pagar.me desligado.', 409);
-    const metodo = b.metodo === 'cartao' ? 'cartao' : 'pix';
-    if (metodo === 'cartao' && (!b.cardToken || soDigitos(b.cep).length !== 8)) return erro('Informe os dados do cartão e o CEP de cobrança.');
+    const metodo: Pagarme.Metodo = b.metodo === 'cartao' ? 'cartao' : b.metodo === 'debito' ? 'debito' : 'pix';
+    // Cartão salvo: só os da própria pessoa, na carteira dela na Pagar.me.
+    const salvo = metodo === 'cartao' && b.cartaoId ? this.um(`SELECT * FROM cartoes WHERE id=? AND cliente_id=?`, b.cartaoId, cli.id) : undefined;
+    if (b.cartaoId && metodo === 'cartao' && (!salvo || !cli.pagarme_cliente)) return erro('Cartão salvo não encontrado. Digite os dados do cartão.', 404);
+    if (metodo !== 'pix' && !salvo && (!b.cardToken || soDigitos(b.cep).length !== 8)) return erro('Informe os dados do cartão e o CEP de cobrança.');
+    if (metodo === 'debito') {
+      if (!this.config().debitoAtivo) return erro('Pagamento no débito indisponível. Use o Pix ou o crédito.', 409);
+      if (!b.tdsTransacao) return erro('Confirme o pagamento no débito com o seu banco.');
+    }
+    const email = String(b.email ?? '').trim().toLowerCase();
+    if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email !== cli.email) {
+      this.sql.exec(`UPDATE clientes SET email=? WHERE id=?`, email, cli.id);
+      cli = { ...cli, email };
+    }
     const alvo = this.alvoPagamento(cli, b.tipo, b.id);
     if ('erro' in alvo) return erro(alvo.erro, alvo.status);
     const agora = Date.now();
@@ -901,18 +927,26 @@ export class Central extends DurableObject<Env> {
     let r: Pagarme.ResultadoPedido;
     try {
       r = await Pagarme.criarPedido(sk, {
-        codigo: id, itens, cliente: { nome: String(cli.nome), cpf: String(cli.cpf ?? ''), telefone: String(cli.telefone ?? '') }, metodo,
-        pixExpiraSeg: alvo.expiraSeg, cardToken: b.cardToken, split,
-        cobranca: metodo === 'cartao' ? { endereco: String(cli.endereco), cep: String(b.cep), cidade: nomeCidade(cidadeDe({ lat: Number(cli.lat), lon: Number(cli.lon) })) || 'Guaramirim', uf: 'SC' } : undefined,
+        codigo: id, itens, metodo, pixExpiraSeg: alvo.expiraSeg, split,
+        cliente: { nome: String(cli.nome), cpf: String(cli.cpf ?? ''), telefone: String(cli.telefone ?? ''), email: cli.email ? String(cli.email) : null, codigo: String(cli.id), id: cli.pagarme_cliente ? String(cli.pagarme_cliente) : null },
+        cardToken: salvo ? undefined : b.cardToken, cardId: salvo ? String(salvo.id) : undefined, tdsTransacao: b.tdsTransacao,
+        cobranca: metodo !== 'pix' && !salvo ? { endereco: String(cli.endereco), cep: String(b.cep), cidade: nomeCidade(cidadeDe({ lat: Number(cli.lat), lon: Number(cli.lon) })) || 'Guaramirim', uf: 'SC' } : undefined,
       });
     } catch (e) {
       return erro((e as Error).message, 502);
+    }
+    // Carteira de cartões: a Pagar.me guarda todo cartão usado; fica salvo só se a pessoa pediu (e pagou com ele).
+    if (r.customerId && r.customerId !== cli.pagarme_cliente) this.sql.exec(`UPDATE clientes SET pagarme_cliente=? WHERE id=?`, r.customerId, cli.id);
+    if (r.cartao && !salvo && r.customerId) {
+      if (metodo === 'cartao' && b.salvar && r.status === 'paid')
+        this.sql.exec(`INSERT OR REPLACE INTO cartoes (id, cliente_id, bandeira, final, mes, ano, criado_em) VALUES (?,?,?,?,?,?,?)`, r.cartao.id, cli.id, r.cartao.bandeira, r.cartao.final, r.cartao.mes, r.cartao.ano, iso(agora));
+      else this.ctx.waitUntil(Pagarme.excluirCartao(sk, r.customerId, r.cartao.id).catch(() => {}));
     }
     this.sql.exec(
       `INSERT INTO cobrancas (id, ref_tipo, ref_id, valor, taxa, metodo, order_id, charge_id, status, qr_code, qr_code_url, expira_em, split, criado_em, erro) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, alvo.refTipo, alvo.refId, total, taxa, metodo, r.orderId, r.chargeId, r.status === 'failed' || r.status === 'canceled' ? 'falhou' : 'pendente',
       r.qrCode, r.qrCodeUrl, r.expiraEm ?? (metodo === 'pix' ? iso(agora + alvo.expiraSeg * 1000) : null), split ? JSON.stringify(split) : null, iso(agora),
-      r.status === 'failed' ? (r.motivoFalha ?? 'Pagamento recusado. Confira os dados ou use outro cartão.') : null,
+      r.status === 'failed' ? (r.motivoFalha ?? (metodo === 'debito' ? 'Débito não aprovado pelo banco. Confira o saldo ou use outro meio.' : 'Pagamento recusado. Confira os dados ou use outro cartão.')) : null,
     );
     if (r.status === 'paid') this.confirmarCobranca(id);
     return json(this.cobrancaView(this.um(`SELECT * FROM cobrancas WHERE id=?`, id)!));
@@ -923,12 +957,12 @@ export class Central extends DurableObject<Env> {
     return mot.pix_tipo && mot.pix ? { pix: String(mot.pix), pixTipo: String(mot.pix_tipo) } : { pix: String(mot.cpf), pixTipo: 'cpf' };
   }
   /** Itens e split com a taxa do meio de pagamento somada (item "Taxa do Pix/cartão"); a MOVI (principal) absorve a taxa. */
-  private comTaxaPagamento(itensBase: Pagarme.ItemCobranca[], splitBase: Pagarme.SplitRegra[] | undefined, metodo: 'pix' | 'cartao') {
-    const cfg = this.config();
+  private comTaxaPagamento(itensBase: Pagarme.ItemCobranca[], splitBase: Pagarme.SplitRegra[] | undefined, metodo: Pagarme.Metodo) {
     const base = itensBase.reduce((sm, i) => sm + i.centavos * i.qtd, 0);
-    const meio = metodo === 'cartao' ? { pct: cfg.taxaCartaoPct, fixo: cfg.taxaCartaoFixo } : { pct: cfg.taxaPixPct, fixo: cfg.taxaPixFixo };
+    const meio = this.taxasPagamento()[metodo];
     const taxaCent = Math.max(0, Math.round(comTaxa(base / 100, meio).total * 100) - base);
-    const itens = taxaCent > 0 ? [...itensBase, { codigo: 'taxa', descricao: metodo === 'cartao' ? 'Taxa do cartão' : 'Taxa do Pix', centavos: taxaCent, qtd: 1 }] : itensBase;
+    const nome = metodo === 'cartao' ? 'Taxa do cartão' : metodo === 'debito' ? 'Taxa do débito' : 'Taxa do Pix';
+    const itens = taxaCent > 0 ? [...itensBase, { codigo: 'taxa', descricao: nome, centavos: taxaCent, qtd: 1 }] : itensBase;
     const totalCent = base + taxaCent;
     const outros = (splitBase ?? []).filter((x) => !x.principal).reduce((sm, x) => sm + x.centavos, 0);
     const split = splitBase?.map((x) => (x.principal ? { ...x, centavos: totalCent - outros } : x));
@@ -937,14 +971,18 @@ export class Central extends DurableObject<Env> {
   /** Taxas configuradas (o app mostra "valor + taxa = total" antes de pagar). */
   private taxasPagamento() {
     const cfg = this.config();
-    return { pix: { pct: cfg.taxaPixPct, fixo: cfg.taxaPixFixo }, cartao: { pct: cfg.taxaCartaoPct, fixo: cfg.taxaCartaoFixo } };
+    return {
+      pix: { pct: cfg.taxaPixPct, fixo: cfg.taxaPixFixo },
+      cartao: { pct: cfg.taxaCartaoPct, fixo: cfg.taxaCartaoFixo },
+      debito: { pct: cfg.taxaDebitoPct, fixo: cfg.taxaDebitoFixo },
+    };
   }
 
   /** Confere na Pagar.me uma cobrança ainda pendente (chamado pelo app e pelo webhook). */
   private async atualizarCobranca(c: Linha) {
     const sk = this.env.PAGARME_SECRET_KEY;
     if (!sk || c.status !== 'pendente' || !c.order_id) return c;
-    const r = await Pagarme.obterPedido(sk, String(c.order_id), c.metodo === 'cartao' ? 'cartao' : 'pix').catch(() => null);
+    const r = await Pagarme.obterPedido(sk, String(c.order_id), c.metodo === 'pix' ? 'pix' : c.metodo === 'debito' ? 'debito' : 'cartao').catch(() => null);
     if (r?.status === 'paid') this.confirmarCobranca(String(c.id));
     else if (r && (r.status === 'failed' || r.status === 'canceled')) this.sql.exec(`UPDATE cobrancas SET status='falhou', erro=COALESCE(erro, ?) WHERE id=? AND status='pendente'`, r.motivoFalha ?? 'Pagamento não concluído.', c.id);
     return this.um(`SELECT * FROM cobrancas WHERE id=?`, c.id)!;
@@ -956,7 +994,7 @@ export class Central extends DurableObject<Env> {
     if (!cob || cob.status === 'paga') return;
     const agora = iso(Date.now());
     this.sql.exec(`UPDATE cobrancas SET status='paga', pago_em=?, erro=NULL WHERE id=?`, agora, id);
-    const metodo = cob.metodo === 'cartao' ? 'credit_card' : 'pix';
+    const metodo = cob.metodo === 'cartao' ? 'credit_card' : cob.metodo === 'debito' ? 'debit_card' : 'pix';
     const direto = !!cob.split;
     const ref = String(cob.ref_id);
     const taxaCob = Number(cob.taxa ?? 0);
@@ -1155,7 +1193,7 @@ export class Central extends DurableObject<Env> {
         motoAcrescimoPct: r2((fatorMoto(cfg) - 1) * 100), // APKs antigos calculam com o acréscimo
         deslocamentoPadraoKm: cfg.deslocamentoPadraoKm, deliveryMensalidade: cfg.deliveryMensalidade, deliveryUrgencia: cfg.deliveryUrgencia,
         gateway: this.pagarme() ? 'pagarme' : 'infinitepay', pagarmeChavePublica: this.pagarme() ? cfg.pagarmeChavePublica : '', pagarAoAceitarMin: cfg.pagarAoAceitarMin,
-        taxasPagamento: this.pagarme() ? this.taxasPagamento() : null,
+        taxasPagamento: this.pagarme() ? this.taxasPagamento() : null, debitoAtivo: !!this.pagarme() && cfg.debitoAtivo,
         locais: this.locais().filter((l) => cfg.categoriasAtivas.includes(l.categoria as never) && !!l.cidade && cfg.cidadesAtivas.includes(l.cidade)),
       });
     if (metodo === 'GET' && p === '/v2/disponibilidade') return json(this.disponibilidade());
@@ -1388,6 +1426,33 @@ export class Central extends DurableObject<Env> {
     const cfg = this.config();
     const cli = eu.linha!;
     if (metodo === 'POST' && p === '/v2/pagar') return this.pagarComPagarme(cli, await this.corpo(req));
+    // Cartões salvos (crédito): lista e remove (também da carteira na Pagar.me).
+    if (metodo === 'GET' && p === '/v2/cartoes')
+      return json(this.q(`SELECT id, bandeira, final, mes, ano FROM cartoes WHERE cliente_id=? ORDER BY criado_em DESC`, cli.id));
+    const cam = p.match(/^\/v2\/cartoes\/([\w-]+)$/);
+    if (metodo === 'DELETE' && cam) {
+      const c = this.um(`SELECT * FROM cartoes WHERE id=? AND cliente_id=?`, cam[1], cli.id);
+      if (!c) return erro('Cartão não encontrado.', 404);
+      this.sql.exec(`DELETE FROM cartoes WHERE id=?`, c.id);
+      const sk = this.env.PAGARME_SECRET_KEY;
+      if (sk && cli.pagarme_cliente) this.ctx.waitUntil(Pagarme.excluirCartao(sk, String(cli.pagarme_cliente), String(c.id)).catch(() => {}));
+      return json({ ok: true });
+    }
+    // Débito: token da autenticação 3DS (o app confirma com o banco antes de pagar).
+    if (metodo === 'POST' && p === '/v2/pagar/3ds') {
+      const sk = this.pagarme();
+      if (!sk || !cfg.debitoAtivo) return erro('Pagamento no débito indisponível. Use o Pix ou o crédito.', 409);
+      try {
+        const t = await Pagarme.tokenTds(sk);
+        const tel = soDigitos(cli.telefone).replace(/^55(?=\d{10,11}$)/, '');
+        return json({
+          ...t, cidade: nomeCidade(cidadeDe({ lat: Number(cli.lat), lon: Number(cli.lon) })) || 'Guaramirim', uf: 'SC', endereco: cli.endereco,
+          cliente: { nome: cli.nome, email: cli.email ?? null, documento: soDigitos(cli.cpf), ddd: tel.slice(0, 2), telefone: tel.slice(2), codigo: cli.id },
+        });
+      } catch (e) {
+        return erro((e as Error).message, 502);
+      }
+    }
     const cbm = p.match(/^\/v2\/cobrancas\/([\w-]+)$/);
     if (metodo === 'GET' && cbm) {
       const c = this.um(`SELECT * FROM cobrancas WHERE id=?`, cbm[1]);
@@ -1825,6 +1890,7 @@ export class Central extends DurableObject<Env> {
         gateway: cfg.gateway, ativo: !!this.pagarme(), chaveConfigurada: !!sk, ambiente: sk ? (sk.startsWith('sk_test_') ? 'teste' : 'produção') : null,
         recebedorMovi: cfg.pagarmeRecebedorMovi, chavePublica: cfg.pagarmeChavePublica, pagarAoAceitarMin: cfg.pagarAoAceitarMin,
         taxaPixPct: cfg.taxaPixPct, taxaPixFixo: cfg.taxaPixFixo, taxaCartaoPct: cfg.taxaCartaoPct, taxaCartaoFixo: cfg.taxaCartaoFixo,
+        debitoAtivo: cfg.debitoAtivo, taxaDebitoPct: cfg.taxaDebitoPct, taxaDebitoFixo: cfg.taxaDebitoFixo,
         webhook: `${url.origin}/webhook/pagarme`,
         lojas: lista('clientes', "AND tipo='lojista'"), motoristas: lista('motoristas', ''),
         estornosComErro: [
@@ -2061,9 +2127,10 @@ export class Central extends DurableObject<Env> {
       if (cfg.pagarmeChavePublica && !/^pk_\w+$/.test(cfg.pagarmeChavePublica)) return erro('Chave pública inválida (começa com pk_).');
       if (cfg.gateway === 'pagarme' && !cfg.pagarmeChavePublica) return erro('Informe a chave pública (pk_...) para o pagamento com cartão.');
       if (!(cfg.pagarAoAceitarMin >= 1 && cfg.pagarAoAceitarMin <= 30)) return erro('Prazo para pagar depois do aceite: de 1 a 30 minutos.');
-      for (const k of ['taxaPixPct', 'taxaPixFixo', 'taxaCartaoPct', 'taxaCartaoFixo'] as const) cfg[k] = r2(Number(cfg[k]));
-      if (!(cfg.taxaPixPct >= 0 && cfg.taxaPixPct <= 20 && cfg.taxaCartaoPct >= 0 && cfg.taxaCartaoPct <= 20)) return erro('Taxa percentual do Pix/cartão: de 0 a 20%.');
-      if (!(cfg.taxaPixFixo >= 0 && cfg.taxaPixFixo <= 10 && cfg.taxaCartaoFixo >= 0 && cfg.taxaCartaoFixo <= 10)) return erro('Taxa fixa do Pix/cartão: de R$ 0 a R$ 10.');
+      for (const k of ['taxaPixPct', 'taxaPixFixo', 'taxaCartaoPct', 'taxaCartaoFixo', 'taxaDebitoPct', 'taxaDebitoFixo'] as const) cfg[k] = r2(Number(cfg[k]));
+      if (![cfg.taxaPixPct, cfg.taxaCartaoPct, cfg.taxaDebitoPct].every((x) => x >= 0 && x <= 20)) return erro('Taxa percentual do Pix/cartão: de 0 a 20%.');
+      if (![cfg.taxaPixFixo, cfg.taxaCartaoFixo, cfg.taxaDebitoFixo].every((x) => x >= 0 && x <= 10)) return erro('Taxa fixa do Pix/cartão: de R$ 0 a R$ 10.');
+      cfg.debitoAtivo = !!cfg.debitoAtivo;
       if (!(cfg.deliveryMensalidade >= 1 && cfg.deliveryMensalidade <= 1000 && cfg.deliveryAceiteMin >= 3 && cfg.deliveryAceiteMin <= 60)) return erro('Valores do delivery inválidos.');
       cfg.deliveryUrgencia = !!cfg.deliveryUrgencia;
       cfg.motoAtivo = !!cfg.motoAtivo;

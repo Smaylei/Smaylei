@@ -11,7 +11,7 @@ export type Cobranca = {
   tipo: string;
   ref: string;
   status: 'pendente' | 'paga' | 'falhou';
-  metodo: 'pix' | 'cartao';
+  metodo: 'pix' | 'cartao' | 'debito';
   /** Total cobrado (valor + taxa do Pix/cartão). */
   valor: number;
   taxa?: number;
@@ -24,9 +24,28 @@ export type Cobranca = {
 };
 export type DadosCartao = { numero: string; nome: string; mes: string; ano: string; cvv: string };
 
-export const pagar = (tipo: TipoPagamento, id: string, metodo: 'pix' | 'cartao', extra: { cardToken?: string; cep?: string } = {}) =>
-  api<Cobranca>(SOLICITANTE, '/v2/pagar', { method: 'POST', corpo: { tipo, id, metodo, ...extra } });
+export type MetodoPagamento = 'pix' | 'cartao' | 'debito';
+export type CartaoSalvo = { id: string; bandeira: string; final: string; mes: number | null; ano: number | null };
+/** Dados para a confirmação do débito com o banco (3DS). */
+export type Inicio3ds = {
+  token: string;
+  ambiente: 'teste' | 'producao';
+  cidade: string;
+  uf: string;
+  endereco: string;
+  cliente: { nome: string; email: string | null; documento: string; ddd: string; telefone: string; codigo: string };
+};
+
+export const pagar = (
+  tipo: TipoPagamento,
+  id: string,
+  metodo: MetodoPagamento,
+  extra: { cardToken?: string; cep?: string; cartaoId?: string; salvar?: boolean; tdsTransacao?: string; email?: string } = {},
+) => api<Cobranca>(SOLICITANTE, '/v2/pagar', { method: 'POST', corpo: { tipo, id, metodo, ...extra } });
 export const cobranca = (id: string) => api<Cobranca>(SOLICITANTE, `/v2/cobrancas/${id}`);
+export const cartoesSalvos = () => api<CartaoSalvo[]>(SOLICITANTE, '/v2/cartoes');
+export const removerCartao = (id: string) => api(SOLICITANTE, `/v2/cartoes/${id}`, { method: 'DELETE' });
+export const iniciar3ds = () => api<Inicio3ds>(SOLICITANTE, '/v2/pagar/3ds', { method: 'POST' });
 
 /** Gera o token do cartão direto na Pagar.me (só com a chave pública, sem passar pelo servidor). */
 export async function tokenizarCartao(chavePublica: string, c: DadosCartao): Promise<string> {
