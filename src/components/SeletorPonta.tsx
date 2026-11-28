@@ -5,7 +5,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { cidadeDe, CIDADES, nomeCidade, type CidadeId } from '../data/cidades';
 import type { Local } from '../data/locais';
 import { CATEGORIAS, categoriasVisiveis, livrePermitido, type CategoriaId, type Ponta, type ServicoId, type Veiculo } from '../data/servicos';
-import { useApp } from '../estado/AppContext';
+import { useApp, usePreco } from '../estado/AppContext';
 import { useCotacoes } from '../hooks/useCotacoes';
 import { distanciaRetaKm, formatarReais } from '../services/preco';
 import { geocodificar, minhaLocalizacao } from '../services/rota';
@@ -50,6 +50,7 @@ const MOSTRAR = 8;
 
 export default function SeletorPonta({ ponta, valor, onChange, servico, agendado, base, lado, veiculo = 'carro' }: Props) {
   const { casa, locais, config } = useApp();
+  const preco = usePreco();
   const categorias = useMemo(() => categoriasVisiveis(ponta, config), [ponta, config]);
   const livreOk = livrePermitido(ponta, config);
   const [catEscolhida, setCat] = useState<CategoriaId | null>(null);
@@ -131,7 +132,7 @@ export default function SeletorPonta({ ponta, valor, onChange, servico, agendado
               key={l.id}
               titulo={l.nome}
               sub={`${curto(l.endereco)} · ${nomeCidade(l.cidade ?? cidadeDe(l))}`}
-              direita={base ? (cot[l.id] ? formatarReais(cot[l.id]!.valor) : '…') : undefined}
+              direita={base ? (cot[l.id] ? formatarReais(preco(cot[l.id]!.valor)) : '…') : undefined}
               ativo={valor?.chave === `l:${l.id}`}
               onPress={() => onChange(escolhaLocal(l))}
             />

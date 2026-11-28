@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { cores, raio } from '../components/tema';
 import { VEICULOS, type Veiculo } from '../data/servicos';
-import { useApp } from '../estado/AppContext';
+import { useApp, usePreco } from '../estado/AppContext';
 import { irParaPagamento } from '../services/pagamento';
 import { alterarItem, esvaziar, subtotal, useCarrinho } from '../estado/carrinho';
 import { ErroApi } from '../services/api';
@@ -14,6 +14,7 @@ import { formatarReais } from '../services/preco';
 export default function CarrinhoTela() {
   const carrinho = useCarrinho();
   const { casa, config } = useApp();
+  const preco = usePreco();
   const [veiculo, setVeiculo] = useState<Veiculo>('carro');
   const [moto, setMoto] = useState(false);
   const [minimo, setMinimo] = useState(0);
@@ -57,7 +58,8 @@ export default function CarrinhoTela() {
 
   const sub = subtotal(carrinho);
   const faltaMinimo = minimo > 0 && sub < minimo;
-  const total = cot ? Math.round((sub + cot.frete) * 100) / 100 : null;
+  // Preço ao cliente: a taxa do pagamento vai embutida na entrega (sem aparecer como taxa).
+  const total = cot ? preco(Math.round((sub + cot.frete) * 100) / 100) : null;
   const pode = !!cot && cot.entrega.ok && !faltaMinimo && !enviando;
 
   async function pagar() {
@@ -138,7 +140,7 @@ export default function CarrinhoTela() {
 
         <View style={s.resumo}>
           <Linha a="Produtos" b={formatarReais(sub)} />
-          <Linha a="Entrega MOVI" b={cot ? formatarReais(cot.frete) : '…'} />
+          <Linha a="Entrega MOVI" b={total != null ? formatarReais(Math.round((total - sub) * 100) / 100) : '…'} />
           <View style={s.divisor} />
           <Linha a="Total" b={total != null ? formatarReais(total) : '…'} forte />
           {cot && <Text style={s.dica}>Chega em ~{preparo + cot.minutos} min (preparo da loja + entrega).</Text>}

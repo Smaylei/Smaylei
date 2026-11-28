@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API, api, apagarToken, ErroApi, lerToken } from '../services/api';
 import { carregarEndereco, salvarEndereco, type Endereco } from '../services/cadastro';
 import { URGENCIA_PADRAO, type Tarifa, type Urgencia } from '../services/preco';
-import type { TaxaMeio } from '../services/taxas';
+import { comTaxa, type TaxaMeio } from '../services/taxas';
 import { MODO, SOLICITANTE } from '../variante';
 
 type Config = Liberacao &
@@ -21,8 +21,8 @@ type Config = Liberacao &
     gateway: 'infinitepay' | 'pagarme';
     pagarmeChavePublica: string;
     pagarAoAceitarMin: number;
-    /** Taxa do Pix/cartão somada ao valor na Pagar.me (o cliente paga; quem trabalha recebe o valor mostrado). */
-    taxasPagamento: { pix: TaxaMeio; cartao: TaxaMeio; debito?: TaxaMeio } | null;
+    /** Taxa do pagamento embutida no preço ao cliente (Pagar.me); o cliente vê só o preço final. */
+    taxaPreco: TaxaMeio | null;
     /** Cartão de débito liberado no Admin (Visa/Mastercard, com a confirmação do banco). */
     debitoAtivo: boolean;
   };
@@ -63,7 +63,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     gateway: 'infinitepay',
     pagarmeChavePublica: '',
     pagarAoAceitarMin: 3,
-    taxasPagamento: null,
+    taxaPreco: null,
     debitoAtivo: false,
     ...LIBERACAO_PADRAO,
     ...MOTO_PADRAO,
@@ -86,7 +86,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             gateway: c.gateway === 'pagarme' ? 'pagarme' : 'infinitepay',
             pagarmeChavePublica: c.pagarmeChavePublica ?? '',
             pagarAoAceitarMin: c.pagarAoAceitarMin ?? 3,
-            taxasPagamento: c.taxasPagamento ?? null,
+            taxaPreco: c.taxaPreco ?? null,
             debitoAtivo: !!c.debitoAtivo,
             servicosAtivos: c.servicosAtivos ?? LIBERACAO_PADRAO.servicosAtivos,
             categoriasAtivas: c.categoriasAtivas ?? LIBERACAO_PADRAO.categoriasAtivas,
@@ -159,4 +159,14 @@ export function useApp() {
   const c = useContext(AppCtx);
   if (!c) throw new Error('useApp fora do AppProvider');
   return c;
+}
+
+/**
+ * Preço que o cliente vê e paga: o valor do serviço com a taxa do pagamento já embutida (igual em
+ * Pix, crédito e débito). O cliente nunca vê "taxa"; motorista e loja recebem o valor deles.
+ */
+export function usePreco() {
+  const { config } = useApp();
+  const t = config.taxaPreco;
+  return useCallback((v: number) => (t && v > 0 ? comTaxa(v, t).total : v), [t]);
 }

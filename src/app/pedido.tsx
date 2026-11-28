@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import SeletorPonta, { escolhaCasa, type Escolha } from '../components/SeletorPonta';
 import { cores, raio, sombra } from '../components/tema';
 import { aceitaMoto, precoMoto, servicoPorId, VEICULOS, type Veiculo } from '../data/servicos';
-import { useApp } from '../estado/AppContext';
+import { useApp, usePreco } from '../estado/AppContext';
 import { irParaPagamento } from '../services/pagamento';
 import { useCotacoes } from '../hooks/useCotacoes';
 import { api, type CorridaCliente, type Disponibilidade } from '../services/api';
@@ -16,6 +16,7 @@ export default function PedidoTela() {
   const params = useLocalSearchParams<{ servico?: string; modo?: string }>();
   const sv = servicoPorId(params.servico ?? 'comigo');
   const { casa, recarregarConfig, config } = useApp();
+  const preco = usePreco();
   const insets = useSafeAreaInsets();
   const [agendado, setAgendado] = useState(params.modo === 'agendar' || !!sv.variosDias);
   const [disp, setDisp] = useState<Disponibilidade | null>(null);
@@ -64,7 +65,9 @@ export default function PedidoTela() {
   // Valor calculado pelo servidor (rota OSRM + tarifas do Admin): é o mesmo cobrado no pedido.
   const destinoCot = useMemo(() => (entrega ? [{ id: 'd', lat: entrega.lat, lon: entrega.lon }] : []), [entrega]);
   const cot = useCotacoes(sv.id, agendado, coleta, destinoCot, 'coleta', veiculo);
-  const valor = coleta && entrega ? (cot.d?.valor ?? null) : null;
+  const valorBase = coleta && entrega ? (cot.d?.valor ?? null) : null;
+  // Preço ao cliente (taxa do pagamento embutida): é o que aparece aqui e na hora de pagar.
+  const valor = valorBase === null ? null : preco(valorBase);
 
   // Viagens do pedido.
   const horarioDe = (data: string, hora: string | null) => disp?.dias.find((d) => d.data === data)?.horarios.find((h) => h.hora === hora)?.inicio ?? null;
@@ -151,7 +154,7 @@ export default function PedidoTela() {
                     {v.icone} {v.nome}
                   </Text>
                   {v.id === 'moto' && (
-                    <Text style={[s.segSub, veiculo === v.id && s.segTextoAtivo]}>a partir de {formatarReais(precoMoto(0, config))}</Text>
+                    <Text style={[s.segSub, veiculo === v.id && s.segTextoAtivo]}>a partir de {formatarReais(preco(precoMoto(0, config)))}</Text>
                   )}
                 </Pressable>
               ))}
@@ -270,8 +273,8 @@ export default function PedidoTela() {
 
       <View style={[s.rodape, { paddingBottom: 12 + insets.bottom }]}>
         <View style={{ flex: 1 }}>
-          <Text style={s.rodapeRotulo}>{qtd > 1 ? `${qtd} viagens × ${valor != null ? formatarReais(valor) : '—'}` : agendado ? 'Agendado' : 'Agora'}</Text>
-          <Text style={s.rodapeValor}>{valor === null ? '—' : formatarReais(Math.round(valor * Math.max(qtd, 1) * 100) / 100)}</Text>
+          <Text style={s.rodapeRotulo}>{qtd > 1 ? `${qtd} viagens` : agendado ? 'Agendado' : 'Agora'}</Text>
+          <Text style={s.rodapeValor}>{valorBase === null ? '—' : formatarReais(preco(Math.round(valorBase * Math.max(qtd, 1) * 100) / 100))}</Text>
         </View>
         <Pressable style={[s.botao, (!pronto || enviando) && { opacity: 0.45 }]} disabled={!pronto || enviando} onPress={chamar}>
           {enviando ? <ActivityIndicator color="#fff" /> : <Text style={s.botaoTexto}>Pagar e {agendado ? 'agendar' : 'chamar'}</Text>}

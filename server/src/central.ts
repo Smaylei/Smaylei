@@ -505,7 +505,7 @@ export class Central extends DurableObject<Env> {
     // Só contagens (sem dados pessoais): ajuda a entender um "nenhum motorista livre".
     const n = (q: string, ...x: unknown[]) => Number(this.um(q, ...x)?.n ?? 0);
     const diag = {
-      v: 7,
+      v: 8,
       online: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1`),
       comPosicao: n(`SELECT COUNT(*) AS n FROM motoristas WHERE status='aprovado' AND online=1 AND loc_em > ?`, iso(agora - LOC_VALIDA_MIN * MIN)),
       livres,
@@ -914,7 +914,7 @@ export class Central extends DurableObject<Env> {
     const agora = Date.now();
     // Taxa do Pix/cartão por cima: o cliente paga valor + taxa; motorista e loja recebem o valor deles
     // inteiro no split e a MOVI (que paga a taxa da Pagar.me) fica com a parte dela sem desconto.
-    const { itens, split, total, taxa } = this.comTaxaPagamento(alvo.itens, alvo.split, metodo);
+    const { itens, split, total, taxa } = this.comTaxaPagamento(alvo.itens, alvo.split, alvo.refTipo);
     if (metodo === 'pix') {
       // Pix já gerado, do mesmo valor e ainda válido: mostra o mesmo QR Code.
       const ja = this.um(
@@ -956,19 +956,30 @@ export class Central extends DurableObject<Env> {
   private chavePix(mot: Linha): { pix: string; pixTipo: string } {
     return mot.pix_tipo && mot.pix ? { pix: String(mot.pix), pixTipo: String(mot.pix_tipo) } : { pix: String(mot.cpf), pixTipo: 'cpf' };
   }
-  /** Itens e split com a taxa do meio de pagamento somada (item "Taxa do Pix/cartão"); a MOVI (principal) absorve a taxa. */
-  private comTaxaPagamento(itensBase: Pagarme.ItemCobranca[], splitBase: Pagarme.SplitRegra[] | undefined, metodo: Pagarme.Metodo) {
+  /**
+   * Preço ao cliente com a taxa do pagamento embutida (o cliente vê só o preço, igual em qualquer meio).
+   * Sem item "taxa": ela entra no frete (delivery) ou no próprio serviço. Gorjeta e mensalidade não
+   * têm acréscimo (a MOVI absorve). O split dá a motorista/loja o valor deles; a MOVI (principal) paga a taxa.
+   */
+  private comTaxaPagamento(itensBase: Pagarme.ItemCobranca[], splitBase: Pagarme.SplitRegra[] | undefined, refTipo: string) {
     const base = itensBase.reduce((sm, i) => sm + i.centavos * i.qtd, 0);
-    const meio = this.taxasPagamento()[metodo];
+    const meio = refTipo === 'gorjeta' || refTipo === 'mensalidade' ? { pct: 0, fixo: 0 } : this.taxaPreco();
     const taxaCent = Math.max(0, Math.round(comTaxa(base / 100, meio).total * 100) - base);
-    const nome = metodo === 'cartao' ? 'Taxa do cartão' : metodo === 'debito' ? 'Taxa do débito' : 'Taxa do Pix';
-    const itens = taxaCent > 0 ? [...itensBase, { codigo: 'taxa', descricao: nome, centavos: taxaCent, qtd: 1 }] : itensBase;
-    const totalCent = base + taxaCent;
+    const alvoItem = itensBase.findIndex((i) => i.codigo === 'frete');
+    const k = alvoItem >= 0 ? alvoItem : itensBase.findIndex((i) => i.qtd === 1);
+    const itens = taxaCent > 0 && k >= 0 ? itensBase.map((i, n) => (n === k ? { ...i, centavos: i.centavos + taxaCent } : i)) : itensBase;
+    const totalCent = itens.reduce((sm, i) => sm + i.centavos * i.qtd, 0);
     const outros = (splitBase ?? []).filter((x) => !x.principal).reduce((sm, x) => sm + x.centavos, 0);
     const split = splitBase?.map((x) => (x.principal ? { ...x, centavos: totalCent - outros } : x));
-    return { itens, split, total: totalCent / 100, taxa: taxaCent / 100 };
+    return { itens, split, total: totalCent / 100, taxa: (totalCent - base) / 100 };
   }
-  /** Taxas configuradas (o app mostra "valor + taxa = total" antes de pagar). */
+  /** Taxa usada no preço ao cliente: a maior entre os meios ligados (cobre qualquer meio que ele escolher). */
+  private taxaPreco() {
+    const t = this.taxasPagamento();
+    const meios = [t.pix, t.cartao, ...(this.config().debitoAtivo ? [t.debito] : [])];
+    return { pct: Math.max(...meios.map((m) => m.pct)), fixo: Math.max(...meios.map((m) => m.fixo)) };
+  }
+  /** Taxas de cada meio (configuradas no Admin). */
   private taxasPagamento() {
     const cfg = this.config();
     return {
@@ -1193,7 +1204,7 @@ export class Central extends DurableObject<Env> {
         motoAcrescimoPct: r2((fatorMoto(cfg) - 1) * 100), // APKs antigos calculam com o acréscimo
         deslocamentoPadraoKm: cfg.deslocamentoPadraoKm, deliveryMensalidade: cfg.deliveryMensalidade, deliveryUrgencia: cfg.deliveryUrgencia,
         gateway: this.pagarme() ? 'pagarme' : 'infinitepay', pagarmeChavePublica: this.pagarme() ? cfg.pagarmeChavePublica : '', pagarAoAceitarMin: cfg.pagarAoAceitarMin,
-        taxasPagamento: this.pagarme() ? this.taxasPagamento() : null, debitoAtivo: !!this.pagarme() && cfg.debitoAtivo,
+        taxaPreco: this.pagarme() ? this.taxaPreco() : null, debitoAtivo: !!this.pagarme() && cfg.debitoAtivo,
         locais: this.locais().filter((l) => cfg.categoriasAtivas.includes(l.categoria as never) && !!l.cidade && cfg.cidadesAtivas.includes(l.cidade)),
       });
     if (metodo === 'GET' && p === '/v2/disponibilidade') return json(this.disponibilidade());

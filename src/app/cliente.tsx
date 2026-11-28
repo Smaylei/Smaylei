@@ -5,13 +5,14 @@ import { BotaoInicio, MarcaTopo } from '../components/Marca';
 import MinhaConta from '../components/MinhaConta';
 import { cores, raio, sombra } from '../components/tema';
 import { MARCA, MODALIDADES, servicosLiberados } from '../data/servicos';
-import { useApp } from '../estado/AppContext';
+import { useApp, usePreco } from '../estado/AppContext';
 import { api, ROTULO_STATUS, type CorridaCliente } from '../services/api';
 import * as D from '../services/delivery';
 import { formatarReais } from '../services/preco';
 
 export default function Inicio() {
   const { carregado, casa, temConta, config, eu, recarregarEu } = useApp();
+  const preco = usePreco();
   const [ativas, setAtivas] = useState<CorridaCliente[]>([]);
   const [pedidos, setPedidos] = useState<D.Pedido[]>([]);
   const comDelivery = config.servicosAtivos.includes('delivery');
@@ -54,7 +55,7 @@ export default function Inicio() {
           >
             <Text style={[s.statusTitulo, { color: p.status === 'cancelado' ? cores.erro : cores.primaria }]}>🛵 {D.etapaPedido(p)}</Text>
             <Text style={s.statusTexto}>
-              Pedido #{p.codigo} · {p.loja.nome} · {formatarReais(p.total)}
+              Pedido #{p.codigo} · {p.loja.nome} · {formatarReais(p.pagoEm ? Math.round((p.total + (p.taxaPagamento || 0)) * 100) / 100 : preco(p.total))}
             </Text>
             {p.status === 'cancelado' && p.reembolso > 0 && <Text style={s.statusTexto}>{formatarReais(p.reembolso)} serão devolvidos para você.</Text>}
             <Text style={s.verMais}>Ver pedido ›</Text>

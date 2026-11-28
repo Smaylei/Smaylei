@@ -4,12 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import Autenticacao3DS, { type Resultado3DS } from '../components/Autenticacao3DS';
 import { cores, raio } from '../components/tema';
-import { useApp } from '../estado/AppContext';
+import { useApp, usePreco } from '../estado/AppContext';
 import { API, api, ErroApi, type CorridaCliente, type Gorjeta } from '../services/api';
 import * as D from '../services/delivery';
 import * as P from '../services/pagamento';
 import { formatarReais } from '../services/preco';
-import { comTaxa } from '../services/taxas';
 import { SOLICITANTE } from '../variante';
 
 type Resumo = { titulo: string; valor: number; pendente: boolean; prazo: string | null };
@@ -32,7 +31,6 @@ async function resumo(tipo: P.TipoPagamento, id: string): Promise<Resumo> {
   return { titulo: 'Gorjeta para o motorista', valor: g.valor, pendente: g.status === 'pendente', prazo: null };
 }
 
-const NOME_TAXA: Record<P.MetodoPagamento, string> = { pix: 'Taxa do Pix', cartao: 'Taxa do cartão', debito: 'Taxa do débito' };
 const ABAS: Record<P.MetodoPagamento, string> = { pix: '⚡ Pix', cartao: '💳 Crédito', debito: '🏦 Débito' };
 const emailOk = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 
@@ -40,6 +38,7 @@ const emailOk = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 export default function Pagar() {
   const { tipo, id } = useLocalSearchParams<{ tipo: P.TipoPagamento; id: string }>();
   const { config } = useApp();
+  const preco = usePreco();
   const [r, setR] = useState<Resumo | null>(null);
   const [metodo, setMetodo] = useState<P.MetodoPagamento>('pix');
   const [cob, setCob] = useState<P.Cobranca | null>(null);
@@ -230,10 +229,8 @@ export default function Pagar() {
 
   if (!r) return msg ? <Text style={[s.erro, { padding: 20 }]}>{msg}</Text> : <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   const pixPronto = cob?.metodo === 'pix' && cob.status === 'pendente';
-  // Taxa do meio de pagamento por cima do valor: o cliente paga, quem trabalha recebe o valor combinado.
-  const jaGerada = cob?.metodo === metodo && cob.status === 'pendente' && cob.taxa !== undefined;
-  const conta = jaGerada ? { total: cob!.valor, taxa: cob!.taxa ?? 0 } : comTaxa(r.valor, config.taxasPagamento?.[metodo] ?? { pct: 0, fixo: 0 });
-  const nomeTaxa = NOME_TAXA[metodo];
+  // Preço ao cliente: um só, igual em qualquer meio (a taxa do pagamento já vem embutida, sem aparecer).
+  const conta = { total: cob?.status === 'pendente' ? cob.valor : tipo === 'gorjeta' || tipo === 'mensalidade' ? r.valor : preco(r.valor) };
   const abas: P.MetodoPagamento[] = comDebito ? ['pix', 'cartao', 'debito'] : ['pix', 'cartao'];
   const novoCartao = metodo === 'debito' || escolhido === 'novo';
 
@@ -265,11 +262,6 @@ export default function Pagar() {
         <View style={s.topo}>
           <Text style={s.titulo}>{r.titulo}</Text>
           <Text style={s.valor}>{formatarReais(conta.total)}</Text>
-          {conta.taxa > 0 && (
-            <Text style={s.composicao}>
-              {formatarReais(r.valor)} + {nomeTaxa.replace('Taxa', 'taxa')} {formatarReais(conta.taxa)}
-            </Text>
-          )}
           {r.prazo && <Text style={s.prazo}>Pague até {new Date(r.prazo).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</Text>}
         </View>
 
@@ -372,23 +364,6 @@ export default function Pagar() {
         )}
 
         {msg && <Text style={s.erro}>{msg}</Text>}
-        {conta.taxa > 0 && (
-          <View style={s.detalhe}>
-            <View style={s.linha}>
-              <Text style={s.suave}>{tipo === 'corrida' ? 'Frete' : tipo === 'pedido' ? 'Pedido (produtos + entrega)' : tipo === 'gorjeta' ? 'Gorjeta' : 'Valor'}</Text>
-              <Text style={s.suave}>{formatarReais(r.valor)}</Text>
-            </View>
-            <View style={s.linha}>
-              <Text style={s.suave}>{nomeTaxa}</Text>
-              <Text style={s.suave}>{formatarReais(conta.taxa)}</Text>
-            </View>
-            <View style={s.linha}>
-              <Text style={[s.suave, { color: cores.texto, fontWeight: '800' }]}>Total</Text>
-              <Text style={[s.suave, { color: cores.texto, fontWeight: '800' }]}>{formatarReais(conta.total)}</Text>
-            </View>
-            <Text style={s.suave}>A taxa é da operadora do pagamento. Assim, {tipo === 'pedido' ? 'a loja e o entregador recebem' : tipo === 'mensalidade' ? 'a MOVI recebe' : 'o motorista recebe'} o valor combinado, sem desconto.</Text>
-          </View>
-        )}
         <Text style={s.info}>
           🔒 Pagamento processado pela Pagar.me (Stone).{' '}
           {tipo === 'pedido' ? 'Se a loja não aceitar, o valor volta automaticamente.' : tipo === 'corrida' ? 'Se a corrida for cancelada antes da chegada, o valor volta automaticamente.' : ''}
@@ -422,9 +397,6 @@ const s = StyleSheet.create({
   titulo: { fontSize: 15, color: cores.texto, fontWeight: '600', textAlign: 'center' },
   valor: { fontSize: 32, fontWeight: '800', color: cores.texto },
   prazo: { fontSize: 13, color: cores.alerta, fontWeight: '700' },
-  composicao: { fontSize: 13, color: cores.suave },
-  detalhe: { backgroundColor: cores.cartao, borderRadius: raio, padding: 14, gap: 6, borderWidth: 1, borderColor: cores.borda },
-  linha: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
   salvo: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderColor: cores.borda, borderRadius: 12, padding: 12, backgroundColor: cores.fundo },
   salvoAtivo: { borderColor: cores.primaria },
   salvoTexto: { fontSize: 15, fontWeight: '700', color: cores.texto },

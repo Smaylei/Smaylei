@@ -103,6 +103,8 @@ export type Viagem = {
 
 export type CorridaCliente = Viagem & {
   id: string;
+  /** Taxa do pagamento já embutida no que o cliente pagou (preço pago = valor + taxaPagamento). */
+  taxaPagamento?: number;
   status: Status;
   agendado: boolean;
   janela: string;

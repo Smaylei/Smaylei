@@ -2,7 +2,7 @@ import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { cores, raio } from '../../components/tema';
-import { useApp } from '../../estado/AppContext';
+import { useApp, usePreco } from '../../estado/AppContext';
 import { irParaPagamento } from '../../services/pagamento';
 import { ErroApi } from '../../services/api';
 import * as D from '../../services/delivery';
@@ -21,6 +21,7 @@ function passoAtual(p: D.Pedido) {
 export default function MeuPedido() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { config } = useApp();
+  const preco = usePreco();
   const [p, setP] = useState<D.Pedido | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -45,6 +46,9 @@ export default function MeuPedido() {
 
   if (!p) return erro ? <Text style={[s.erro, { padding: 20 }]}>{erro}</Text> : <ActivityIndicator style={{ marginTop: 60 }} color={cores.primaria} />;
   const atual = passoAtual(p);
+  // Preço ao cliente (taxa do pagamento embutida na entrega): o pago, ou o que vai pagar.
+  const totalCliente = p.pagoEm ? Math.round((p.total + (p.taxaPagamento || 0)) * 100) / 100 : preco(p.total);
+  const entregaCliente = Math.round((totalCliente - p.subtotal) * 100) / 100;
 
   function cancelar() {
     Alert.alert('Cancelar o pedido?', p!.status === 'aguardando_loja' ? 'A loja ainda não aceitou. O valor pago é devolvido.' : 'O pagamento ainda não foi feito.', [
@@ -89,7 +93,7 @@ export default function MeuPedido() {
 
       {p.status === 'pagamento_pendente' && (
         <Pressable style={s.botao} onPress={() => irParaPagamento(config.gateway, 'pedido', p.id)}>
-          <Text style={s.botaoTexto}>Pagar {formatarReais(p.total)}</Text>
+          <Text style={s.botaoTexto}>Pagar {formatarReais(totalCliente)}</Text>
         </Pressable>
       )}
       {p.corridaId && p.status !== 'cancelado' && (
@@ -119,17 +123,11 @@ export default function MeuPedido() {
         </View>
         <View style={s.linha}>
           <Text style={s.suave}>Entrega MOVI ({p.veiculo === 'moto' ? 'moto' : 'carro'})</Text>
-          <Text style={s.suave}>{formatarReais(p.frete)}</Text>
+          <Text style={s.suave}>{formatarReais(entregaCliente)}</Text>
         </View>
-        {p.taxaPagamento > 0 && (
-          <View style={s.linha}>
-            <Text style={s.suave}>Taxa do {p.metodo === 'pix' ? 'Pix' : p.metodo === 'debit_card' ? 'débito' : 'cartão'}</Text>
-            <Text style={s.suave}>{formatarReais(p.taxaPagamento)}</Text>
-          </View>
-        )}
         <View style={s.linha}>
           <Text style={[s.texto, { fontWeight: '800' }]}>Total</Text>
-          <Text style={[s.texto, { fontWeight: '800' }]}>{formatarReais(p.total + (p.taxaPagamento || 0))}</Text>
+          <Text style={[s.texto, { fontWeight: '800' }]}>{formatarReais(totalCliente)}</Text>
         </View>
         {!!p.observacao && <Text style={s.suave}>Obs.: {p.observacao}</Text>}
         {p.pagoEm && <Text style={s.suave}>Pago por {p.metodo === 'pix' ? 'Pix' : p.metodo === 'debit_card' ? 'débito' : 'cartão'} · valor retido até a entrega</Text>}

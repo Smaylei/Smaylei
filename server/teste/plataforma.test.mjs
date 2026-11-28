@@ -1026,7 +1026,9 @@ test('taxas por cima (Pagar.me): cliente paga valor + taxa do Pix/cartão; motor
   const r = await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'pagarme', taxaPixPct: PIX, taxaPixFixo: 0, taxaCartaoPct: CARTAO, taxaCartaoFixo: FIXO_CARTAO } });
   assert.equal(r.s, 200, JSON.stringify(r.d));
   assert.match((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { taxaPixPct: 30 } })).d.erro, /0 a 20%/);
-  assert.deepEqual((await call('/v2/config')).d.taxasPagamento, { pix: { pct: PIX, fixo: 0 }, cartao: { pct: CARTAO, fixo: FIXO_CARTAO }, debito: { pct: 1.99, fixo: 0 } });
+  // O cliente vê um preço só: a maior taxa entre os meios ligados, embutida (sem mostrar "taxa").
+  assert.deepEqual((await call('/v2/config')).d.taxaPreco, { pct: CARTAO, fixo: FIXO_CARTAO });
+  assert.equal((await call('/v2/config')).d.taxasPagamento, undefined);
   // O que a Pagar.me desconta (arredondando a taxa para cima) da parte da MOVI, que é a principal do split.
   const taxaPg = (totalCent, pct, fixoCent) => Math.ceil((totalCent * pct) / 100) + fixoCent;
   const soma = (itens) => itens.reduce((sm, i) => sm + i.amount * i.quantity, 0);
@@ -1058,9 +1060,10 @@ test('taxas por cima (Pagar.me): cliente paga valor + taxa do Pix/cartão; motor
   const totalCent = Math.round(pix.valor * 100);
   assert.equal(pix.liquido, c1.valor);
   assert.ok(pix.taxa > 0 && totalCent === vc + Math.round(pix.taxa * 100));
-  assert.equal(totalCent, Math.ceil((vc / (1 - PIX / 100)) - 1e-6)); // por cima: total × (1 − taxa) ≥ valor
+  assert.equal(totalCent, Math.ceil(((vc + 50) / (1 - CARTAO / 100)) - 1e-6)); // mesmo preço em qualquer meio
   assert.equal(soma(pg.ultimo.items), totalCent);
-  assert.deepEqual(pg.ultimo.items.at(-1), { code: 'taxa', description: 'Taxa do Pix', amount: totalCent - vc, quantity: 1 });
+  assert.equal(pg.ultimo.items.length, 1); // sem item "taxa": vai embutida no próprio serviço
+  assert.equal(pg.ultimo.items[0].amount, totalCent);
   const ganho = await ganhoEsperado(c1.id);
   const sp = pg.ultimo.payments[0].split;
   assert.equal(sp[0].recipient_id, rpMot);
@@ -1084,7 +1087,7 @@ test('taxas por cima (Pagar.me): cliente paga valor + taxa do Pix/cartão; motor
   const cart = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'corrida', id: c2.id, metodo: 'cartao', cardToken: 'tok_ok', cep: '89270000' } })).d;
   assert.equal(cart.status, 'paga');
   const t2 = Math.round(cart.valor * 100), v2 = Math.round(c2.valor * 100);
-  assert.equal(pg.ultimo.items.at(-1).description, 'Taxa do cartão');
+  assert.equal(t2, Math.ceil(((v2 + 50) / (1 - CARTAO / 100)) - 1e-6));
   assert.ok(t2 - taxaPg(t2, CARTAO, 50) >= v2 && t2 - taxaPg(t2, CARTAO, 50) <= v2 + 1);
   const g2 = Math.round((await ganhoEsperado(c2.id)) * 100);
   assert.equal(pg.ultimo.payments[0].split[0].amount, g2);
@@ -1107,8 +1110,7 @@ test('taxas por cima (Pagar.me): cliente paga valor + taxa do Pix/cartão; motor
   assert.equal((await call('/v2/loja', { token: loja })).d.recebedor.ativo, true);
   const mens = (await call('/v2/loja/mensalidade', { metodo: 'POST', token: loja })).d;
   const pm = (await call('/v2/pagar', { metodo: 'POST', token: loja, corpo: { tipo: 'mensalidade', id: mens.id, metodo: 'pix' } })).d;
-  assert.equal(pm.liquido, mens.valor); // a MOVI recebe a mensalidade cheia
-  assert.ok(pm.valor > mens.valor);
+  assert.equal(pm.valor, mens.valor); // mensalidade sem acréscimo (a MOVI absorve a taxa)
   pg.pedidos.get(`or_${pg.n}`).status = 'paid';
   await call(`/v2/cobrancas/${pm.id}`, { token: loja });
   const pao = (await call('/v2/loja/produtos', { metodo: 'POST', token: loja, corpo: { nome: 'Pão francês (10)', preco: 9.5 } })).d;
@@ -1116,8 +1118,9 @@ test('taxas por cima (Pagar.me): cliente paga valor + taxa do Pix/cartão; motor
   const ped = (await call('/v2/pedidos', { metodo: 'POST', token: cli, corpo: { lojaId: lj.d.id, itens: [{ produtoId: pao.id, qtd: 2 }] } })).d;
   const pp = (await call('/v2/pagar', { metodo: 'POST', token: cli, corpo: { tipo: 'pedido', id: ped.id, metodo: 'pix' } })).d;
   const tp = Math.round(pp.valor * 100), vp = Math.round(ped.total * 100);
-  assert.equal(pg.ultimo.items.length, 3); // produto, entrega e taxa
+  assert.equal(pg.ultimo.items.length, 2); // produto e entrega (a taxa vai embutida na entrega)
   assert.equal(soma(pg.ultimo.items), tp);
+  assert.equal(pg.ultimo.items[1].amount, tp - 1900);
   const spp = pg.ultimo.payments[0].split;
   assert.deepEqual([spp[0].recipient_id, spp[0].amount], [rpLoja, 1900]); // loja: os produtos cheios
   assert.ok(spp[1].amount - taxaPg(tp, PIX, 0) >= Math.round(ped.frete * 100)); // MOVI: o frete inteiro
@@ -1159,7 +1162,7 @@ test('cartão salvo (crédito, compra com um clique) e débito com a confirmaç�
   assert.equal((await call('/v2/admin/config', { metodo: 'PUT', token: ADM, corpo: { gateway: 'pagarme', taxaPixPct: 0.99, taxaCartaoPct: 4.19, taxaCartaoFixo: 0, taxaDebitoPct: 1.99, debitoAtivo: false } })).s, 200);
   const cfg = (await call('/v2/config')).d;
   assert.equal(cfg.debitoAtivo, false);
-  assert.deepEqual(cfg.taxasPagamento.debito, { pct: 1.99, fixo: 0 });
+  assert.deepEqual(cfg.taxaPreco, { pct: 4.19, fixo: 0 });
   const c = await call('/v2/clientes', { metodo: 'POST', corpo: { nome: 'Nina Cartao', cpf: gerarCpf(355566677), telefone: '47911114444', endereco: 'Rua C, 5, Centro', lat: -26.479, lon: -48.99 } });
   const cli = c.d.token, cliId = c.d.id;
   const mot = (await call('/v2/motoristas', { metodo: 'POST', corpo: { nome: 'Davi Debito', cpf: gerarCpf(366677788), telefone: '47966663333', carro: 'Gol', placa: 'DAV1D23' } })).d;
@@ -1226,8 +1229,8 @@ test('cartão salvo (crédito, compra com um clique) e débito com a confirmaç�
   const pay = pg.ultimo.payments[0];
   assert.equal(pay.payment_method, 'debit_card');
   assert.deepEqual(pay.debit_card.authentication, { type: 'threed_secure', threed_secure: { mpi: 'pagarme', transaction_id: 'tds-trans-123' } });
-  assert.equal(pg.ultimo.items.at(-1).description, 'Taxa do débito');
-  assert.equal(Math.round(p4.valor * 100), Math.ceil(Math.round(c4.valor * 100) / (1 - 0.0199) - 1e-6));
+  assert.equal(pg.ultimo.items.length, 1);
+  assert.equal(Math.round(p4.valor * 100), Math.ceil(Math.round(c4.valor * 100) / (1 - 0.0419) - 1e-6)); // mesmo preço do crédito e do Pix
   assert.equal(pg.cartoesExcluidos.at(-1), `card_${pg.n}`); // débito não fica salvo
   assert.equal((await call(`/v2/corridas/${c4.id}`, { token: cli })).d.metodo, 'debit_card');
   assert.equal((await call('/v2/pagar/3ds', { metodo: 'POST', token: cli })).d.cliente.email, 'nina@exemplo.com'); // e-mail guardado

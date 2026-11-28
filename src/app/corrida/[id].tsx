@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Tex
 import AvaliarFrete from '../../components/AvaliarFrete';
 import MapaRuas, { type EstadoMapa } from '../../components/MapaRuas';
 import { cores, raio, sombra } from '../../components/tema';
-import { useApp } from '../../estado/AppContext';
+import { useApp, usePreco } from '../../estado/AppContext';
 import { irParaPagamento } from '../../services/pagamento';
 import { api, fonteImagem, ROTULO_STATUS, type CorridaCliente } from '../../services/api';
 import { useRota } from '../../services/eta';
@@ -18,6 +18,7 @@ const ETAPAS: CorridaCliente['status'][] = ['buscando', 'aceito', 'no_local', 'e
 export default function Corrida() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { casa, config } = useApp();
+  const preco = usePreco();
   const [c, setC] = useState<CorridaCliente | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [foto, setFoto] = useState<{ uri: string; headers?: Record<string, string> } | null>(null);
@@ -194,7 +195,7 @@ export default function Corrida() {
 
       {(c.status === 'pagamento_pendente' || c.aguardandoPagamento) && (
         <Pressable style={s.botao} onPress={() => irParaPagamento(config.gateway, 'corrida', c.id)}>
-          <Text style={s.botaoTexto}>Pagar {formatarReais(c.pacote?.valor ?? c.valor)}</Text>
+          <Text style={s.botaoTexto}>Pagar {formatarReais(preco(c.pacote?.valor ?? c.valor))}</Text>
         </Pressable>
       )}
 
@@ -253,8 +254,8 @@ export default function Corrida() {
         {c.retorno ? <Linha a="Volta" b="Traz você de volta à coleta" /> : null}
         {c.descricao ? <Linha a="O que" b={c.descricao} /> : null}
         <Linha a="Quando" b={c.agendado ? c.janela : 'Agora'} />
-        <Linha a="Valor" b={formatarReais(c.valor)} />
-        {c.pacote ? <Linha a="Pacote" b={`${c.pacote.viagens} viagens · ${formatarReais(c.pacote.valor)}`} /> : null}
+        <Linha a="Valor" b={formatarReais(c.pagoEm ? Math.round((c.valor + (c.taxaPagamento ?? 0)) * 100) / 100 : preco(c.valor))} />
+        {c.pacote ? <Linha a="Pacote" b={`${c.pacote.viagens} viagens · ${formatarReais(preco(c.pacote.valor))}`} /> : null}
         {c.gorjeta ? <Linha a="Gorjeta" b={formatarReais(c.gorjeta)} /> : null}
         {c.pagoEm ? (
           <Linha a="Pagamento" b={`${c.metodo === 'pix' ? 'Pix' : 'Cartão'} · ${c.liberadoEm ? 'liberado ao motorista' : c.status === 'cancelado' ? 'devolução' : 'retido'}`} />

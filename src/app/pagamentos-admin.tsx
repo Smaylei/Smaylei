@@ -71,7 +71,9 @@ export default function PagamentosAdmin() {
       Alert.alert('Contas de recebimento', (e as Error).message);
     }
   }
-  const exemplo = (pct: string, fixo: string) => comTaxa(50, { pct: num(pct), fixo: num(fixo) });
+  // Preço ao cliente: a maior taxa entre os meios ligados, embutida (igual em qualquer meio).
+  const maior = (k: 'Pct' | 'Fixo') => Math.max(num(f[`pix${k}`]), num(f[`cartao${k}`]), d.debitoAtivo ? num(f[`debito${k}`]) : 0);
+  const exemplo = comTaxa(50, { pct: maior('Pct'), fixo: maior('Fixo') }).total;
   async function debito(ativo: boolean) {
     setSalvando(true);
     try {
@@ -162,10 +164,11 @@ export default function PagamentosAdmin() {
       </View>
 
       <View style={s.cartao}>
-        <Text style={s.titulo}>Taxas por cima do valor</Text>
+        <Text style={s.titulo}>Taxas do pagamento (embutidas no preço)</Text>
         <Text style={s.sub}>
-          A taxa da Pagar.me é somada ao que o cliente paga. Assim o motorista recebe o ganho mostrado, a loja recebe os produtos e a MOVI recebe a parte dela, sem desconto. Use as taxas do seu contrato com a
-          Pagar.me (no cartão, inclua a antecipação, se usar).
+          O cliente vê um preço só, igual no Pix, no crédito e no débito, com a maior destas taxas já dentro. Ele não vê a palavra “taxa”: no delivery ela entra na entrega. O motorista recebe o ganho
+          mostrado, a loja recebe os produtos e a MOVI a parte dela, sem desconto; quando o cliente paga num meio mais barato (Pix), a diferença fica com a MOVI. Gorjeta e mensalidade não têm acréscimo.
+          Use as taxas do seu contrato com a Pagar.me (no crédito, inclua a antecipação, se usar).
         </Text>
         <View style={[s.campos, !largo && { flexDirection: 'column' }]}>
           {campoTaxa('Pix', 'pixPct', '%')}
@@ -179,8 +182,7 @@ export default function PagamentosAdmin() {
           </Pressable>
         </View>
         <Text style={s.sub}>
-          Exemplo de frete de {formatarReais(50)}: no Pix o cliente paga {formatarReais(exemplo(f.pixPct, f.pixFixo).total)}; no crédito, {formatarReais(exemplo(f.cartaoPct, f.cartaoFixo).total)}; no
-          débito, {formatarReais(exemplo(f.debitoPct, f.debitoFixo).total)}.
+          Exemplo: um frete de {formatarReais(50)} aparece para o cliente como {formatarReais(exemplo)}, em qualquer meio de pagamento.
         </Text>
       </View>
 
